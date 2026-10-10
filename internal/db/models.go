@@ -11,6 +11,13 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
+type EmbeddingCache struct {
+	ID          uuid.UUID    `json:"id"`
+	ContentHash string       `json:"content_hash"`
+	Embedding   interface{}  `json:"embedding"`
+	CreatedAt   sql.NullTime `json:"created_at"`
+}
+
 type Memory struct {
 	ID              uuid.UUID             `json:"id"`
 	UserID          uuid.UUID             `json:"user_id"`
