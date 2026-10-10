@@ -66,18 +66,24 @@ func hashContent(content string) string {
 }
 
 func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
-	// 1. Chunk texts
-	var allChunks []string
-	for _, text := range texts {
-		chunks := chunkText(text, 100) // chunk to ~100 words
-		allChunks = append(allChunks, chunks...)
-	}
-
-	if len(allChunks) == 0 {
+	if len(texts) == 0 {
 		return nil, nil
 	}
 
-	resultVectors := make([][]float32, len(allChunks))
+	// 1. Chunk texts and keep track of which chunks belong to which original text
+	var allChunks []string
+	chunkCounts := make([]int, len(texts))
+	for i, text := range texts {
+		chunks := chunkText(text, 100) // chunk to ~100 words
+		if len(chunks) == 0 {
+			// Handle empty text by adding an empty string chunk so it still produces a vector (likely zeroes or padding)
+			chunks = []string{""}
+		}
+		chunkCounts[i] = len(chunks)
+		allChunks = append(allChunks, chunks...)
+	}
+
+	chunkVectors := make([][]float32, len(allChunks))
 	textsToEmbed := []string{}
 	indicesToEmbed := []int{}
 
@@ -87,14 +93,6 @@ func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]fl
 		cached, err := c.db.Queries.GetEmbeddingCacheByHash(ctx, h)
 		if err == nil {
 			// Found in cache
-			// the embedding is returned as pgvector, we need to convert it
-			// However in our DB struct it's interface{}, we need to decode it
-			// Or if we use pgvector-go we can handle it.
-			// For this simplified logic we will just re-embed if we can't parse easily.
-			// Let's properly handle pgvector using pgvector-go.
-
-			// But for now since it's an interface{} we might need to rely on string parsing if not careful.
-			// Let's actually parse it.
 			valStr := ""
 			switch v := cached.Embedding.(type) {
 			case string:
@@ -105,7 +103,7 @@ func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]fl
 
 			vec := pgvector.NewVector(nil)
 			if err := vec.Scan(valStr); err == nil {
-				resultVectors[i] = vec.Slice()
+				chunkVectors[i] = vec.Slice()
 				continue
 			}
 		}
@@ -148,10 +146,10 @@ func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]fl
 			return nil, fmt.Errorf("returned vectors count %d does not match request %d", len(embedResp.Vectors), len(textsToEmbed))
 		}
 
-		// 4. Update cache and result
+		// Update cache and result
 		for i, vec := range embedResp.Vectors {
 			origIdx := indicesToEmbed[i]
-			resultVectors[origIdx] = vec
+			chunkVectors[origIdx] = vec
 
 			h := hashContent(textsToEmbed[i])
 			pgVec := pgvector.NewVector(vec)
@@ -164,6 +162,34 @@ func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]fl
 				// We can ignore unique constraint errors if two concurrent processes insert it
 			}
 		}
+	}
+
+	// 4. Mean pooling: Average chunk vectors for each original text
+	resultVectors := make([][]float32, len(texts))
+	chunkIdx := 0
+	for i, count := range chunkCounts {
+		if count == 0 {
+			continue // Should not happen due to empty text handling above
+		}
+
+		// Sum all vectors for this text
+		sumVec := make([]float32, 384)
+		for j := 0; j < count; j++ {
+			vec := chunkVectors[chunkIdx]
+			for k := 0; k < 384; k++ {
+				if len(vec) > k {
+					sumVec[k] += vec[k]
+				}
+			}
+			chunkIdx++
+		}
+
+		// Average the sum vector
+		for k := 0; k < 384; k++ {
+			sumVec[k] /= float32(count)
+		}
+
+		resultVectors[i] = sumVec
 	}
 
 	return resultVectors, nil
