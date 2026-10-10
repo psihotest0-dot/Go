@@ -2,7 +2,10 @@ package db
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,4 +50,40 @@ func RunMigrations(connString string) error {
 	}
 
 	return nil
+}
+
+// GenerateHash generates a SHA256 hash for the given content.
+func GenerateHash(content string) string {
+	h := sha256.New()
+	h.Write([]byte(content))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+var ErrMemoryExists = errors.New("memory already exists")
+
+// CreateMemoryWithCheck creates a memory after checking if it already exists by content hash.
+func (db *Database) CreateMemoryWithCheck(ctx context.Context, params CreateMemoryParams) (Memory, error) {
+	params.ContentHash = GenerateHash(params.Content)
+
+	// Check for duplicate
+	existing, err := db.Queries.GetMemoryByHash(ctx, GetMemoryByHashParams{
+		UserID:      params.UserID,
+		ContentHash: params.ContentHash,
+	})
+	if err == nil {
+		// Memory exists
+		return existing, ErrMemoryExists
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, fmt.Errorf("failed to check existing memory: %w", err)
+	}
+
+	// Create new memory
+	return db.Queries.CreateMemory(ctx, params)
+}
+
+// UpdateMemoryWithCheck updates a memory after regenerating the content hash.
+func (db *Database) UpdateMemoryWithCheck(ctx context.Context, params UpdateMemoryParams) (Memory, error) {
+	params.ContentHash = GenerateHash(params.Content)
+	return db.Queries.UpdateMemory(ctx, params)
 }
