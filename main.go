@@ -39,6 +39,28 @@ func main() {
 	mux.HandleFunc("/healthz", apiService.HealthzHandler)
 	mux.HandleFunc("/metrics", apiService.MetricsHandler)
 
+	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			apiService.CreateMessageHandler(w, r)
+		} else if r.Method == http.MethodGet {
+			apiService.GetMessagesHandler(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/memories", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			apiService.CreateMemoryHandler(w, r)
+		} else if r.Method == http.MethodGet {
+			apiService.GetMemoriesHandler(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
+
 	handler := api.Middleware(logger)(mux)
 
 	logger.Info("server listening on :8080")
