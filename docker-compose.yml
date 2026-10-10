@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  embedder:
+    build:
+      context: ./services/embedder
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - CUDA_VISIBLE_DEVICES=-1
+    deploy:
+      resources:
+        reservations:
+          # Ensure it doesn't request GPU
+          # (Docker compose will not allocate GPU by default unless explicitly requested,
+          # but we can enforce CPU-only if we don't declare any gpu capabilities)
+          # We just omit GPUs here.
+          cpus: '0.1'

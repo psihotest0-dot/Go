@@ -26,3 +26,11 @@ RETURNING *;
 
 -- name: DeleteMemory :exec
 DELETE FROM memories WHERE id = $1 AND user_id = $2;
+
+-- name: GetEmbeddingCacheByHash :one
+SELECT * FROM embedding_cache WHERE content_hash = $1;
+
+-- name: CreateEmbeddingCache :one
+INSERT INTO embedding_cache (content_hash, embedding)
+VALUES ($1, $2)
+RETURNING *;
