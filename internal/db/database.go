@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -65,21 +66,25 @@ var ErrMemoryExists = errors.New("memory already exists")
 func (db *Database) CreateMemoryWithCheck(ctx context.Context, params CreateMemoryParams) (Memory, error) {
 	params.ContentHash = GenerateHash(params.Content)
 
-	// Check for duplicate
-	existing, err := db.Queries.GetMemoryByHash(ctx, GetMemoryByHashParams{
-		UserID:      params.UserID,
-		ContentHash: params.ContentHash,
-	})
-	if err == nil {
-		// Memory exists
-		return existing, ErrMemoryExists
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return Memory{}, fmt.Errorf("failed to check existing memory: %w", err)
+	// Create new memory
+	mem, err := db.Queries.CreateMemory(ctx, params)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			// Memory exists, unique constraint violated
+			existing, getErr := db.Queries.GetMemoryByHash(ctx, GetMemoryByHashParams{
+				UserID:      params.UserID,
+				ContentHash: params.ContentHash,
+			})
+			if getErr == nil {
+				return existing, ErrMemoryExists
+			}
+			return Memory{}, fmt.Errorf("failed to get existing memory after unique constraint error: %w", getErr)
+		}
+		return Memory{}, fmt.Errorf("failed to create memory: %w", err)
 	}
 
-	// Create new memory
-	return db.Queries.CreateMemory(ctx, params)
+	return mem, nil
 }
 
 // UpdateMemoryWithCheck updates a memory after regenerating the content hash.
