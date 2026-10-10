@@ -9,96 +9,76 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/sqlc-dev/pqtype"
 )
 
-const cacheEmbedding = `-- name: CacheEmbedding :one
-INSERT INTO embedding_cache (content_hash, embedding) VALUES ($1, $2) RETURNING id, content_hash, embedding, created_at
-`
-
-type CacheEmbeddingParams struct {
-	ContentHash string      `json:"content_hash"`
-	Embedding   interface{} `json:"embedding"`
-}
-
-func (q *Queries) CacheEmbedding(ctx context.Context, arg CacheEmbeddingParams) (EmbeddingCache, error) {
-	row := q.db.QueryRowContext(ctx, cacheEmbedding, arg.ContentHash, arg.Embedding)
-	var i EmbeddingCache
-	err := row.Scan(
-		&i.ID,
-		&i.ContentHash,
-		&i.Embedding,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createConversation = `-- name: CreateConversation :one
-INSERT INTO conversations (user_id) VALUES ($1) RETURNING id, user_id, created_at
-`
-
-func (q *Queries) CreateConversation(ctx context.Context, userID uuid.UUID) (Conversation, error) {
-	row := q.db.QueryRowContext(ctx, createConversation, userID)
-	var i Conversation
-	err := row.Scan(&i.ID, &i.UserID, &i.CreatedAt)
-	return i, err
-}
-
 const createMemory = `-- name: CreateMemory :one
-INSERT INTO memories (user_id, content, embedding, embedding_model, content_hash, importance)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, content, embedding, embedding_model, content_hash, importance, created_at, last_used_at
+INSERT INTO memories (user_id, content, status, source_message_id, importance, metadata, content_hash)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
 `
 
 type CreateMemoryParams struct {
-	UserID         uuid.UUID   `json:"user_id"`
-	Content        string      `json:"content"`
-	Embedding      interface{} `json:"embedding"`
-	EmbeddingModel string      `json:"embedding_model"`
-	ContentHash    string      `json:"content_hash"`
-	Importance     int32       `json:"importance"`
+	UserID          uuid.UUID             `json:"user_id"`
+	Content         string                `json:"content"`
+	Status          string                `json:"status"`
+	SourceMessageID uuid.NullUUID         `json:"source_message_id"`
+	Importance      int32                 `json:"importance"`
+	Metadata        pqtype.NullRawMessage `json:"metadata"`
+	ContentHash     string                `json:"content_hash"`
 }
 
 func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) (Memory, error) {
 	row := q.db.QueryRowContext(ctx, createMemory,
 		arg.UserID,
 		arg.Content,
-		arg.Embedding,
-		arg.EmbeddingModel,
-		arg.ContentHash,
+		arg.Status,
+		arg.SourceMessageID,
 		arg.Importance,
+		arg.Metadata,
+		arg.ContentHash,
 	)
 	var i Memory
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.Content,
-		&i.Embedding,
-		&i.EmbeddingModel,
-		&i.ContentHash,
+		&i.Status,
+		&i.SourceMessageID,
 		&i.Importance,
+		&i.Metadata,
+		&i.ContentHash,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 		&i.LastUsedAt,
 	)
 	return i, err
 }
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, conversation_id, content) VALUES ($1, $2, $3) RETURNING id, user_id, conversation_id, content, created_at
+INSERT INTO messages (user_id, session_id, role, content) VALUES ($1, $2, $3, $4) RETURNING id, user_id, session_id, role, content, created_at
 `
 
 type CreateMessageParams struct {
-	UserID         uuid.UUID `json:"user_id"`
-	ConversationID uuid.UUID `json:"conversation_id"`
-	Content        string    `json:"content"`
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+	Role      string    `json:"role"`
+	Content   string    `json:"content"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
-	row := q.db.QueryRowContext(ctx, createMessage, arg.UserID, arg.ConversationID, arg.Content)
+	row := q.db.QueryRowContext(ctx, createMessage,
+		arg.UserID,
+		arg.SessionID,
+		arg.Role,
+		arg.Content,
+	)
 	var i Message
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
-		&i.ConversationID,
+		&i.SessionID,
+		&i.Role,
 		&i.Content,
 		&i.CreatedAt,
 	)
@@ -116,8 +96,22 @@ func (q *Queries) CreateUser(ctx context.Context) (User, error) {
 	return i, err
 }
 
+const deleteMemory = `-- name: DeleteMemory :exec
+DELETE FROM memories WHERE id = $1 AND user_id = $2
+`
+
+type DeleteMemoryParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteMemory(ctx context.Context, arg DeleteMemoryParams) error {
+	_, err := q.db.ExecContext(ctx, deleteMemory, arg.ID, arg.UserID)
+	return err
+}
+
 const getMemories = `-- name: GetMemories :many
-SELECT id, user_id, content, embedding, embedding_model, content_hash, importance, created_at, last_used_at FROM memories WHERE user_id = $1 ORDER BY created_at DESC
+SELECT id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, error) {
@@ -133,11 +127,13 @@ func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, 
 			&i.ID,
 			&i.UserID,
 			&i.Content,
-			&i.Embedding,
-			&i.EmbeddingModel,
-			&i.ContentHash,
+			&i.Status,
+			&i.SourceMessageID,
 			&i.Importance,
+			&i.Metadata,
+			&i.ContentHash,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 			&i.LastUsedAt,
 		); err != nil {
 			return nil, err
@@ -153,17 +149,45 @@ func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, 
 	return items, nil
 }
 
-const getMessages = `-- name: GetMessages :many
-SELECT id, user_id, conversation_id, content, created_at FROM messages WHERE user_id = $1 AND conversation_id = $2 ORDER BY created_at ASC
+const getMemoryByHash = `-- name: GetMemoryByHash :one
+SELECT id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 AND content_hash = $2
 `
 
-type GetMessagesParams struct {
-	UserID         uuid.UUID `json:"user_id"`
-	ConversationID uuid.UUID `json:"conversation_id"`
+type GetMemoryByHashParams struct {
+	UserID      uuid.UUID `json:"user_id"`
+	ContentHash string    `json:"content_hash"`
 }
 
-func (q *Queries) GetMessages(ctx context.Context, arg GetMessagesParams) ([]Message, error) {
-	rows, err := q.db.QueryContext(ctx, getMessages, arg.UserID, arg.ConversationID)
+func (q *Queries) GetMemoryByHash(ctx context.Context, arg GetMemoryByHashParams) (Memory, error) {
+	row := q.db.QueryRowContext(ctx, getMemoryByHash, arg.UserID, arg.ContentHash)
+	var i Memory
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Content,
+		&i.Status,
+		&i.SourceMessageID,
+		&i.Importance,
+		&i.Metadata,
+		&i.ContentHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
+const getMessagesBySession = `-- name: GetMessagesBySession :many
+SELECT id, user_id, session_id, role, content, created_at FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
+`
+
+type GetMessagesBySessionParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySessionParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getMessagesBySession, arg.UserID, arg.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +198,8 @@ func (q *Queries) GetMessages(ctx context.Context, arg GetMessagesParams) ([]Mes
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
-			&i.ConversationID,
+			&i.SessionID,
+			&i.Role,
 			&i.Content,
 			&i.CreatedAt,
 		); err != nil {
@@ -189,4 +214,48 @@ func (q *Queries) GetMessages(ctx context.Context, arg GetMessagesParams) ([]Mes
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateMemory = `-- name: UpdateMemory :one
+UPDATE memories
+SET content = $2, status = $3, importance = $4, metadata = $5, content_hash = $6, updated_at = NOW()
+WHERE id = $1 AND user_id = $7
+RETURNING id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
+`
+
+type UpdateMemoryParams struct {
+	ID          uuid.UUID             `json:"id"`
+	Content     string                `json:"content"`
+	Status      string                `json:"status"`
+	Importance  int32                 `json:"importance"`
+	Metadata    pqtype.NullRawMessage `json:"metadata"`
+	ContentHash string                `json:"content_hash"`
+	UserID      uuid.UUID             `json:"user_id"`
+}
+
+func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Memory, error) {
+	row := q.db.QueryRowContext(ctx, updateMemory,
+		arg.ID,
+		arg.Content,
+		arg.Status,
+		arg.Importance,
+		arg.Metadata,
+		arg.ContentHash,
+		arg.UserID,
+	)
+	var i Memory
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Content,
+		&i.Status,
+		&i.SourceMessageID,
+		&i.Importance,
+		&i.Metadata,
+		&i.ContentHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
 }
