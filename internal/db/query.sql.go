@@ -12,6 +12,29 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
+const createEmbeddingCache = `-- name: CreateEmbeddingCache :one
+INSERT INTO embedding_cache (content_hash, embedding)
+VALUES ($1, $2)
+RETURNING id, content_hash, embedding, created_at
+`
+
+type CreateEmbeddingCacheParams struct {
+	ContentHash string      `json:"content_hash"`
+	Embedding   interface{} `json:"embedding"`
+}
+
+func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingCacheParams) (EmbeddingCache, error) {
+	row := q.db.QueryRowContext(ctx, createEmbeddingCache, arg.ContentHash, arg.Embedding)
+	var i EmbeddingCache
+	err := row.Scan(
+		&i.ID,
+		&i.ContentHash,
+		&i.Embedding,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createMemory = `-- name: CreateMemory :one
 INSERT INTO memories (user_id, content, status, source_message_id, importance, metadata, content_hash)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -108,6 +131,22 @@ type DeleteMemoryParams struct {
 func (q *Queries) DeleteMemory(ctx context.Context, arg DeleteMemoryParams) error {
 	_, err := q.db.ExecContext(ctx, deleteMemory, arg.ID, arg.UserID)
 	return err
+}
+
+const getEmbeddingCacheByHash = `-- name: GetEmbeddingCacheByHash :one
+SELECT id, content_hash, embedding, created_at FROM embedding_cache WHERE content_hash = $1
+`
+
+func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash string) (EmbeddingCache, error) {
+	row := q.db.QueryRowContext(ctx, getEmbeddingCacheByHash, contentHash)
+	var i EmbeddingCache
+	err := row.Scan(
+		&i.ID,
+		&i.ContentHash,
+		&i.Embedding,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getMemories = `-- name: GetMemories :many
