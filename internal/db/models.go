@@ -8,39 +8,30 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	"github.com/sqlc-dev/pqtype"
 )
 
-type Conversation struct {
-	ID        uuid.UUID    `json:"id"`
-	UserID    uuid.UUID    `json:"user_id"`
-	CreatedAt sql.NullTime `json:"created_at"`
-}
-
-type EmbeddingCache struct {
-	ID          uuid.UUID    `json:"id"`
-	ContentHash string       `json:"content_hash"`
-	Embedding   interface{}  `json:"embedding"`
-	CreatedAt   sql.NullTime `json:"created_at"`
-}
-
 type Memory struct {
-	ID             uuid.UUID    `json:"id"`
-	UserID         uuid.UUID    `json:"user_id"`
-	Content        string       `json:"content"`
-	Embedding      interface{}  `json:"embedding"`
-	EmbeddingModel string       `json:"embedding_model"`
-	ContentHash    string       `json:"content_hash"`
-	Importance     int32        `json:"importance"`
-	CreatedAt      sql.NullTime `json:"created_at"`
-	LastUsedAt     sql.NullTime `json:"last_used_at"`
+	ID              uuid.UUID             `json:"id"`
+	UserID          uuid.UUID             `json:"user_id"`
+	Content         string                `json:"content"`
+	Status          string                `json:"status"`
+	SourceMessageID uuid.NullUUID         `json:"source_message_id"`
+	Importance      int32                 `json:"importance"`
+	Metadata        pqtype.NullRawMessage `json:"metadata"`
+	ContentHash     string                `json:"content_hash"`
+	CreatedAt       sql.NullTime          `json:"created_at"`
+	UpdatedAt       sql.NullTime          `json:"updated_at"`
+	LastUsedAt      sql.NullTime          `json:"last_used_at"`
 }
 
 type Message struct {
-	ID             uuid.UUID    `json:"id"`
-	UserID         uuid.UUID    `json:"user_id"`
-	ConversationID uuid.UUID    `json:"conversation_id"`
-	Content        string       `json:"content"`
-	CreatedAt      sql.NullTime `json:"created_at"`
+	ID        uuid.UUID    `json:"id"`
+	UserID    uuid.UUID    `json:"user_id"`
+	SessionID string       `json:"session_id"`
+	Role      string       `json:"role"`
+	Content   string       `json:"content"`
+	CreatedAt sql.NullTime `json:"created_at"`
 }
 
 type User struct {
