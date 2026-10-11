@@ -45,6 +45,41 @@ func (q *Queries) CreateAgentTrace(ctx context.Context, arg CreateAgentTracePara
 	return i, err
 }
 
+const createDocumentChunk = `-- name: CreateDocumentChunk :one
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at
+`
+
+type CreateDocumentChunkParams struct {
+	FileID     uuid.UUID       `json:"file_id"`
+	UserID     uuid.UUID       `json:"user_id"`
+	ChunkIndex int32           `json:"chunk_index"`
+	Text       string          `json:"text"`
+	Embedding  pgvector.Vector `json:"embedding"`
+}
+
+func (q *Queries) CreateDocumentChunk(ctx context.Context, arg CreateDocumentChunkParams) (DocumentChunk, error) {
+	row := q.db.QueryRowContext(ctx, createDocumentChunk,
+		arg.FileID,
+		arg.UserID,
+		arg.ChunkIndex,
+		arg.Text,
+		arg.Embedding,
+	)
+	var i DocumentChunk
+	err := row.Scan(
+		&i.ID,
+		&i.FileID,
+		&i.UserID,
+		&i.ChunkIndex,
+		&i.Text,
+		&i.Embedding,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createEmbeddingCache = `-- name: CreateEmbeddingCache :one
 INSERT INTO embedding_cache (content_hash, embedding)
 VALUES ($1, $2)
@@ -64,6 +99,48 @@ func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingC
 		&i.ContentHash,
 		&i.Embedding,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createIngestedFile = `-- name: CreateIngestedFile :one
+INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at
+`
+
+type CreateIngestedFileParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	FileName  string    `json:"file_name"`
+	FileHash  string    `json:"file_hash"`
+	MimeType  string    `json:"mime_type"`
+	FileSize  int64     `json:"file_size"`
+	Status    string    `json:"status"`
+	LocalPath string    `json:"local_path"`
+}
+
+func (q *Queries) CreateIngestedFile(ctx context.Context, arg CreateIngestedFileParams) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, createIngestedFile,
+		arg.UserID,
+		arg.FileName,
+		arg.FileHash,
+		arg.MimeType,
+		arg.FileSize,
+		arg.Status,
+		arg.LocalPath,
+	)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -237,6 +314,41 @@ func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMe
 	return items, nil
 }
 
+const getDocumentChunksByFile = `-- name: GetDocumentChunksByFile :many
+SELECT id, file_id, user_id, chunk_index, text, embedding, created_at FROM document_chunks WHERE file_id = $1 ORDER BY chunk_index ASC
+`
+
+func (q *Queries) GetDocumentChunksByFile(ctx context.Context, fileID uuid.UUID) ([]DocumentChunk, error) {
+	rows, err := q.db.QueryContext(ctx, getDocumentChunksByFile, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DocumentChunk
+	for rows.Next() {
+		var i DocumentChunk
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileID,
+			&i.UserID,
+			&i.ChunkIndex,
+			&i.Text,
+			&i.Embedding,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getEmbeddingCacheByHash = `-- name: GetEmbeddingCacheByHash :one
 SELECT id, content_hash, embedding, created_at FROM embedding_cache WHERE content_hash = $1
 `
@@ -249,6 +361,55 @@ func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash strin
 		&i.ContentHash,
 		&i.Embedding,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getIngestedFileByHash = `-- name: GetIngestedFileByHash :one
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE user_id = $1 AND file_hash = $2
+`
+
+type GetIngestedFileByHashParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	FileHash string    `json:"file_hash"`
+}
+
+func (q *Queries) GetIngestedFileByHash(ctx context.Context, arg GetIngestedFileByHashParams) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, getIngestedFileByHash, arg.UserID, arg.FileHash)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getIngestedFileByID = `-- name: GetIngestedFileByID :one
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE id = $1
+`
+
+func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, getIngestedFileByID, id)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -571,6 +732,20 @@ type SupercedeMemoryParams struct {
 
 func (q *Queries) SupercedeMemory(ctx context.Context, arg SupercedeMemoryParams) error {
 	_, err := q.db.ExecContext(ctx, supercedeMemory, arg.ID, arg.UserID)
+	return err
+}
+
+const updateIngestedFileStatus = `-- name: UpdateIngestedFileStatus :exec
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateIngestedFileStatusParams struct {
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
+}
+
+func (q *Queries) UpdateIngestedFileStatus(ctx context.Context, arg UpdateIngestedFileStatusParams) error {
+	_, err := q.db.ExecContext(ctx, updateIngestedFileStatus, arg.ID, arg.Status)
 	return err
 }
 
