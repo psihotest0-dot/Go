@@ -8,8 +8,11 @@ import (
 	"github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 
+	"time"
+
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
+	"go-monolith/metrics"
 )
 
 type RetrievalService struct {
@@ -57,6 +60,11 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 }
 
 func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, query string, limit int) ([]db.Memory, error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("search").Observe(time.Since(start).Seconds())
+	}()
+
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate embedding for query: %w", err)

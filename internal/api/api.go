@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"errors"
 	"net/http"
 	"strings"
@@ -26,9 +27,7 @@ func (a *API) HealthzHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) MetricsHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "OK"})
+	promhttp.Handler().ServeHTTP(w, r)
 }
 
 func getUserID(r *http.Request) (uuid.UUID, error) {
