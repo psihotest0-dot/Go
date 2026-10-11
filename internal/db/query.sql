@@ -24,11 +24,32 @@ SET content = $2, status = $3, embedding = $4, embedding_model = $5, importance 
 WHERE id = $1 AND user_id = $9
 RETURNING *;
 
--- name: SearchSimilarMemories :many
-SELECT * FROM memories
-WHERE user_id = $1
-ORDER BY embedding <=> $2
-LIMIT $3;
+
+-- name: SearchHybridMemories :many
+WITH vector_search AS (
+    SELECT id, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
+    FROM memories
+    WHERE user_id = sqlc.arg('user_id') AND status = 'active'
+    ORDER BY rank
+    LIMIT 100
+),
+text_search AS (
+    SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
+    FROM memories
+    WHERE user_id = sqlc.arg('user_id') AND status = 'active'
+    ORDER BY rank
+    LIMIT 100
+)
+SELECT m.*
+FROM memories m
+LEFT JOIN vector_search vs ON m.id = vs.id
+LEFT JOIN text_search ts ON m.id = ts.id
+WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
+  AND m.user_id = sqlc.arg('user_id')
+ORDER BY
+    COALESCE(1.0 / (60 + vs.rank), 0.0) +
+    COALESCE(1.0 / (60 + ts.rank), 0.0) DESC
+LIMIT sqlc.arg('match_count');
 
 -- name: DeleteMemory :exec
 DELETE FROM memories WHERE id = $1 AND user_id = $2;
