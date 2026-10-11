@@ -106,3 +106,25 @@ SELECT * FROM memories ORDER BY created_at ASC LIMIT $1 OFFSET $2;
 
 -- name: UpdateMemoryEmbedding :exec
 UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3;
+
+-- name: CreateIngestedFile :one
+INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: GetIngestedFileByHash :one
+SELECT * FROM ingested_files WHERE user_id = $1 AND file_hash = $2;
+
+-- name: GetIngestedFileByID :one
+SELECT * FROM ingested_files WHERE id = $1;
+
+-- name: UpdateIngestedFileStatus :exec
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: CreateDocumentChunk :one
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: GetDocumentChunksByFile :many
+SELECT * FROM document_chunks WHERE file_id = $1 ORDER BY chunk_index ASC;
