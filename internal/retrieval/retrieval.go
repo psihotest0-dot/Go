@@ -66,12 +66,19 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 	}()
 
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate embedding for query: %w", err)
-	}
-
-	if len(vectors) == 0 {
-		return nil, fmt.Errorf("no embedding returned for query")
+	if err != nil || len(vectors) == 0 {
+		// Fallback to text search if embedder times out or fails
+		fmt.Printf("Fallback to text search due to embedder error: %v\n", err)
+		params := db.SearchTextMemoriesParams{
+			UserID:     userID,
+			QueryText:  query,
+			MatchCount: int32(limit),
+		}
+		memories, searchErr := s.db.Queries.SearchTextMemories(ctx, params)
+		if searchErr != nil {
+			return nil, fmt.Errorf("failed to search text memories during fallback: %w", searchErr)
+		}
+		return memories, nil
 	}
 
 	pgVec := pgvector.NewVector(vectors[0])

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -143,16 +144,16 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 5. Pruning Logic (Sliding Window based on character count)
-	maxChars := 4000
+	maxChars := 2000
 	var finalMessages []openai.ChatCompletionMessage
 	finalMessages = append(finalMessages, systemMessage)
 
 	// Keep taking from history (newest to oldest) until we hit the char limit
 	var reversedKeep []openai.ChatCompletionMessage
-	currentChars := len(systemMessage.Content)
+	currentChars := utf8.RuneCountInString(systemMessage.Content)
 
 	for i := len(historyMessages) - 1; i >= 0; i-- {
-		msgLen := len(historyMessages[i].Content)
+		msgLen := utf8.RuneCountInString(historyMessages[i].Content)
 		if currentChars+msgLen > maxChars && len(reversedKeep) > 0 {
 			break
 		}
