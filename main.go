@@ -61,6 +61,16 @@ func main() {
 
 	mux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
 
+	mux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			apiService.CreateFileHandler(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/v1/files/", apiService.DeleteFileHandler)
+
 	handler := api.Middleware(logger)(mux)
 
 	logger.Info("server listening on :8080")

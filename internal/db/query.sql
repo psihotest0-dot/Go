@@ -26,29 +26,53 @@ RETURNING *;
 
 
 -- name: SearchHybridMemories :many
-WITH vector_search AS (
+WITH memory_vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
     FROM memories
-    WHERE user_id = sqlc.arg('user_id') AND status = 'active'
+    WHERE memories.user_id = sqlc.arg('user_id') AND status = 'active'
     ORDER BY rank
     LIMIT 100
 ),
-text_search AS (
+memory_text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
     FROM memories
-    WHERE user_id = sqlc.arg('user_id') AND status = 'active'
+    WHERE memories.user_id = sqlc.arg('user_id') AND status = 'active'
     ORDER BY rank
     LIMIT 100
+),
+chunk_vector_search AS (
+    SELECT id, RANK() OVER (ORDER BY document_chunks.embedding <=> sqlc.arg('embedding')) as rank
+    FROM document_chunks
+    WHERE document_chunks.user_id = sqlc.arg('user_id')
+    ORDER BY rank
+    LIMIT 100
+),
+chunk_text_search AS (
+    SELECT id, RANK() OVER (ORDER BY similarity(text, sqlc.arg('query_text')) DESC) as rank
+    FROM document_chunks
+    WHERE document_chunks.user_id = sqlc.arg('user_id')
+    ORDER BY rank
+    LIMIT 100
+),
+combined_results AS (
+    SELECT
+        m.id as memory_id, NULL::uuid as chunk_id, m.content as text, m.id as source_id,
+        (COALESCE(1.0 / (60 + mvs.rank), 0.0) + COALESCE(1.0 / (60 + mts.rank), 0.0))::float8 as score
+    FROM memories m
+    LEFT JOIN memory_vector_search mvs ON m.id = mvs.id
+    LEFT JOIN memory_text_search mts ON m.id = mts.id
+    WHERE (mvs.id IS NOT NULL OR mts.id IS NOT NULL) AND m.user_id = sqlc.arg('user_id')
+    UNION ALL
+    SELECT
+        NULL::uuid as memory_id, c.id as chunk_id, c.text as text, c.id as source_id,
+        (COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0))::float8 as score
+    FROM document_chunks c
+    LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
+    LEFT JOIN chunk_text_search cts ON c.id = cts.id
+    WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL) AND c.user_id = sqlc.arg('user_id')
 )
-SELECT m.*
-FROM memories m
-LEFT JOIN vector_search vs ON m.id = vs.id
-LEFT JOIN text_search ts ON m.id = ts.id
-WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
-  AND m.user_id = sqlc.arg('user_id')
-ORDER BY
-    COALESCE(1.0 / (60 + vs.rank), 0.0) +
-    COALESCE(1.0 / (60 + ts.rank), 0.0) DESC
+SELECT memory_id, chunk_id, text, source_id, score FROM combined_results
+ORDER BY score DESC
 LIMIT sqlc.arg('match_count');
 
 -- name: SearchTextMemories :many
@@ -106,3 +130,25 @@ SELECT * FROM memories ORDER BY created_at ASC LIMIT $1 OFFSET $2;
 
 -- name: UpdateMemoryEmbedding :exec
 UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3;
+
+-- name: CreateIngestedFile :one
+INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, status)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: UpdateIngestedFileStatus :exec
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: GetIngestedFile :one
+SELECT * FROM ingested_files WHERE id = $1;
+
+-- name: DeleteIngestedFile :exec
+DELETE FROM ingested_files WHERE id = $1;
+
+-- name: CreateDocumentChunk :one
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING *;
+
+-- name: DeleteDocumentChunksByFile :exec
+DELETE FROM document_chunks WHERE file_id = $1;

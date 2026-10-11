@@ -23,11 +23,32 @@ type AgentTrace struct {
 	CreatedAt sql.NullTime          `json:"created_at"`
 }
 
+type DocumentChunk struct {
+	ID         uuid.UUID       `json:"id"`
+	FileID     uuid.UUID       `json:"file_id"`
+	UserID     uuid.UUID       `json:"user_id"`
+	ChunkIndex int32           `json:"chunk_index"`
+	Text       string          `json:"text"`
+	Embedding  pgvector.Vector `json:"embedding"`
+	CreatedAt  sql.NullTime    `json:"created_at"`
+}
+
 type EmbeddingCache struct {
 	ID          uuid.UUID       `json:"id"`
 	ContentHash string          `json:"content_hash"`
 	Embedding   pgvector.Vector `json:"embedding"`
 	CreatedAt   sql.NullTime    `json:"created_at"`
+}
+
+type IngestedFile struct {
+	ID        uuid.UUID    `json:"id"`
+	UserID    uuid.UUID    `json:"user_id"`
+	FileName  string       `json:"file_name"`
+	FileHash  string       `json:"file_hash"`
+	MimeType  string       `json:"mime_type"`
+	Status    string       `json:"status"`
+	CreatedAt sql.NullTime `json:"created_at"`
+	UpdatedAt sql.NullTime `json:"updated_at"`
 }
 
 type Memory struct {

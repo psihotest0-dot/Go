@@ -1,15 +1,24 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"errors"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"go-monolith/internal/db"
+	"go-monolith/internal/jobs"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/riverqueue/river"
 	"github.com/sqlc-dev/pqtype"
 )
 
@@ -245,4 +254,160 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (a *API) CreateFileHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, err := getUserID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	// Limit request size to 10MB
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "missing file in request", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Calculate SHA256 Hash
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, file); err != nil {
+		http.Error(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+	fileHash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Reset file pointer
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		http.Error(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Get mimetype
+	fileHeader := make([]byte, 512)
+	if _, err := file.Read(fileHeader); err != nil && err != io.EOF {
+		http.Error(w, "failed to read file header", http.StatusInternalServerError)
+		return
+	}
+
+	mimeType := http.DetectContentType(fileHeader)
+
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		http.Error(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Save to DB (Status pending)
+	dbFile, err := a.db.Queries.CreateIngestedFile(r.Context(), db.CreateIngestedFileParams{
+		UserID:   userID,
+		FileName: header.Filename,
+		FileHash: fileHash,
+		MimeType: mimeType,
+		Status:   "pending",
+	})
+	if err != nil {
+		http.Error(w, "failed to save file record", http.StatusInternalServerError)
+		return
+	}
+
+	// Save file physically
+	err = os.MkdirAll("storage", os.ModePerm)
+	if err != nil {
+		http.Error(w, "failed to create storage directory", http.StatusInternalServerError)
+		return
+	}
+
+	dstPath := filepath.Join("storage", dbFile.ID.String()+filepath.Ext(header.Filename))
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		http.Error(w, "failed to save file locally", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		http.Error(w, "failed to save file locally", http.StatusInternalServerError)
+		return
+	}
+
+	// Enqueue Job
+	_, err = river.ClientFromContext[pgx.Tx](r.Context()).Insert(r.Context(), jobs.IngestFileJobArgs{
+		FileID: dbFile.ID,
+	}, nil)
+
+	if err != nil {
+		// Log error, but file is saved.
+		http.Error(w, "failed to enqueue job", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(dbFile)
+}
+
+func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, err := getUserID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	idStr := parts[3] // /v1/files/{id}
+	fileID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid file id", http.StatusBadRequest)
+		return
+	}
+
+	// Make sure it belongs to the user
+	file, err := a.db.Queries.GetIngestedFile(r.Context(), fileID)
+	if err != nil || file.UserID != userID {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete from DB (document_chunks cascade on delete)
+	err = a.db.Queries.DeleteIngestedFile(r.Context(), fileID)
+	if err != nil {
+		http.Error(w, "failed to delete file from database", http.StatusInternalServerError)
+		return
+	}
+
+	// Remove physical file
+	// We check for any extension, but mostly we appended the original ext
+	matches, err := filepath.Glob(filepath.Join("storage", file.ID.String()+".*"))
+	if err == nil {
+		for _, m := range matches {
+			os.Remove(m)
+		}
+	}
+	// Fallback in case there was no extension
+	os.Remove(filepath.Join("storage", file.ID.String()))
+
+	w.WriteHeader(http.StatusNoContent)
 }

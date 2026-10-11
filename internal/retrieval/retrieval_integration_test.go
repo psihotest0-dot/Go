@@ -52,7 +52,7 @@ func TestRetrieval_Integration(t *testing.T) {
 	results, err := svc.SearchSimilar(ctx, user.ID, query, 1)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
-	assert.Equal(t, content, results[0].Content)
+	assert.Equal(t, content, results[0].Text)
 }
 
 func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
@@ -118,7 +118,7 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 
 	found := false
 	for _, r := range results {
-		if r.Content == "Връх Мусала е най-високият на Балканите." {
+		if r.Text == "Връх Мусала е най-високият на Балканите." {
 			found = true
 			break
 		}

@@ -3,12 +3,11 @@ package retrieval
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
-
-	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
@@ -59,7 +58,14 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 	return mem, nil
 }
 
-func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, query string, limit int) ([]db.Memory, error) {
+type SearchResult struct {
+	ID    uuid.UUID `json:"id"`
+	Type  string    `json:"type"` // "memory" or "chunk"
+	Text  string    `json:"text"`
+	Score float64   `json:"score"`
+}
+
+func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
 	start := time.Now()
 	defer func() {
 		metrics.StageLatency.WithLabelValues("search").Observe(time.Since(start).Seconds())
@@ -78,7 +84,17 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 		if searchErr != nil {
 			return nil, fmt.Errorf("failed to search text memories during fallback: %w", searchErr)
 		}
-		return memories, nil
+
+		var results []SearchResult
+		for _, m := range memories {
+			results = append(results, SearchResult{
+				ID: m.ID,
+				Type: "memory",
+				Text: m.Content,
+				Score: 1.0, // Text search doesn't return score
+			})
+		}
+		return results, nil
 	}
 
 	pgVec := pgvector.NewVector(vectors[0])
@@ -90,10 +106,32 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 		QueryText:  query,
 	}
 
-	memories, err := s.db.Queries.SearchHybridMemories(ctx, params)
+	rawResults, err := s.db.Queries.SearchHybridMemories(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
 	}
 
-	return memories, nil
+	var results []SearchResult
+	for _, r := range rawResults {
+		typ := "memory"
+		var id uuid.UUID
+
+		if r.ChunkID.Valid {
+			typ = "chunk"
+			id = r.ChunkID.UUID
+		} else if r.MemoryID.Valid {
+			id = r.MemoryID.UUID
+		} else {
+            id = uuid.Nil
+        }
+
+		results = append(results, SearchResult{
+			ID: id,
+			Type: typ,
+			Text: r.Text,
+			Score: float64(r.Score),
+		})
+	}
+
+	return results, nil
 }

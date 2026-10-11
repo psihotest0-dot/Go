@@ -94,7 +94,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	var memoryIDs []string
 	if err == nil {
 		for _, m := range memories {
-			contextTexts = append(contextTexts, m.Content)
+			contextTexts = append(contextTexts, m.Text)
 			memoryIDs = append(memoryIDs, m.ID.String())
 		}
 	}
