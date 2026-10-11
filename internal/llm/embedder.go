@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go-monolith/internal/db"
+	"go-monolith/metrics"
 
 	"github.com/pgvector/pgvector-go"
 )
@@ -94,6 +95,11 @@ func hashContent(content string) string {
 }
 
 func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("embed").Observe(time.Since(start).Seconds())
+	}()
+
 	if len(texts) == 0 {
 		return nil, nil
 	}
@@ -121,10 +127,12 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]floa
 		cached, err := c.db.Queries.GetEmbeddingCacheByHash(ctx, h)
 		if err == nil {
 			// Found in cache
+			metrics.CacheHits.Inc()
 			chunkVectors[i] = cached.Embedding.Slice()
 			continue
 		}
 
+		metrics.CacheMisses.Inc()
 		textsToEmbed = append(textsToEmbed, chunk)
 		indicesToEmbed = append(indicesToEmbed, i)
 	}
