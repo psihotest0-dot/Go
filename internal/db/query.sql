@@ -66,3 +66,31 @@ RETURNING *;
 INSERT INTO agent_traces (user_id, session_id, step, details)
 VALUES ($1, $2, $3, $4)
 RETURNING *;
+
+-- name: GetUnanalyzedMessages :many
+SELECT m.*
+FROM messages m
+LEFT JOIN memories mem ON m.id = mem.source_message_id
+WHERE mem.id IS NULL AND m.user_id = $1
+ORDER BY m.created_at ASC;
+
+-- name: GetUsersWithUnanalyzedMessages :many
+SELECT DISTINCT m.user_id
+FROM messages m
+LEFT JOIN memories mem ON m.id = mem.source_message_id
+WHERE mem.id IS NULL;
+
+-- name: DeleteOldEmbeddingCache :execrows
+WITH deleted AS (
+    SELECT id FROM embedding_cache
+    WHERE created_at < NOW() - INTERVAL '30 days'
+    LIMIT 1000
+    FOR UPDATE SKIP LOCKED
+)
+DELETE FROM embedding_cache
+WHERE id IN (SELECT id FROM deleted);
+
+-- name: SupercedeMemory :exec
+UPDATE memories
+SET status = 'superseded', updated_at = NOW()
+WHERE id = $1 AND user_id = $2;

@@ -16,6 +16,7 @@ import (
 
 type Database struct {
 	Pool    *pgxpool.Pool
+	SqlDB   *sql.DB
 	Queries *Queries
 }
 
@@ -29,9 +30,11 @@ func Connect(ctx context.Context, connString string) (*Database, error) {
 		return nil, fmt.Errorf("unable to ping database: %w", err)
 	}
 
+	sqlDb := stdlib.OpenDBFromPool(pool)
 	return &Database{
 		Pool:    pool,
-		Queries: New(stdlib.OpenDBFromPool(pool)),
+		SqlDB:   sqlDb,
+		Queries: New(sqlDb),
 	}, nil
 }
 
