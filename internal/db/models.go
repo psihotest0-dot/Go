@@ -8,14 +8,15 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 )
 
 type EmbeddingCache struct {
-	ID          uuid.UUID    `json:"id"`
-	ContentHash string       `json:"content_hash"`
-	Embedding   interface{}  `json:"embedding"`
-	CreatedAt   sql.NullTime `json:"created_at"`
+	ID          uuid.UUID       `json:"id"`
+	ContentHash string          `json:"content_hash"`
+	Embedding   pgvector.Vector `json:"embedding"`
+	CreatedAt   sql.NullTime    `json:"created_at"`
 }
 
 type Memory struct {
@@ -23,6 +24,8 @@ type Memory struct {
 	UserID          uuid.UUID             `json:"user_id"`
 	Content         string                `json:"content"`
 	Status          string                `json:"status"`
+	Embedding       pgvector.Vector       `json:"embedding"`
+	EmbeddingModel  string                `json:"embedding_model"`
 	SourceMessageID uuid.NullUUID         `json:"source_message_id"`
 	Importance      int32                 `json:"importance"`
 	Metadata        pqtype.NullRawMessage `json:"metadata"`
