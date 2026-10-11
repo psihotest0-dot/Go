@@ -8,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/sqlc-dev/pqtype"
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pgvector/pgvector-go"
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	pgvector "github.com/pgvector/pgvector-go"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
