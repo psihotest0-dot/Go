@@ -68,15 +68,16 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 
 	pgVec := pgvector.NewVector(vectors[0])
 
-	params := db.SearchSimilarMemoriesParams{
-		UserID:    userID,
-		Embedding: pgVec,
-		Limit:     int32(limit),
+	params := db.SearchHybridMemoriesParams{
+		UserID:     userID,
+		MatchCount: int32(limit),
+		Embedding:  pgVec,
+		QueryText:  query,
 	}
 
-	memories, err := s.db.Queries.SearchSimilarMemories(ctx, params)
+	memories, err := s.db.Queries.SearchHybridMemories(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search similar memories: %w", err)
+		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
 	}
 
 	return memories, nil

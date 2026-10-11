@@ -266,21 +266,47 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 	return items, nil
 }
 
-const searchSimilarMemories = `-- name: SearchSimilarMemories :many
-SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
-WHERE user_id = $1
-ORDER BY embedding <=> $2
-LIMIT $3
+const searchHybridMemories = `-- name: SearchHybridMemories :many
+WITH vector_search AS (
+    SELECT id, RANK() OVER (ORDER BY memories.embedding <=> $3) as rank
+    FROM memories
+    WHERE user_id = $1 AND status = 'active'
+    ORDER BY rank
+    LIMIT 100
+),
+text_search AS (
+    SELECT id, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
+    FROM memories
+    WHERE user_id = $1 AND status = 'active'
+    ORDER BY rank
+    LIMIT 100
+)
+SELECT m.id, m.user_id, m.content, m.status, m.embedding, m.embedding_model, m.source_message_id, m.importance, m.metadata, m.content_hash, m.created_at, m.updated_at, m.last_used_at
+FROM memories m
+LEFT JOIN vector_search vs ON m.id = vs.id
+LEFT JOIN text_search ts ON m.id = ts.id
+WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
+  AND m.user_id = $1
+ORDER BY
+    COALESCE(1.0 / (60 + vs.rank), 0.0) +
+    COALESCE(1.0 / (60 + ts.rank), 0.0) DESC
+LIMIT $2
 `
 
-type SearchSimilarMemoriesParams struct {
-	UserID    uuid.UUID       `json:"user_id"`
-	Embedding pgvector.Vector `json:"embedding"`
-	Limit     int32           `json:"limit"`
+type SearchHybridMemoriesParams struct {
+	UserID     uuid.UUID       `json:"user_id"`
+	MatchCount int32           `json:"match_count"`
+	Embedding  pgvector.Vector `json:"embedding"`
+	QueryText  string          `json:"query_text"`
 }
 
-func (q *Queries) SearchSimilarMemories(ctx context.Context, arg SearchSimilarMemoriesParams) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, searchSimilarMemories, arg.UserID, arg.Embedding, arg.Limit)
+func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemoriesParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, searchHybridMemories,
+		arg.UserID,
+		arg.MatchCount,
+		arg.Embedding,
+		arg.QueryText,
+	)
 	if err != nil {
 		return nil, err
 	}
