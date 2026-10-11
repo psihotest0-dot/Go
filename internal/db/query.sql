@@ -61,3 +61,8 @@ SELECT * FROM embedding_cache WHERE content_hash = $1;
 INSERT INTO embedding_cache (content_hash, embedding)
 VALUES ($1, $2)
 RETURNING *;
+
+-- name: CreateAgentTrace :one
+INSERT INTO agent_traces (user_id, session_id, step, details)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
