@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -103,4 +104,33 @@ func (m *MockLLM) ChatWithJSONSchema(ctx context.Context, req openai.ChatComplet
 	m.LastRequest = req
 	m.LastSchema = schema
 	return m.Response, m.Error
+}
+
+// MockEmbedder implements Embedder interface with deterministic vector generation.
+type MockEmbedder struct {}
+
+func (m *MockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	resultVectors := make([][]float32, len(texts))
+	for i, text := range texts {
+		vec := make([]float32, 384)
+		h := sha256.Sum256([]byte(text))
+
+		// Fill first 32 dimensions with hash values
+		for j := 0; j < 32; j++ {
+			vec[j] = float32(h[j]) / 255.0
+		}
+
+		// Fill rest to simulate something
+		for j := 32; j < 384; j++ {
+			vec[j] = float32(j) / 384.0
+		}
+
+		resultVectors[i] = vec
+	}
+
+	return resultVectors, nil
 }
