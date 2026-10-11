@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"go-monolith/internal/db"
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
     "github.com/riverqueue/river"

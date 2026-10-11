@@ -3,7 +3,7 @@ package llm
 import (
 	"context"
 
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/sashabaranov/go-openai"
 )
 
 // ContextManager is a decorator for LLMClient that manages history pruning

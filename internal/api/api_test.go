@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/pressly/goose/v3"
+	goose "github.com/pressly/goose/v3"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"go-monolith/internal/api"
