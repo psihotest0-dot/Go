@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"strings"
+
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
 
@@ -112,4 +114,57 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(ingestedFile)
 	}
+}
+
+func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, err := getUserID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 4 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	idStr := parts[3] // /v1/files/{id}
+	fileID, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid file id", http.StatusBadRequest)
+		return
+	}
+
+	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	if file.UserID != userID {
+		http.Error(w, "unauthorized access to file", http.StatusForbidden)
+		return
+	}
+
+	// Delete from DB (document_chunks cascade on delete)
+	err = a.db.Queries.DeleteIngestedFile(r.Context(), db.DeleteIngestedFileParams{
+		ID:     fileID,
+		UserID: userID,
+	})
+	if err != nil {
+		http.Error(w, "failed to delete file from db", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete from local storage
+	if file.LocalPath != "" {
+		_ = os.Remove(file.LocalPath)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

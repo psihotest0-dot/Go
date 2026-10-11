@@ -235,6 +235,20 @@ func (q *Queries) CreateUser(ctx context.Context) (User, error) {
 	return i, err
 }
 
+const deleteIngestedFile = `-- name: DeleteIngestedFile :exec
+DELETE FROM ingested_files WHERE id = $1 AND user_id = $2
+`
+
+type DeleteIngestedFileParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFileParams) error {
+	_, err := q.db.ExecContext(ctx, deleteIngestedFile, arg.ID, arg.UserID)
+	return err
+}
+
 const deleteMemory = `-- name: DeleteMemory :exec
 DELETE FROM memories WHERE id = $1 AND user_id = $2
 `
@@ -592,18 +606,127 @@ func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UU
 	return items, nil
 }
 
+const searchHybridAll = `-- name: SearchHybridAll :many
+WITH
+memory_vector_search AS (
+    SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY memories.embedding <=> $2) as rank
+    FROM memories
+    WHERE memories.user_id = $3 AND memories.status = 'active'
+    ORDER BY rank
+    LIMIT 100
+),
+memory_text_search AS (
+    SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
+    FROM memories
+    WHERE memories.user_id = $3 AND memories.status = 'active'
+    ORDER BY rank
+    LIMIT 100
+),
+chunk_vector_search AS (
+    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY memories.embedding <=> $2) as rank
+    FROM document_chunks
+    WHERE document_chunks.user_id = $3
+    ORDER BY rank
+    LIMIT 100
+),
+chunk_text_search AS (
+    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY similarity(text, $4) DESC) as rank
+    FROM document_chunks
+    WHERE document_chunks.user_id = $3
+    ORDER BY rank
+    LIMIT 100
+),
+combined_results AS (
+    SELECT
+        m.id,
+        m.content,
+        'memory' as source_type,
+        CAST(COALESCE(1.0 / (60 + mvs.rank), 0.0) + COALESCE(1.0 / (60 + mts.rank), 0.0) AS FLOAT8) as score
+    FROM memories m
+    LEFT JOIN memory_vector_search mvs ON m.id = mvs.id
+    LEFT JOIN memory_text_search mts ON m.id = mts.id
+    WHERE (mvs.id IS NOT NULL OR mts.id IS NOT NULL)
+      AND m.user_id = $3
+      AND m.status = 'active'
+
+    UNION ALL
+
+    SELECT
+        c.id,
+        c.text as content,
+        'chunk' as source_type,
+        CAST(COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0) AS FLOAT8) as score
+    FROM document_chunks c
+    LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
+    LEFT JOIN chunk_text_search cts ON c.id = cts.id
+    WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
+      AND c.user_id = $3
+)
+SELECT id, content, source_type, score
+FROM combined_results
+ORDER BY score DESC
+LIMIT $1
+`
+
+type SearchHybridAllParams struct {
+	MatchCount int32           `json:"match_count"`
+	Embedding  pgvector.Vector `json:"embedding"`
+	UserID     uuid.UUID       `json:"user_id"`
+	QueryText  string          `json:"query_text"`
+}
+
+type SearchHybridAllRow struct {
+	ID         uuid.UUID `json:"id"`
+	Content    string    `json:"content"`
+	SourceType string    `json:"source_type"`
+	Score      float64   `json:"score"`
+}
+
+func (q *Queries) SearchHybridAll(ctx context.Context, arg SearchHybridAllParams) ([]SearchHybridAllRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchHybridAll,
+		arg.MatchCount,
+		arg.Embedding,
+		arg.UserID,
+		arg.QueryText,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchHybridAllRow
+	for rows.Next() {
+		var i SearchHybridAllRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.SourceType,
+			&i.Score,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchHybridMemories = `-- name: SearchHybridMemories :many
 WITH vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> $3) as rank
     FROM memories
-    WHERE user_id = $1 AND status = 'active'
+    WHERE memories.user_id = $1 AND memories.status = 'active'
     ORDER BY rank
     LIMIT 100
 ),
 text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
     FROM memories
-    WHERE user_id = $1 AND status = 'active'
+    WHERE memories.user_id = $1 AND memories.status = 'active'
     ORDER BY rank
     LIMIT 100
 )
@@ -655,6 +778,59 @@ func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemo
 			&i.UpdatedAt,
 			&i.LastUsedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchTextAll = `-- name: SearchTextAll :many
+WITH combined AS (
+    SELECT m.id, m.content, 'memory' as source_type, similarity(m.content, $2) as sim
+    FROM memories m
+    WHERE m.user_id = $3 AND m.status = 'active'
+
+    UNION ALL
+
+    SELECT c.id, c.text as content, 'chunk' as source_type, similarity(c.text, $2) as sim
+    FROM document_chunks c
+    WHERE c.user_id = $3
+)
+SELECT id, content, source_type
+FROM combined
+ORDER BY sim DESC
+LIMIT $1
+`
+
+type SearchTextAllParams struct {
+	MatchCount int32     `json:"match_count"`
+	QueryText  string    `json:"query_text"`
+	UserID     uuid.UUID `json:"user_id"`
+}
+
+type SearchTextAllRow struct {
+	ID         uuid.UUID `json:"id"`
+	Content    string    `json:"content"`
+	SourceType string    `json:"source_type"`
+}
+
+func (q *Queries) SearchTextAll(ctx context.Context, arg SearchTextAllParams) ([]SearchTextAllRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchTextAll, arg.MatchCount, arg.QueryText, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchTextAllRow
+	for rows.Next() {
+		var i SearchTextAllRow
+		if err := rows.Scan(&i.ID, &i.Content, &i.SourceType); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

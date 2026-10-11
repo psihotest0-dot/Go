@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
@@ -68,7 +67,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to extract text: %w", err)
 	}
 
-	chunks := w.chunkText(text, 100) // approx 100 words per chunk
+	chunks := w.chunkText(text, 400, 50) // ~400 chars, ~50 chars overlap
 
 	for i, chunk := range chunks {
 		vectors, err := w.embedder.EmbedTexts(ctx, []string{chunk})
@@ -108,15 +107,27 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	return nil
 }
 
-func (w *IngestFileWorker) chunkText(text string, wordsPerChunk int) []string {
-	words := strings.Fields(text)
+func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []string {
+	runes := []rune(text)
 	var chunks []string
-	for i := 0; i < len(words); i += wordsPerChunk {
-		end := i + wordsPerChunk
-		if end > len(words) {
-			end = len(words)
+
+	if len(runes) == 0 {
+		return chunks
+	}
+
+	if chunkSize <= overlap {
+		chunkSize = overlap + 1 // Prevent infinite loop
+	}
+
+	for i := 0; i < len(runes); i += (chunkSize - overlap) {
+		end := i + chunkSize
+		if end > len(runes) {
+			end = len(runes)
 		}
-		chunks = append(chunks, strings.Join(words[i:end], " "))
+		chunks = append(chunks, string(runes[i:end]))
+		if end == len(runes) {
+			break
+		}
 	}
 	return chunks
 }
