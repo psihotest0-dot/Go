@@ -191,6 +191,52 @@ func (q *Queries) DeleteOldEmbeddingCache(ctx context.Context) (int64, error) {
 	return result.RowsAffected()
 }
 
+const getAllMemoriesForReembedding = `-- name: GetAllMemoriesForReembedding :many
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories ORDER BY created_at ASC LIMIT $1 OFFSET $2
+`
+
+type GetAllMemoriesForReembeddingParams struct {
+	Limit  int32 `json:"limit"`
+	Offset int32 `json:"offset"`
+}
+
+func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMemoriesForReembeddingParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, getAllMemoriesForReembedding, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Memory
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Content,
+			&i.Status,
+			&i.Embedding,
+			&i.EmbeddingModel,
+			&i.SourceMessageID,
+			&i.Importance,
+			&i.Metadata,
+			&i.ContentHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getEmbeddingCacheByHash = `-- name: GetEmbeddingCacheByHash :one
 SELECT id, content_hash, embedding, created_at FROM embedding_cache WHERE content_hash = $1
 `
@@ -525,4 +571,19 @@ func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Mem
 		&i.LastUsedAt,
 	)
 	return i, err
+}
+
+const updateMemoryEmbedding = `-- name: UpdateMemoryEmbedding :exec
+UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3
+`
+
+type UpdateMemoryEmbeddingParams struct {
+	Embedding      pgvector.Vector `json:"embedding"`
+	EmbeddingModel string          `json:"embedding_model"`
+	ID             uuid.UUID       `json:"id"`
+}
+
+func (q *Queries) UpdateMemoryEmbedding(ctx context.Context, arg UpdateMemoryEmbeddingParams) error {
+	_, err := q.db.ExecContext(ctx, updateMemoryEmbedding, arg.Embedding, arg.EmbeddingModel, arg.ID)
+	return err
 }
