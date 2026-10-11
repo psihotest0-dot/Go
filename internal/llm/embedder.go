@@ -12,27 +12,55 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"go-monolith/internal/db"
 
 	"github.com/pgvector/pgvector-go"
 )
 
-type EmbedderClient struct {
+// Embedder defines the interface for embedding texts
+type Embedder interface {
+	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
+}
+
+type HTTPEmbedder struct {
 	baseURL string
 	db      *db.Database
 	client  *http.Client
 }
 
-func NewEmbedderClient(database *db.Database) *EmbedderClient {
+func NewHTTPEmbedder(database *db.Database) *HTTPEmbedder {
 	baseURL := os.Getenv("EMBEDDER_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost:8000"
 	}
-	return &EmbedderClient{
+
+	client := &http.Client{}
+
+	// Wait for embedder to be ready with retries
+	ready := false
+	for i := 0; i < 3; i++ {
+		resp, err := client.Get(baseURL + "/health")
+		if err == nil && resp.StatusCode == 200 {
+			resp.Body.Close()
+			ready = true
+			break
+		}
+		if resp != nil {
+			resp.Body.Close()
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	if !ready {
+		// Just log or ignore, the actual EmbedTexts will fail later if it's still down.
+	}
+
+	return &HTTPEmbedder{
 		baseURL: baseURL,
 		db:      database,
-		client:  &http.Client{},
+		client:  client,
 	}
 }
 
@@ -65,7 +93,7 @@ func hashContent(content string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
@@ -93,19 +121,8 @@ func (c *EmbedderClient) EmbedTexts(ctx context.Context, texts []string) ([][]fl
 		cached, err := c.db.Queries.GetEmbeddingCacheByHash(ctx, h)
 		if err == nil {
 			// Found in cache
-			valStr := ""
-			switch v := cached.Embedding.(type) {
-			case string:
-				valStr = v
-			case []byte:
-				valStr = string(v)
-			}
-
-			vec := pgvector.NewVector(nil)
-			if err := vec.Scan(valStr); err == nil {
-				chunkVectors[i] = vec.Slice()
-				continue
-			}
+			chunkVectors[i] = cached.Embedding.Slice()
+			continue
 		}
 
 		textsToEmbed = append(textsToEmbed, chunk)
