@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/sashabaranov/go-openai"
 )
 
 func TestContextManager_Pruning(t *testing.T) {

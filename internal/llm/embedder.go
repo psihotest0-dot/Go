@@ -17,7 +17,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/metrics"
 
-	"github.com/pgvector/pgvector-go"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 // Embedder defines the interface for embedding texts

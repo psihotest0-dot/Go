@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/sashabaranov/go-openai"
 )
 
 // MockRoundTripper is a custom http.RoundTripper that simulates responses

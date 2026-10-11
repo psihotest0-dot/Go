@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/metrics"
 )
