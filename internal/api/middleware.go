@@ -4,6 +4,10 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
+
+	"go-monolith/metrics"
 )
 
 type key int
@@ -13,9 +17,20 @@ const (
 	UserIDKey
 )
 
+type responseWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.status = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
 func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
 			reqID := r.Header.Get("X-Request-ID")
 			if reqID == "" {
 				reqID = "unknown"
@@ -31,7 +46,14 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			)
 			reqLogger.Info("incoming request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 
-			next.ServeHTTP(w, r.WithContext(ctx))
+			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
+
+			next.ServeHTTP(rw, r.WithContext(ctx))
+
+			duration := time.Since(start).Seconds()
+
+			metrics.QPS.WithLabelValues(r.Method, r.URL.Path, strconv.Itoa(rw.status)).Inc()
+			metrics.Latency.WithLabelValues(r.Method, r.URL.Path).Observe(duration)
 		})
 	}
 }
