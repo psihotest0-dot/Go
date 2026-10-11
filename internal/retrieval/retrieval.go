@@ -3,12 +3,11 @@ package retrieval
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
-
-	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
@@ -59,41 +58,69 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 	return mem, nil
 }
 
-func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, query string, limit int) ([]db.Memory, error) {
+// We return unified results now
+type SearchResult struct {
+	ID         uuid.UUID
+	Content    string
+	SourceType string
+	Score      float64
+}
+
+func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
 	start := time.Now()
 	defer func() {
 		metrics.StageLatency.WithLabelValues("search").Observe(time.Since(start).Seconds())
 	}()
 
+	var results []SearchResult
+
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
 	if err != nil || len(vectors) == 0 {
 		// Fallback to text search if embedder times out or fails
 		fmt.Printf("Fallback to text search due to embedder error: %v\n", err)
-		params := db.SearchTextMemoriesParams{
+		params := db.SearchTextAllParams{
 			UserID:     userID,
 			QueryText:  query,
 			MatchCount: int32(limit),
 		}
-		memories, searchErr := s.db.Queries.SearchTextMemories(ctx, params)
+		rows, searchErr := s.db.Queries.SearchTextAll(ctx, params)
 		if searchErr != nil {
 			return nil, fmt.Errorf("failed to search text memories during fallback: %w", searchErr)
 		}
-		return memories, nil
+
+		for _, m := range rows {
+			results = append(results, SearchResult{
+				ID:         m.ID,
+				Content:    m.Content,
+				SourceType: m.SourceType,
+				Score:      0, // text fallback doesn't map directly to RRF score
+			})
+		}
+		return results, nil
 	}
 
 	pgVec := pgvector.NewVector(vectors[0])
 
-	params := db.SearchHybridMemoriesParams{
+	params := db.SearchHybridAllParams{
 		UserID:     userID,
 		MatchCount: int32(limit),
 		Embedding:  pgVec,
 		QueryText:  query,
 	}
 
-	memories, err := s.db.Queries.SearchHybridMemories(ctx, params)
+	rows, err := s.db.Queries.SearchHybridAll(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
 	}
 
-	return memories, nil
+	for _, row := range rows {
+		results = append(results, SearchResult{
+			ID:         row.ID,
+			Content:    row.Content,
+			SourceType: row.SourceType,
+			Score:      row.Score,
+		})
+	}
+
+	return results, nil
 }
