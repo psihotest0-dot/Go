@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,7 +22,16 @@ type Database struct {
 }
 
 func Connect(ctx context.Context, connString string) (*Database, error) {
-	pool, err := pgxpool.New(ctx, connString)
+	config, err := pgxpool.ParseConfig(connString)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse database config: %w", err)
+	}
+
+	config.MaxConns = 50
+	config.MinConns = 10
+	config.MaxConnLifetime = time.Hour
+
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
@@ -31,6 +41,10 @@ func Connect(ctx context.Context, connString string) (*Database, error) {
 	}
 
 	sqlDb := stdlib.OpenDBFromPool(pool)
+	sqlDb.SetMaxOpenConns(50)
+	sqlDb.SetMaxIdleConns(10)
+	sqlDb.SetConnMaxLifetime(time.Hour)
+
 	return &Database{
 		Pool:    pool,
 		SqlDB:   sqlDb,
