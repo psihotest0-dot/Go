@@ -21,6 +21,8 @@ CREATE TABLE memories (
     user_id UUID NOT NULL REFERENCES users(id),
     content TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('candidate', 'active', 'superseded')),
+    embedding vector(384),
+    embedding_model TEXT NOT NULL,
     source_message_id UUID REFERENCES messages(id) ON DELETE SET NULL,
     importance INTEGER NOT NULL,
     metadata JSONB,
@@ -32,6 +34,7 @@ CREATE TABLE memories (
 
 CREATE UNIQUE INDEX idx_memories_user_content_hash ON memories(user_id, content_hash);
 CREATE INDEX idx_memories_content_trgm ON memories USING gin (content gin_trgm_ops);
+CREATE INDEX idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops);
 -- +goose StatementEnd
 
 -- +goose Down
