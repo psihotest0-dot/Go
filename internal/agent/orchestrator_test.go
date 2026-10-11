@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sashabaranov/go-openai"
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/require"
 

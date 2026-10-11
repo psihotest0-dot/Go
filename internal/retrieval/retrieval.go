@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/pgvector/pgvector-go"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 
 	"time"

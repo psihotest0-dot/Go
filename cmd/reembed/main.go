@@ -10,7 +10,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 
-    "github.com/pgvector/pgvector-go"
+    pgvector "github.com/pgvector/pgvector-go"
 )
 
 func main() {

@@ -12,10 +12,10 @@ import (
 	"go-monolith/internal/llm"
 
 	"github.com/google/uuid"
-	"github.com/pgvector/pgvector-go"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
-	"github.com/jackc/pgx/v5"
-	"github.com/sashabaranov/go-openai"
+	pgx "github.com/jackc/pgx/v5"
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 	"database/sql"
 )
