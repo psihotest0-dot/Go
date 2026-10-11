@@ -3,7 +3,7 @@
 A high-performance Go monolith backing an AI Agent service, providing vector similarity search, long-term memory consolidation, and standard chat streaming.
 
 ## Tech Stack
-* **Language**: Go 1.26
+* **Language**: Go 1.26.0
 * **Database**: PostgreSQL (requires `pgvector` and `pg_trgm` extensions)
 * **SQL Query Builder**: `sqlc` (with `pgvector-go` overriding PostgreSQL vector types)
 * **Migrations**: `goose`
@@ -27,6 +27,7 @@ The pipeline implements:
 1. **Fact Extraction**: Calls the LLM specifying a JSON schema to extract structured facts (`fact_key`, `value`, `statement`, `is_explicit_change`) from unanalyzed messages.
 2. **State Management**: Facts transition atomically within a single SQL transaction between statuses (`candidate`, `active`, `superseded`). If a new fact contradicts an older one explicitly, the older one is `superseded` and the new one becomes `active`.
 3. **Concurrency**: Implements PostgreSQL advisory locks using explicit `conn` handles and `crc32(UUID)` keys to prevent concurrent workers processing the same user's memory tree.
+   *Warning: Session-level advisory locks do not work properly when used with PgBouncer in transaction pooling mode.*
 
 ### Vector Search
 Memory retrieval operates via **Hybrid Search**, combining:
@@ -40,6 +41,8 @@ To avoid repeated computation of static text vectors, embeddings are cached insi
 ## Observability
 - Centralized JSON logging using standard `slog` with enforced `request_id` and `user_id` context tracing via HTTP middlewares.
 - Prometheus metrics are exposed at `/metrics` tracking QPS, token usage, cache hits/misses, and pipeline stage latencies.
+
+*Security Note: The `user_id` context tracing is critical for tenant isolation and must be securely validated. Furthermore, the `/metrics` endpoint is exposed unauthenticated by default. In a production environment, ensure it is protected via internal network routing or firewall rules.*
 - Visualize metrics easily using the pre-configured Grafana dashboard available via `docker-compose.yml`.
 
 ## How to Run
@@ -57,13 +60,18 @@ Make sure required environment variables are set:
 export DATABASE_URL="postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 export LLM_BASE_URL="http://localhost:13305/v1" # Lemonade LLM URL
 export EMBEDDER_URL="http://localhost:8000"
-export GO111MODULE=on
 
 # Run the Go API
 go run main.go
 ```
 
-3. **Scripts**
+3. **Tools & Migrations**
+If you make changes to the DB schema, jobs or SQL queries, you need to run:
+- **Database Migrations**: `goose -dir migrations postgres "$DATABASE_URL" up`
+- **River Migrations**: `river db migrate-v5 --database-url "$DATABASE_URL"`
+- **Generate SQLC**: `sqlc generate`
+
+4. **Scripts**
 A suite of backup, restore, and reindex scripts with `set -euo pipefail` are available in the `scripts/` directory.
 - `./scripts/backup.sh` uses `pg_dump -Fc`
 - `./scripts/restore.sh` uses `pg_restore --clean --if-exists`

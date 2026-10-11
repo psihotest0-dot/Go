@@ -507,6 +507,57 @@ func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemo
 	return items, nil
 }
 
+const searchTextMemories = `-- name: SearchTextMemories :many
+SELECT m.id, m.user_id, m.content, m.status, m.embedding, m.embedding_model, m.source_message_id, m.importance, m.metadata, m.content_hash, m.created_at, m.updated_at, m.last_used_at
+FROM memories m
+WHERE m.user_id = $1 AND m.status = 'active'
+ORDER BY similarity(m.content, $2) DESC
+LIMIT $3
+`
+
+type SearchTextMemoriesParams struct {
+	UserID     uuid.UUID `json:"user_id"`
+	QueryText  string    `json:"query_text"`
+	MatchCount int32     `json:"match_count"`
+}
+
+func (q *Queries) SearchTextMemories(ctx context.Context, arg SearchTextMemoriesParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, searchTextMemories, arg.UserID, arg.QueryText, arg.MatchCount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Memory
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Content,
+			&i.Status,
+			&i.Embedding,
+			&i.EmbeddingModel,
+			&i.SourceMessageID,
+			&i.Importance,
+			&i.Metadata,
+			&i.ContentHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const supercedeMemory = `-- name: SupercedeMemory :exec
 UPDATE memories
 SET status = 'superseded', updated_at = NOW()
