@@ -94,3 +94,8 @@ WHERE id IN (SELECT id FROM deleted);
 UPDATE memories
 SET status = 'superseded', updated_at = NOW()
 WHERE id = $1 AND user_id = $2;
+-- name: GetAllMemoriesForReembedding :many
+SELECT * FROM memories ORDER BY created_at ASC LIMIT $1 OFFSET $2;
+
+-- name: UpdateMemoryEmbedding :exec
+UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3;
