@@ -51,6 +51,13 @@ ORDER BY
     COALESCE(1.0 / (60 + ts.rank), 0.0) DESC
 LIMIT sqlc.arg('match_count');
 
+-- name: SearchTextMemories :many
+SELECT m.*
+FROM memories m
+WHERE m.user_id = sqlc.arg('user_id') AND m.status = 'active'
+ORDER BY similarity(m.content, sqlc.arg('query_text')) DESC
+LIMIT sqlc.arg('match_count');
+
 -- name: DeleteMemory :exec
 DELETE FROM memories WHERE id = $1 AND user_id = $2;
 

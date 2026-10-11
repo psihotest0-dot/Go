@@ -95,6 +95,9 @@ func hashContent(content string) string {
 }
 
 func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	start := time.Now()
 	defer func() {
 		metrics.StageLatency.WithLabelValues("embed").Observe(time.Since(start).Seconds())
