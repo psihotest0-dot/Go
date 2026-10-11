@@ -1,0 +1,38 @@
+{
+  "title": "System Monitoring",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "QPS",
+      "targets": [{"expr": "rate(api_requests_total[1m])", "legendFormat": "{{method}} {{path}}"}],
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "API Latency",
+      "targets": [{"expr": "rate(api_request_duration_seconds_sum[1m]) / rate(api_request_duration_seconds_count[1m])", "legendFormat": "{{method}} {{path}}"}],
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Stage Latency",
+      "targets": [{"expr": "rate(stage_duration_seconds_sum[1m]) / rate(stage_duration_seconds_count[1m])", "legendFormat": "{{stage}}"}],
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Token Count",
+      "targets": [{"expr": "rate(llm_tokens_total[1m])", "legendFormat": "{{type}}"}],
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache Performance",
+      "targets": [
+        {"expr": "rate(cache_hits_total[1m])", "legendFormat": "Hits"},
+        {"expr": "rate(cache_misses_total[1m])", "legendFormat": "Misses"}
+      ],
+      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8}
+    }
+  ]
+}

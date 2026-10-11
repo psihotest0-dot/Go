@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/sashabaranov/go-openai"
+
+	"go-monolith/metrics"
 )
 
 // LLMClient defines the interface for interacting with the LLM provider.
@@ -52,6 +54,16 @@ func (c *LemonadeClient) setModel(req *openai.ChatCompletionRequest) {
 }
 
 func (c *LemonadeClient) Chat(ctx context.Context, req openai.ChatCompletionRequest) (resp openai.ChatCompletionResponse, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("llm").Observe(time.Since(start).Seconds())
+		if err == nil {
+			metrics.TokenCount.WithLabelValues("prompt").Add(float64(resp.Usage.PromptTokens))
+			metrics.TokenCount.WithLabelValues("completion").Add(float64(resp.Usage.CompletionTokens))
+			metrics.TokenCount.WithLabelValues("total").Add(float64(resp.Usage.TotalTokens))
+		}
+	}()
+
 	c.setModel(&req)
 
 	maxRetries := 4 // 1 initial + 3 retries
@@ -116,6 +128,16 @@ func (w schemaWrapper) MarshalJSON() ([]byte, error) {
 }
 
 func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.ChatCompletionRequest, schema interface{}) (resp openai.ChatCompletionResponse, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("llm").Observe(time.Since(start).Seconds())
+		if err == nil {
+			metrics.TokenCount.WithLabelValues("prompt").Add(float64(resp.Usage.PromptTokens))
+			metrics.TokenCount.WithLabelValues("completion").Add(float64(resp.Usage.CompletionTokens))
+			metrics.TokenCount.WithLabelValues("total").Add(float64(resp.Usage.TotalTokens))
+		}
+	}()
+
 	c.setModel(&req)
 
 	req.ResponseFormat = &openai.ChatCompletionResponseFormat{
