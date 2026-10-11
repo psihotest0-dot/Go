@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 )
 
@@ -19,8 +20,8 @@ RETURNING id, content_hash, embedding, created_at
 `
 
 type CreateEmbeddingCacheParams struct {
-	ContentHash string      `json:"content_hash"`
-	Embedding   interface{} `json:"embedding"`
+	ContentHash string          `json:"content_hash"`
+	Embedding   pgvector.Vector `json:"embedding"`
 }
 
 func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingCacheParams) (EmbeddingCache, error) {
@@ -36,15 +37,17 @@ func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingC
 }
 
 const createMemory = `-- name: CreateMemory :one
-INSERT INTO memories (user_id, content, status, source_message_id, importance, metadata, content_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
+INSERT INTO memories (user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
 `
 
 type CreateMemoryParams struct {
 	UserID          uuid.UUID             `json:"user_id"`
 	Content         string                `json:"content"`
 	Status          string                `json:"status"`
+	Embedding       pgvector.Vector       `json:"embedding"`
+	EmbeddingModel  string                `json:"embedding_model"`
 	SourceMessageID uuid.NullUUID         `json:"source_message_id"`
 	Importance      int32                 `json:"importance"`
 	Metadata        pqtype.NullRawMessage `json:"metadata"`
@@ -56,6 +59,8 @@ func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) (Mem
 		arg.UserID,
 		arg.Content,
 		arg.Status,
+		arg.Embedding,
+		arg.EmbeddingModel,
 		arg.SourceMessageID,
 		arg.Importance,
 		arg.Metadata,
@@ -67,6 +72,8 @@ func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) (Mem
 		&i.UserID,
 		&i.Content,
 		&i.Status,
+		&i.Embedding,
+		&i.EmbeddingModel,
 		&i.SourceMessageID,
 		&i.Importance,
 		&i.Metadata,
@@ -150,7 +157,7 @@ func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash strin
 }
 
 const getMemories = `-- name: GetMemories :many
-SELECT id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 ORDER BY created_at DESC
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, error) {
@@ -167,6 +174,8 @@ func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, 
 			&i.UserID,
 			&i.Content,
 			&i.Status,
+			&i.Embedding,
+			&i.EmbeddingModel,
 			&i.SourceMessageID,
 			&i.Importance,
 			&i.Metadata,
@@ -189,7 +198,7 @@ func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, 
 }
 
 const getMemoryByHash = `-- name: GetMemoryByHash :one
-SELECT id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 AND content_hash = $2
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 AND content_hash = $2
 `
 
 type GetMemoryByHashParams struct {
@@ -205,6 +214,8 @@ func (q *Queries) GetMemoryByHash(ctx context.Context, arg GetMemoryByHashParams
 		&i.UserID,
 		&i.Content,
 		&i.Status,
+		&i.Embedding,
+		&i.EmbeddingModel,
 		&i.SourceMessageID,
 		&i.Importance,
 		&i.Metadata,
@@ -255,21 +266,73 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 	return items, nil
 }
 
+const searchSimilarMemories = `-- name: SearchSimilarMemories :many
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
+WHERE user_id = $1
+ORDER BY embedding <=> $2
+LIMIT $3
+`
+
+type SearchSimilarMemoriesParams struct {
+	UserID    uuid.UUID       `json:"user_id"`
+	Embedding pgvector.Vector `json:"embedding"`
+	Limit     int32           `json:"limit"`
+}
+
+func (q *Queries) SearchSimilarMemories(ctx context.Context, arg SearchSimilarMemoriesParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, searchSimilarMemories, arg.UserID, arg.Embedding, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Memory
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Content,
+			&i.Status,
+			&i.Embedding,
+			&i.EmbeddingModel,
+			&i.SourceMessageID,
+			&i.Importance,
+			&i.Metadata,
+			&i.ContentHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateMemory = `-- name: UpdateMemory :one
 UPDATE memories
-SET content = $2, status = $3, importance = $4, metadata = $5, content_hash = $6, updated_at = NOW()
-WHERE id = $1 AND user_id = $7
-RETURNING id, user_id, content, status, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
+SET content = $2, status = $3, embedding = $4, embedding_model = $5, importance = $6, metadata = $7, content_hash = $8, updated_at = NOW()
+WHERE id = $1 AND user_id = $9
+RETURNING id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
 `
 
 type UpdateMemoryParams struct {
-	ID          uuid.UUID             `json:"id"`
-	Content     string                `json:"content"`
-	Status      string                `json:"status"`
-	Importance  int32                 `json:"importance"`
-	Metadata    pqtype.NullRawMessage `json:"metadata"`
-	ContentHash string                `json:"content_hash"`
-	UserID      uuid.UUID             `json:"user_id"`
+	ID             uuid.UUID             `json:"id"`
+	Content        string                `json:"content"`
+	Status         string                `json:"status"`
+	Embedding      pgvector.Vector       `json:"embedding"`
+	EmbeddingModel string                `json:"embedding_model"`
+	Importance     int32                 `json:"importance"`
+	Metadata       pqtype.NullRawMessage `json:"metadata"`
+	ContentHash    string                `json:"content_hash"`
+	UserID         uuid.UUID             `json:"user_id"`
 }
 
 func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Memory, error) {
@@ -277,6 +340,8 @@ func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Mem
 		arg.ID,
 		arg.Content,
 		arg.Status,
+		arg.Embedding,
+		arg.EmbeddingModel,
 		arg.Importance,
 		arg.Metadata,
 		arg.ContentHash,
@@ -288,6 +353,8 @@ func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Mem
 		&i.UserID,
 		&i.Content,
 		&i.Status,
+		&i.Embedding,
+		&i.EmbeddingModel,
 		&i.SourceMessageID,
 		&i.Importance,
 		&i.Metadata,
