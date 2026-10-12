@@ -428,6 +428,44 @@ func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (Ingest
 	return i, err
 }
 
+const getIngestedFiles = `-- name: GetIngestedFiles :many
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC
+`
+
+func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]IngestedFile, error) {
+	rows, err := q.db.QueryContext(ctx, getIngestedFiles, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IngestedFile
+	for rows.Next() {
+		var i IngestedFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.FileName,
+			&i.FileHash,
+			&i.MimeType,
+			&i.FileSize,
+			&i.Status,
+			&i.LocalPath,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMemories = `-- name: GetMemories :many
 SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 ORDER BY created_at DESC
 `
