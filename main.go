@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"os"
 
+	"go-monolith/internal/agent"
 	"go-monolith/internal/api"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/retrieval"
 )
 
 func main() {
@@ -56,7 +58,11 @@ func main() {
 
 	apiService := api.New(database)
 
+	orchestrator := agent.NewOrchestrator(database, retrieval.NewRetrievalService(database, embedder), llmClient, nil)
+
 	mux := http.NewServeMux()
+	mux.HandleFunc("/chat/stream", orchestrator.HandleStreamChat)
+
 	mux.HandleFunc("/healthz", apiService.HealthzHandler)
 	mux.HandleFunc("/metrics", apiService.MetricsHandler)
 

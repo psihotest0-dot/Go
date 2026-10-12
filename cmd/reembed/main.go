@@ -10,7 +10,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 
-    pgvector "github.com/pgvector/pgvector-go"
+	pgvector "github.com/pgvector/pgvector-go"
 )
 
 func main() {
@@ -65,15 +65,15 @@ func main() {
 
 		for i, mem := range memories {
 			if i < len(vectors) {
-                pgVec := pgvector.NewVector(vectors[i])
+				pgVec := pgvector.NewVector(vectors[i])
 				err := database.Queries.UpdateMemoryEmbedding(ctx, db.UpdateMemoryEmbeddingParams{
-                    Embedding:      pgVec,
-                    EmbeddingModel: *modelName,
-                    ID:             mem.ID,
-                })
-                if err != nil {
-                    logger.Error("failed to update memory embedding", slog.Any("error", err), slog.Any("id", mem.ID))
-                }
+					Embedding:      pgVec,
+					EmbeddingModel: *modelName,
+					ID:             mem.ID,
+				})
+				if err != nil {
+					logger.Error("failed to update memory embedding", slog.Any("error", err), slog.Any("id", mem.ID))
+				}
 			}
 		}
 
@@ -81,5 +81,5 @@ func main() {
 		logger.Info("processed batch", slog.Int("offset", int(offset)))
 	}
 
-    logger.Info("re-embedding process complete")
+	logger.Info("re-embedding process complete")
 }

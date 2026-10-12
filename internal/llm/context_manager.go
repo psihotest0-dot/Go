@@ -9,7 +9,7 @@ import (
 // ContextManager is a decorator for LLMClient that manages history pruning
 // and sliding window for context.
 type ContextManager struct {
-	client LLMClient
+	client      LLMClient
 	maxMessages int
 }
 
