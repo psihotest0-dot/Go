@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"go-monolith/internal/db"
+	"os"
+
+	"github.com/riverqueue/river"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-    "github.com/riverqueue/river"
-	"os"
 )
 
 type mockLLMClient struct {
@@ -63,12 +64,12 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 			`[{"fact_key": "location", "value": "Varna", "statement": "Преместих се във Варна", "is_explicit_change": true}]`,
 		},
 	}
-    embedderMock := &mockEmbedder{}
+	embedderMock := &mockEmbedder{}
 
 	worker := NewMemoryConsolidationWorker(database, llmMock, embedderMock)
 
-    // Message 1
-    sessionID := "sess-1"
+	// Message 1
+	sessionID := "sess-1"
 	_, err = database.Queries.CreateMessage(ctx, db.CreateMessageParams{
 		UserID:    user.ID,
 		SessionID: sessionID,
