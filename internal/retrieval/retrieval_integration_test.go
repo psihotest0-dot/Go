@@ -5,9 +5,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sqlc-dev/pqtype"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"

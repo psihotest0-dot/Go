@@ -2,10 +2,11 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"go-monolith/internal/db"
 
@@ -206,10 +207,10 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		var req struct {
-			Content         string                `json:"content"`
-			Status          string                `json:"status"`
-			Importance      int32                 `json:"importance"`
-			Metadata        pqtype.NullRawMessage `json:"metadata"`
+			Content    string                `json:"content"`
+			Status     string                `json:"status"`
+			Importance int32                 `json:"importance"`
+			Metadata   pqtype.NullRawMessage `json:"metadata"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

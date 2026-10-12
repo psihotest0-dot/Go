@@ -4,20 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"log/slog"
 	"time"
-	"hash/crc32"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 
+	"database/sql"
+
 	"github.com/google/uuid"
+	pgx "github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
-	pgx "github.com/jackc/pgx/v5"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
-	"database/sql"
 )
 
 type MemoryConsolidationPeriodicArgs struct{}
@@ -57,8 +58,7 @@ func (w *MemoryConsolidationPeriodicWorker) Work(ctx context.Context, job *river
 	return nil
 }
 
-
-type MemoryConsolidationArgs struct{
+type MemoryConsolidationArgs struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
