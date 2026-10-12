@@ -1,0 +1,256 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
+	"github.com/sqlc-dev/pqtype"
+
+	"go-monolith/internal/db"
+	"go-monolith/internal/llm"
+	"go-monolith/internal/retrieval"
+)
+
+// Orchestrator orchestrates the main agent pipeline.
+type Orchestrator struct {
+	db        *db.Database
+	retrieval *retrieval.RetrievalService
+	llmClient llm.LLMClient
+	tools     ToolRegistry
+}
+
+// NewOrchestrator creates a new Orchestrator.
+func NewOrchestrator(database *db.Database, r *retrieval.RetrievalService, l llm.LLMClient, t ToolRegistry) *Orchestrator {
+	return &Orchestrator{
+		db:        database,
+		retrieval: r,
+		llmClient: l,
+		tools:     t,
+	}
+}
+
+// ChatRequest defines the expected payload for the stream chat endpoint.
+type ChatRequest struct {
+	SessionID string `json:"session_id"`
+	Content   string `json:"content"`
+}
+
+// HandleStreamChat handles incoming chat messages and streams the response.
+func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userIDStr := r.Header.Get("X-User-ID")
+	if userIDStr == "" {
+		http.Error(w, "missing X-User-ID header", http.StatusUnauthorized)
+		return
+	}
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		http.Error(w, "invalid X-User-ID header", http.StatusBadRequest)
+		return
+	}
+
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.SessionID == "" || req.Content == "" {
+		http.Error(w, "session_id and content are required", http.StatusBadRequest)
+		return
+	}
+
+	// 1. Save user message to database (to have it in history/log right away)
+	// We'll just save it to the DB so it's recorded. But we don't necessarily have to
+	// include it in the `GetMessagesBySession` if we append it manually.
+	// Actually, let's append it manually and save both at the end, or save user now.
+	// We will save user now.
+	_, err = o.db.Queries.CreateMessage(r.Context(), db.CreateMessageParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+		Role:      "user",
+		Content:   req.Content,
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to save user message: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 2. Retrieval: hybrid search for context
+	memories, err := o.retrieval.SearchSimilar(r.Context(), userID, req.Content, 5)
+	var contextTexts []string
+	var memoryIDs []string
+	if err == nil {
+		for _, m := range memories {
+			contextTexts = append(contextTexts, m.Content)
+			memoryIDs = append(memoryIDs, m.ID.String())
+		}
+	}
+
+	// Log trace
+	traceDetails, _ := json.Marshal(map[string]interface{}{
+		"query":      req.Content,
+		"memory_ids": memoryIDs,
+	})
+	_, _ = o.db.Queries.CreateAgentTrace(r.Context(), db.CreateAgentTraceParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+		Step:      "search",
+		Details: pqtype.NullRawMessage{
+			RawMessage: traceDetails,
+			Valid:      true,
+		},
+	})
+
+	// 3. Construct System/Context Message
+	systemContent := "You are a helpful assistant."
+	if len(contextTexts) > 0 {
+		systemContent += "\n\nRelevant Context:\n" + strings.Join(contextTexts, "\n\n")
+	}
+
+	systemMessage := openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleSystem,
+		Content: systemContent,
+	}
+
+	// 4. Fetch Message History (including the one we just saved)
+	dbMsgs, err := o.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to get messages: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var historyMessages []openai.ChatCompletionMessage
+	for _, m := range dbMsgs {
+		historyMessages = append(historyMessages, openai.ChatCompletionMessage{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+
+	// 5. Pruning Logic (Sliding Window based on character count)
+	maxChars := 2000
+	var finalMessages []openai.ChatCompletionMessage
+	finalMessages = append(finalMessages, systemMessage)
+
+	// Keep taking from history (newest to oldest) until we hit the char limit
+	var reversedKeep []openai.ChatCompletionMessage
+	currentChars := utf8.RuneCountInString(systemMessage.Content)
+
+	for i := len(historyMessages) - 1; i >= 0; i-- {
+		msgLen := utf8.RuneCountInString(historyMessages[i].Content)
+		if currentChars+msgLen > maxChars && len(reversedKeep) > 0 {
+			break
+		}
+		reversedKeep = append(reversedKeep, historyMessages[i])
+		currentChars += msgLen
+	}
+
+	// Revert the kept messages back to chronological order
+	for i := len(reversedKeep) - 1; i >= 0; i-- {
+		finalMessages = append(finalMessages, reversedKeep[i])
+	}
+
+	// Log trace for prune
+	tracePruneDetails, _ := json.Marshal(map[string]interface{}{
+		"total_messages": len(historyMessages) + 1,
+		"pruned_to":      len(finalMessages),
+		"total_chars":    currentChars,
+	})
+	_, _ = o.db.Queries.CreateAgentTrace(r.Context(), db.CreateAgentTraceParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+		Step:      "prune",
+		Details: pqtype.NullRawMessage{
+			RawMessage: tracePruneDetails,
+			Valid:      true,
+		},
+	})
+
+	// 6. Call LLM
+	chatReq := openai.ChatCompletionRequest{
+		Model:    "lemonade",
+		Messages: finalMessages,
+		Stream:   true,
+	}
+
+	stream, err := o.llmClient.ChatStream(r.Context(), chatReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("llm stream failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer stream.Close()
+
+	// 7. Stream Response SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	var fullAssistantMessage strings.Builder
+
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			// write error as SSE comment or data
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			w.(http.Flusher).Flush()
+			break
+		}
+
+		if len(resp.Choices) > 0 {
+			chunk := resp.Choices[0].Delta.Content
+			fullAssistantMessage.WriteString(chunk)
+
+			// SSE format
+			dataBytes, _ := json.Marshal(resp)
+			fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+			w.(http.Flusher).Flush()
+		}
+	}
+	fmt.Fprintf(w, "data: [DONE]\n\n")
+	w.(http.Flusher).Flush()
+
+	// 8. Save Assistant Message
+	_, err = o.db.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+		Role:      "assistant",
+		Content:   fullAssistantMessage.String(),
+	})
+	if err != nil {
+		// Log but cannot return error to client since we already streamed
+		fmt.Printf("failed to save assistant message: %v\n", err)
+	}
+
+	// Trace Stream End
+	traceStreamDetails, _ := json.Marshal(map[string]interface{}{
+		"response_length": fullAssistantMessage.Len(),
+	})
+	_, _ = o.db.Queries.CreateAgentTrace(context.Background(), db.CreateAgentTraceParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+		Step:      "stream_end",
+		Details: pqtype.NullRawMessage{
+			RawMessage: traceStreamDetails,
+			Valid:      true,
+		},
+	})
+}
