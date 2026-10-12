@@ -9,6 +9,8 @@ import (
 	"go-monolith/internal/api"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
+	"go-monolith/internal/jobs"
+	"go-monolith/internal/llm"
 )
 
 func main() {
@@ -32,6 +34,25 @@ func main() {
 		os.Exit(1)
 	}
 	defer database.Pool.Close()
+
+	llmClient := llm.NewLemonadeClient()
+	embedder := llm.NewHTTPEmbedder(database)
+
+	riverClient, err := jobs.NewRiverClient(ctx, database.Pool, database, llmClient, embedder)
+	if err != nil {
+		logger.Error("failed to create river client", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	if err := riverClient.Start(ctx); err != nil {
+		logger.Error("failed to start river client", slog.Any("error", err))
+		os.Exit(1)
+	}
+	defer func() {
+		if err := riverClient.Stop(ctx); err != nil {
+			logger.Error("failed to stop river client safely", slog.Any("error", err))
+		}
+	}()
 
 	apiService := api.New(database)
 
@@ -60,6 +81,16 @@ func main() {
 	})
 
 	mux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
+
+	mux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			apiService.CreateFileHandler(riverClient)(w, r)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/v1/files/", apiService.DeleteFileHandler)
 
 	handler := api.Middleware(logger)(mux)
 

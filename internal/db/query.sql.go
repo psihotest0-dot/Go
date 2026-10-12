@@ -45,6 +45,41 @@ func (q *Queries) CreateAgentTrace(ctx context.Context, arg CreateAgentTracePara
 	return i, err
 }
 
+const createDocumentChunk = `-- name: CreateDocumentChunk :one
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at
+`
+
+type CreateDocumentChunkParams struct {
+	FileID     uuid.UUID       `json:"file_id"`
+	UserID     uuid.UUID       `json:"user_id"`
+	ChunkIndex int32           `json:"chunk_index"`
+	Text       string          `json:"text"`
+	Embedding  pgvector.Vector `json:"embedding"`
+}
+
+func (q *Queries) CreateDocumentChunk(ctx context.Context, arg CreateDocumentChunkParams) (DocumentChunk, error) {
+	row := q.db.QueryRowContext(ctx, createDocumentChunk,
+		arg.FileID,
+		arg.UserID,
+		arg.ChunkIndex,
+		arg.Text,
+		arg.Embedding,
+	)
+	var i DocumentChunk
+	err := row.Scan(
+		&i.ID,
+		&i.FileID,
+		&i.UserID,
+		&i.ChunkIndex,
+		&i.Text,
+		&i.Embedding,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createEmbeddingCache = `-- name: CreateEmbeddingCache :one
 INSERT INTO embedding_cache (content_hash, embedding)
 VALUES ($1, $2)
@@ -64,6 +99,48 @@ func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingC
 		&i.ContentHash,
 		&i.Embedding,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createIngestedFile = `-- name: CreateIngestedFile :one
+INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at
+`
+
+type CreateIngestedFileParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	FileName  string    `json:"file_name"`
+	FileHash  string    `json:"file_hash"`
+	MimeType  string    `json:"mime_type"`
+	FileSize  int64     `json:"file_size"`
+	Status    string    `json:"status"`
+	LocalPath string    `json:"local_path"`
+}
+
+func (q *Queries) CreateIngestedFile(ctx context.Context, arg CreateIngestedFileParams) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, createIngestedFile,
+		arg.UserID,
+		arg.FileName,
+		arg.FileHash,
+		arg.MimeType,
+		arg.FileSize,
+		arg.Status,
+		arg.LocalPath,
+	)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -158,6 +235,20 @@ func (q *Queries) CreateUser(ctx context.Context) (User, error) {
 	return i, err
 }
 
+const deleteIngestedFile = `-- name: DeleteIngestedFile :exec
+DELETE FROM ingested_files WHERE id = $1 AND user_id = $2
+`
+
+type DeleteIngestedFileParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFileParams) error {
+	_, err := q.db.ExecContext(ctx, deleteIngestedFile, arg.ID, arg.UserID)
+	return err
+}
+
 const deleteMemory = `-- name: DeleteMemory :exec
 DELETE FROM memories WHERE id = $1 AND user_id = $2
 `
@@ -237,6 +328,41 @@ func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMe
 	return items, nil
 }
 
+const getDocumentChunksByFile = `-- name: GetDocumentChunksByFile :many
+SELECT id, file_id, user_id, chunk_index, text, embedding, created_at FROM document_chunks WHERE file_id = $1 ORDER BY chunk_index ASC
+`
+
+func (q *Queries) GetDocumentChunksByFile(ctx context.Context, fileID uuid.UUID) ([]DocumentChunk, error) {
+	rows, err := q.db.QueryContext(ctx, getDocumentChunksByFile, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DocumentChunk
+	for rows.Next() {
+		var i DocumentChunk
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileID,
+			&i.UserID,
+			&i.ChunkIndex,
+			&i.Text,
+			&i.Embedding,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getEmbeddingCacheByHash = `-- name: GetEmbeddingCacheByHash :one
 SELECT id, content_hash, embedding, created_at FROM embedding_cache WHERE content_hash = $1
 `
@@ -249,6 +375,55 @@ func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash strin
 		&i.ContentHash,
 		&i.Embedding,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getIngestedFileByHash = `-- name: GetIngestedFileByHash :one
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE user_id = $1 AND file_hash = $2
+`
+
+type GetIngestedFileByHashParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	FileHash string    `json:"file_hash"`
+}
+
+func (q *Queries) GetIngestedFileByHash(ctx context.Context, arg GetIngestedFileByHashParams) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, getIngestedFileByHash, arg.UserID, arg.FileHash)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getIngestedFileByID = `-- name: GetIngestedFileByID :one
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE id = $1
+`
+
+func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, getIngestedFileByID, id)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -431,18 +606,127 @@ func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UU
 	return items, nil
 }
 
+const searchHybridAll = `-- name: SearchHybridAll :many
+WITH
+memory_vector_search AS (
+    SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY memories.embedding <=> $2) as rank
+    FROM memories
+    WHERE memories.user_id = $3 AND memories.status = 'active'
+    ORDER BY rank
+    LIMIT 100
+),
+memory_text_search AS (
+    SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
+    FROM memories
+    WHERE memories.user_id = $3 AND memories.status = 'active'
+    ORDER BY rank
+    LIMIT 100
+),
+chunk_vector_search AS (
+    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY memories.embedding <=> $2) as rank
+    FROM document_chunks
+    WHERE document_chunks.user_id = $3
+    ORDER BY rank
+    LIMIT 100
+),
+chunk_text_search AS (
+    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY similarity(text, $4) DESC) as rank
+    FROM document_chunks
+    WHERE document_chunks.user_id = $3
+    ORDER BY rank
+    LIMIT 100
+),
+combined_results AS (
+    SELECT
+        m.id,
+        m.content,
+        'memory' as source_type,
+        CAST(COALESCE(1.0 / (60 + mvs.rank), 0.0) + COALESCE(1.0 / (60 + mts.rank), 0.0) AS FLOAT8) as score
+    FROM memories m
+    LEFT JOIN memory_vector_search mvs ON m.id = mvs.id
+    LEFT JOIN memory_text_search mts ON m.id = mts.id
+    WHERE (mvs.id IS NOT NULL OR mts.id IS NOT NULL)
+      AND m.user_id = $3
+      AND m.status = 'active'
+
+    UNION ALL
+
+    SELECT
+        c.id,
+        c.text as content,
+        'chunk' as source_type,
+        CAST(COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0) AS FLOAT8) as score
+    FROM document_chunks c
+    LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
+    LEFT JOIN chunk_text_search cts ON c.id = cts.id
+    WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
+      AND c.user_id = $3
+)
+SELECT id, content, source_type, score
+FROM combined_results
+ORDER BY score DESC
+LIMIT $1
+`
+
+type SearchHybridAllParams struct {
+	MatchCount int32           `json:"match_count"`
+	Embedding  pgvector.Vector `json:"embedding"`
+	UserID     uuid.UUID       `json:"user_id"`
+	QueryText  string          `json:"query_text"`
+}
+
+type SearchHybridAllRow struct {
+	ID         uuid.UUID `json:"id"`
+	Content    string    `json:"content"`
+	SourceType string    `json:"source_type"`
+	Score      float64   `json:"score"`
+}
+
+func (q *Queries) SearchHybridAll(ctx context.Context, arg SearchHybridAllParams) ([]SearchHybridAllRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchHybridAll,
+		arg.MatchCount,
+		arg.Embedding,
+		arg.UserID,
+		arg.QueryText,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchHybridAllRow
+	for rows.Next() {
+		var i SearchHybridAllRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.SourceType,
+			&i.Score,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchHybridMemories = `-- name: SearchHybridMemories :many
 WITH vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> $3) as rank
     FROM memories
-    WHERE user_id = $1 AND status = 'active'
+    WHERE memories.user_id = $1 AND memories.status = 'active'
     ORDER BY rank
     LIMIT 100
 ),
 text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
     FROM memories
-    WHERE user_id = $1 AND status = 'active'
+    WHERE memories.user_id = $1 AND memories.status = 'active'
     ORDER BY rank
     LIMIT 100
 )
@@ -494,6 +778,59 @@ func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemo
 			&i.UpdatedAt,
 			&i.LastUsedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const searchTextAll = `-- name: SearchTextAll :many
+WITH combined AS (
+    SELECT m.id, m.content, 'memory' as source_type, similarity(m.content, $2) as sim
+    FROM memories m
+    WHERE m.user_id = $3 AND m.status = 'active'
+
+    UNION ALL
+
+    SELECT c.id, c.text as content, 'chunk' as source_type, similarity(c.text, $2) as sim
+    FROM document_chunks c
+    WHERE c.user_id = $3
+)
+SELECT id, content, source_type
+FROM combined
+ORDER BY sim DESC
+LIMIT $1
+`
+
+type SearchTextAllParams struct {
+	MatchCount int32     `json:"match_count"`
+	QueryText  string    `json:"query_text"`
+	UserID     uuid.UUID `json:"user_id"`
+}
+
+type SearchTextAllRow struct {
+	ID         uuid.UUID `json:"id"`
+	Content    string    `json:"content"`
+	SourceType string    `json:"source_type"`
+}
+
+func (q *Queries) SearchTextAll(ctx context.Context, arg SearchTextAllParams) ([]SearchTextAllRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchTextAll, arg.MatchCount, arg.QueryText, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchTextAllRow
+	for rows.Next() {
+		var i SearchTextAllRow
+		if err := rows.Scan(&i.ID, &i.Content, &i.SourceType); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -571,6 +908,20 @@ type SupercedeMemoryParams struct {
 
 func (q *Queries) SupercedeMemory(ctx context.Context, arg SupercedeMemoryParams) error {
 	_, err := q.db.ExecContext(ctx, supercedeMemory, arg.ID, arg.UserID)
+	return err
+}
+
+const updateIngestedFileStatus = `-- name: UpdateIngestedFileStatus :exec
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateIngestedFileStatusParams struct {
+	ID     uuid.UUID `json:"id"`
+	Status string    `json:"status"`
+}
+
+func (q *Queries) UpdateIngestedFileStatus(ctx context.Context, arg UpdateIngestedFileStatusParams) error {
+	_, err := q.db.ExecContext(ctx, updateIngestedFileStatus, arg.ID, arg.Status)
 	return err
 }
 

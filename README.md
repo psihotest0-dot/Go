@@ -76,3 +76,9 @@ A suite of backup, restore, and reindex scripts with `set -euo pipefail` are ava
 - `./scripts/backup.sh` uses `pg_dump -Fc`
 - `./scripts/restore.sh` uses `pg_restore --clean --if-exists`
 - `./scripts/reindex.sh` rebuilds concurrent HNSW indices.
+
+### File Ingestion Pipeline
+The system supports uploading external knowledge documents via the `POST /v1/files` endpoint.
+1. **Upload & Verification**: Enforces a 50MB limit, hashes the file for deduplication, securely saves it to a local `storage/` directory, and writes a tracking record.
+2. **Extraction**: The `internal/ingest` module detects formats strictly by magic bytes via `mimetype`. It includes robust parsers for plain text formats, HTML (tag stripping), PDF (`pdfcpu`), DOCX, and XLSX (`excelize`).
+3. **Background Chunking**: An async River job (`IngestFileWorker`) extracts the raw text, splits it into chunks, generates vector embeddings, and stores them in the `document_chunks` table for retrieval.

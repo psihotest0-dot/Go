@@ -18,6 +18,7 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 	river.AddWorker(workers, NewMemoryConsolidationPeriodicWorker(database))
 	river.AddWorker(workers, NewMemoryConsolidationWorker(database, llmClient, embedder))
 	river.AddWorker(workers, NewEmbeddingCacheGCWorker(database))
+	river.AddWorker(workers, NewIngestFileWorker(database, embedder))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
