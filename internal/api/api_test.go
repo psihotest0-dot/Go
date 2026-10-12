@@ -3,18 +3,18 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"testing"
-	"database/sql"
 	"os"
+	"testing"
 
 	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
+	goose "github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	goose "github.com/pressly/goose/v3"
-	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/db"
