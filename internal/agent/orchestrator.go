@@ -211,7 +211,12 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			// write error as SSE comment or data
 			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-			w.(http.Flusher).Flush()
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			} else {
+				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+				return
+			}
 			break
 		}
 
@@ -222,11 +227,21 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			// SSE format
 			dataBytes, _ := json.Marshal(resp)
 			fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-			w.(http.Flusher).Flush()
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			} else {
+				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 	fmt.Fprintf(w, "data: [DONE]\n\n")
-	w.(http.Flusher).Flush()
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	} else {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
 
 	// 8. Save Assistant Message
 	_, err = o.db.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
