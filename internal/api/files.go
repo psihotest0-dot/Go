@@ -72,7 +72,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		if err == nil && existingFile.ID != uuid.Nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict) // 409
-			json.NewEncoder(w).Encode(existingFile)
+			json.NewEncoder(w).Encode(toIngestedFileDTO(existingFile))
 			return
 		}
 
@@ -112,7 +112,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(ingestedFile)
+		json.NewEncoder(w).Encode(toIngestedFileDTO(ingestedFile))
 	}
 }
 
@@ -134,14 +134,13 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Initialize as empty slice to avoid null in JSON response
-	files := []db.IngestedFile{}
-	if len(filesDB) > 0 {
-		files = filesDB
+	dtos := make([]IngestedFileDTO, 0, len(filesDB))
+	for _, f := range filesDB {
+		dtos = append(dtos, toIngestedFileDTO(f))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(files)
+	json.NewEncoder(w).Encode(dtos)
 }
 
 func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {

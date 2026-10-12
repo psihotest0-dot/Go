@@ -83,7 +83,7 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	mems1, err := database.Queries.GetMemories(ctx, user.ID)
+	mems1, err := database.Queries.GetMemories(ctx, db.GetMemoriesParams{UserID: user.ID})
 	require.NoError(t, err)
 	assert.Len(t, mems1, 1)
 	assert.Equal(t, "candidate", mems1[0].Status) // First fact is candidate
@@ -102,7 +102,7 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	mems2, err := database.Queries.GetMemories(ctx, user.ID)
+	mems2, err := database.Queries.GetMemories(ctx, db.GetMemoriesParams{UserID: user.ID})
 	require.NoError(t, err)
 	assert.Len(t, mems2, 2)
 

@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -467,11 +468,19 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 }
 
 const getMemories = `-- name: GetMemories :many
-SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE user_id = $1 ORDER BY created_at DESC
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
+WHERE user_id = $1
+  AND ($2::text IS NULL OR status = $2::text)
+ORDER BY created_at DESC
 `
 
-func (q *Queries) GetMemories(ctx context.Context, userID uuid.UUID) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, getMemories, userID)
+type GetMemoriesParams struct {
+	UserID uuid.UUID      `json:"user_id"`
+	Status sql.NullString `json:"status"`
+}
+
+func (q *Queries) GetMemories(ctx context.Context, arg GetMemoriesParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, getMemories, arg.UserID, arg.Status)
 	if err != nil {
 		return nil, err
 	}
