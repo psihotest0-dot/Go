@@ -4,12 +4,12 @@ import (
 	"context"
 	"testing"
 
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
+	pgvector "github.com/pgvector/pgvector-go"
+	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/sqlc-dev/pqtype"
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
-	pgvector "github.com/pgvector/pgvector-go"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"

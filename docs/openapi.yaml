@@ -1,0 +1,384 @@
+openapi: 3.0.3
+info:
+  title: API API
+  version: 1.0.0
+servers:
+- url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: OK
+  /messages:
+    post:
+      summary: Create a new message
+      parameters:
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - session_id
+              - role
+              - content
+              properties:
+                session_id:
+                  type: string
+                role:
+                  type: string
+                content:
+                  type: string
+      responses:
+        '200':
+          description: Message created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+    get:
+      summary: Get messages for a session
+      parameters:
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: session_id
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+  /memories:
+    post:
+      summary: Create a new memory
+      parameters:
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - content
+              properties:
+                content:
+                  type: string
+                status:
+                  type: string
+                  default: candidate
+                source_message_id:
+                  type: string
+                  nullable: true
+                  format: uuid
+                importance:
+                  type: integer
+                metadata:
+                  type: object
+                  nullable: true
+      responses:
+        '201':
+          description: Memory created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+        '409':
+          description: Memory already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+    get:
+      summary: Get all memories for a user
+      parameters:
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: List of memories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Memory'
+  /memories/{id}:
+    put:
+      summary: Update a memory
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - content
+              - status
+              - importance
+              properties:
+                content:
+                  type: string
+                status:
+                  type: string
+                importance:
+                  type: integer
+                metadata:
+                  type: object
+                  nullable: true
+      responses:
+        '200':
+          description: Memory updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Memory'
+    delete:
+      summary: Delete a memory
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Memory deleted
+  /v1/files:
+    post:
+      summary: Upload a file
+      parameters:
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestedFile'
+        '409':
+          description: File with same hash already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestedFile'
+  /v1/files/{id}:
+    delete:
+      summary: Delete a file
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: File deleted
+  /chat/stream:
+    post:
+      summary: Stream chat messages
+      parameters:
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - session_id
+              - content
+              properties:
+                session_id:
+                  type: string
+                content:
+                  type: string
+      responses:
+        '200':
+          description: Stream of responses
+          content:
+            text/event-stream:
+              schema:
+                type: string
+components:
+  schemas:
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+        role:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+    Memory:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        status:
+          type: string
+        embedding:
+          type: array
+          items:
+            type: number
+            format: float
+        embedding_model:
+          type: string
+        source_message_id:
+          type: string
+          format: uuid
+          nullable: true
+        importance:
+          type: integer
+        metadata:
+          type: object
+          nullable: true
+        content_hash:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+    IngestedFile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        file_hash:
+          type: string
+        mime_type:
+          type: string
+        file_size:
+          type: integer
+        status:
+          type: string
+        local_path:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
