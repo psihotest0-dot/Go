@@ -91,6 +91,8 @@ func main() {
 	mux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			apiService.CreateFileHandler(riverClient)(w, r)
+		} else if r.Method == http.MethodGet {
+			apiService.GetFilesHandler(w, r)
 		} else {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}

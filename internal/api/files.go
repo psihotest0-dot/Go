@@ -116,6 +116,34 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 	}
 }
 
+func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, err := getUserID(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	filesDB, err := a.db.Queries.GetIngestedFiles(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "failed to get files", http.StatusInternalServerError)
+		return
+	}
+
+	// Initialize as empty slice to avoid null in JSON response
+	files := []db.IngestedFile{}
+	if len(filesDB) > 0 {
+		files = filesDB
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files)
+}
+
 func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
