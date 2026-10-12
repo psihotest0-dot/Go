@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -73,7 +74,7 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(msg)
+	json.NewEncoder(w).Encode(toMessageDTO(msg))
 }
 
 func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +104,13 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	dtos := make([]MessageDTO, 0, len(msgs))
+	for _, m := range msgs {
+		dtos = append(dtos, toMessageDTO(m))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(msgs)
+	json.NewEncoder(w).Encode(dtos)
 }
 
 func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
@@ -147,7 +153,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, db.ErrMemoryExists) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict) // 409 Conflict
-		json.NewEncoder(w).Encode(mem)
+		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 		return
 	} else if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -156,7 +162,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(mem)
+	json.NewEncoder(w).Encode(toMemoryDTO(mem))
 }
 
 func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
@@ -171,18 +177,28 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mems, err := a.db.Queries.GetMemories(r.Context(), userID)
+	statusFilter := r.URL.Query().Get("status")
+	var statusParam sql.NullString
+	if statusFilter != "" {
+		statusParam = sql.NullString{String: statusFilter, Valid: true}
+	}
+
+	mems, err := a.db.Queries.GetMemories(r.Context(), db.GetMemoriesParams{
+		UserID: userID,
+		Status: statusParam,
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if mems == nil {
-		mems = []db.Memory{}
+	dtos := make([]MemoryDTO, 0, len(mems))
+	for _, m := range mems {
+		dtos = append(dtos, toMemoryDTO(m))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(mems)
+	json.NewEncoder(w).Encode(dtos)
 }
 
 func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +246,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(mem)
+		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 
 	case http.MethodDelete:
 		err := a.db.Queries.DeleteMemory(r.Context(), db.DeleteMemoryParams{
