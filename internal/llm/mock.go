@@ -107,7 +107,7 @@ func (m *MockLLM) ChatWithJSONSchema(ctx context.Context, req openai.ChatComplet
 }
 
 // MockEmbedder implements Embedder interface with deterministic vector generation.
-type MockEmbedder struct {}
+type MockEmbedder struct{}
 
 func (m *MockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
 	if len(texts) == 0 {

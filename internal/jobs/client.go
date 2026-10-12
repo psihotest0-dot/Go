@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
-    "github.com/jackc/pgx/v5"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
