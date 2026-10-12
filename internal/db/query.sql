@@ -118,6 +118,9 @@ SELECT * FROM ingested_files WHERE user_id = $1 AND file_hash = $2;
 -- name: GetIngestedFileByID :one
 SELECT * FROM ingested_files WHERE id = $1;
 
+-- name: GetIngestedFiles :many
+SELECT * FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC;
+
 -- name: UpdateIngestedFileStatus :exec
 UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1;
 
