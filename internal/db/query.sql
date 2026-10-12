@@ -13,7 +13,10 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetMemories :many
-SELECT * FROM memories WHERE user_id = $1 ORDER BY created_at DESC;
+SELECT * FROM memories
+WHERE user_id = sqlc.arg('user_id')
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+ORDER BY created_at DESC;
 
 -- name: GetMemoryByHash :one
 SELECT * FROM memories WHERE user_id = $1 AND content_hash = $2;
