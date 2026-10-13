@@ -136,10 +136,14 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	var historyMessages []openai.ChatCompletionMessage
 	for _, m := range dbMsgs {
-		historyMessages = append(historyMessages, openai.ChatCompletionMessage{
+		msg := openai.ChatCompletionMessage{
 			Role:    m.Role,
 			Content: m.Content,
-		})
+		}
+		if msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
+			continue
+		}
+		historyMessages = append(historyMessages, msg)
 	}
 
 	// 5. Pruning Logic (Sliding Window based on character count)
