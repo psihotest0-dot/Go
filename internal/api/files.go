@@ -28,9 +28,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		userID, err := getUserID(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
+		userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+		if !ok {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -122,9 +122,9 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -149,9 +149,9 @@ func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
