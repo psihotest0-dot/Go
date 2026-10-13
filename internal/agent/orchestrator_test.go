@@ -97,9 +97,9 @@ func TestOrchestratorIntegration(t *testing.T) {
 	// Assertions
 	require.Equal(t, http.StatusOK, rr.Code)
 	bodyStr := rr.Body.String()
-	require.Contains(t, bodyStr, "Hello ")
-	require.Contains(t, bodyStr, "World")
-	require.Contains(t, bodyStr, "[DONE]")
+	require.Contains(t, bodyStr, "data: {\"content\":\"Hello \"}")
+	require.Contains(t, bodyStr, "data: {\"content\":\"World\"}")
+	require.Contains(t, bodyStr, "data: [DONE]")
 
 	// Verify DB messages (User message should be saved, Assistant message should be saved)
 	msgs, err := database.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
