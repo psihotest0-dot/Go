@@ -298,7 +298,7 @@ func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMe
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Memory
+	items := []Memory{}
 	for rows.Next() {
 		var i Memory
 		if err := rows.Scan(
@@ -339,7 +339,7 @@ func (q *Queries) GetDocumentChunksByFile(ctx context.Context, fileID uuid.UUID)
 		return nil, err
 	}
 	defer rows.Close()
-	var items []DocumentChunk
+	items := []DocumentChunk{}
 	for rows.Next() {
 		var i DocumentChunk
 		if err := rows.Scan(
@@ -439,7 +439,7 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 		return nil, err
 	}
 	defer rows.Close()
-	var items []IngestedFile
+	items := []IngestedFile{}
 	for rows.Next() {
 		var i IngestedFile
 		if err := rows.Scan(
@@ -485,7 +485,7 @@ func (q *Queries) GetMemories(ctx context.Context, arg GetMemoriesParams) ([]Mem
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Memory
+	items := []Memory{}
 	for rows.Next() {
 		var i Memory
 		if err := rows.Scan(
@@ -561,7 +561,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Message
+	items := []Message{}
 	for rows.Next() {
 		var i Message
 		if err := rows.Scan(
@@ -599,7 +599,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Message
+	items := []Message{}
 	for rows.Next() {
 		var i Message
 		if err := rows.Scan(
@@ -636,7 +636,7 @@ func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UU
 		return nil, err
 	}
 	defer rows.Close()
-	var items []uuid.UUID
+	items := []uuid.UUID{}
 	for rows.Next() {
 		var user_id uuid.UUID
 		if err := rows.Scan(&user_id); err != nil {
@@ -740,7 +740,7 @@ func (q *Queries) SearchHybridAll(ctx context.Context, arg SearchHybridAllParams
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SearchHybridAllRow
+	items := []SearchHybridAllRow{}
 	for rows.Next() {
 		var i SearchHybridAllRow
 		if err := rows.Scan(
@@ -807,7 +807,7 @@ func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemo
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Memory
+	items := []Memory{}
 	for rows.Next() {
 		var i Memory
 		if err := rows.Scan(
@@ -874,7 +874,7 @@ func (q *Queries) SearchTextAll(ctx context.Context, arg SearchTextAllParams) ([
 		return nil, err
 	}
 	defer rows.Close()
-	var items []SearchTextAllRow
+	items := []SearchTextAllRow{}
 	for rows.Next() {
 		var i SearchTextAllRow
 		if err := rows.Scan(&i.ID, &i.Content, &i.SourceType); err != nil {
@@ -911,7 +911,7 @@ func (q *Queries) SearchTextMemories(ctx context.Context, arg SearchTextMemories
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Memory
+	items := []Memory{}
 	for rows.Next() {
 		var i Memory
 		if err := rows.Scan(
