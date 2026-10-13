@@ -1,3 +1,4 @@
 go-monolith
 __pycache__/
 .pytest_cache/
+backend.log
