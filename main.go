@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
-	"io"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"go-monolith/internal/agent"
 	"go-monolith/internal/api"
@@ -16,16 +18,58 @@ import (
 	"go-monolith/internal/retrieval"
 )
 
+type LevelFilterHandler struct {
+	fileHandler   slog.Handler
+	stdoutHandler slog.Handler
+}
+
+func (h *LevelFilterHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.fileHandler.Enabled(ctx, level)
+}
+
+func (h *LevelFilterHandler) Handle(ctx context.Context, r slog.Record) error {
+	if err := h.fileHandler.Handle(ctx, r); err != nil {
+		return err
+	}
+	if r.Level >= slog.LevelError || r.Message == "server listening on :8080" {
+		return h.stdoutHandler.Handle(ctx, r)
+	}
+	return nil
+}
+
+func (h *LevelFilterHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &LevelFilterHandler{
+		fileHandler:   h.fileHandler.WithAttrs(attrs),
+		stdoutHandler: h.stdoutHandler.WithAttrs(attrs),
+	}
+}
+
+func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
+	return &LevelFilterHandler{
+		fileHandler:   h.fileHandler.WithGroup(name),
+		stdoutHandler: h.stdoutHandler.WithGroup(name),
+	}
+}
+
 func main() {
-	logFile, err := os.OpenFile("backend.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
-	if err != nil {
-		panic("failed to open log file: " + err.Error())
+	logFile := &lumberjack.Logger{
+		Filename:   "backend.log",
+		MaxSize:    5, // megabytes
+		MaxBackups: 1,
+		Compress:   true,
 	}
 	defer logFile.Close()
 
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-	logger := slog.New(slog.NewJSONHandler(multiWriter, nil))
+	fileHandler := slog.NewJSONHandler(logFile, nil)
+	stdoutHandler := slog.NewJSONHandler(os.Stdout, nil)
+
+	logger := slog.New(&LevelFilterHandler{
+		fileHandler:   fileHandler,
+		stdoutHandler: stdoutHandler,
+	})
 	slog.SetDefault(logger)
+
+	fmt.Println("Starting server...")
 
 	cfg := config.Load()
 	logger.Info("loaded config", slog.String("db_url", cfg.DatabaseURL))
