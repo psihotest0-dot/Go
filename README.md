@@ -40,6 +40,7 @@ To avoid repeated computation of static text vectors, embeddings are cached insi
 
 ## Observability
 - Centralized JSON logging using standard `slog` with enforced `request_id` and `user_id` context tracing via HTTP middlewares.
+- Before returning any HTTP 500 Internal Server Error, explicitly log the error using `slog.Error` so it is not lost.
 - Prometheus metrics are exposed at `/metrics` tracking QPS, token usage, cache hits/misses, and pipeline stage latencies.
 
 *Security Note: The `user_id` context tracing is critical for tenant isolation and must be securely validated. Furthermore, the `/metrics` endpoint is exposed unauthenticated by default. In a production environment, ensure it is protected via internal network routing or firewall rules.*

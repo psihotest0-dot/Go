@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -61,6 +62,7 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Content,
 	})
 	if err != nil {
+		slog.Error("failed to create message", slog.Any("error", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -92,6 +94,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 	})
 	if err != nil {
+		slog.Error("failed to get messages by session", slog.Any("error", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -148,6 +151,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 		return
 	} else if err != nil {
+		slog.Error("failed to create memory", slog.Any("error", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -180,6 +184,7 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 		Status: statusParam,
 	})
 	if err != nil {
+		slog.Error("failed to get memories", slog.Any("error", err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -234,6 +239,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Metadata:   req.Metadata,
 		})
 		if err != nil {
+			slog.Error("failed to update memory", slog.Any("error", err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -246,6 +252,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			UserID: userID,
 		})
 		if err != nil {
+			slog.Error("failed to delete memory", slog.Any("error", err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
