@@ -69,12 +69,13 @@ func main() {
 	orchestrator := agent.NewOrchestrator(database, retrieval.NewRetrievalService(database, embedder), llmClient, nil)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/chat/stream", orchestrator.HandleStreamChat)
-
 	mux.HandleFunc("/healthz", apiService.HealthzHandler)
 	mux.HandleFunc("/metrics", apiService.MetricsHandler)
 
-	mux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
+	protectedMux := http.NewServeMux()
+	protectedMux.HandleFunc("/chat/stream", orchestrator.HandleStreamChat)
+
+	protectedMux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			apiService.CreateMessageHandler(w, r)
 		} else if r.Method == http.MethodGet {
@@ -84,7 +85,7 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("/memories", func(w http.ResponseWriter, r *http.Request) {
+	protectedMux.HandleFunc("/memories", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			apiService.CreateMemoryHandler(w, r)
 		} else if r.Method == http.MethodGet {
@@ -94,9 +95,9 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
+	protectedMux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
 
-	mux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
+	protectedMux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			apiService.CreateFileHandler(riverClient)(w, r)
 		} else if r.Method == http.MethodGet {
@@ -106,7 +107,11 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("/v1/files/", apiService.DeleteFileHandler)
+	protectedMux.HandleFunc("/v1/files/", apiService.DeleteFileHandler)
+
+	userMiddleware := api.UserMiddleware(database.Pool)
+
+	mux.Handle("/", userMiddleware(protectedMux))
 
 	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(mux))
 

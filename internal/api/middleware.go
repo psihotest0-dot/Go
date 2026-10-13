@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go-monolith/metrics"
 )
 
@@ -16,6 +18,7 @@ type key int
 const (
 	RequestIDKey key = iota
 	UserIDKey
+	ParsedUserIDKey
 )
 
 type responseWriter struct {
@@ -79,6 +82,34 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			metrics.QPS.WithLabelValues(r.Method, r.URL.Path, strconv.Itoa(rw.status)).Inc()
 			metrics.Latency.WithLabelValues(r.Method, r.URL.Path).Observe(duration)
+		})
+	}
+}
+
+func UserMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userIDStr := r.Header.Get("X-User-ID")
+			if userIDStr == "" {
+				http.Error(w, "missing X-User-ID header", http.StatusUnauthorized)
+				return
+			}
+
+			userID, err := uuid.Parse(userIDStr)
+			if err != nil {
+				http.Error(w, "invalid X-User-ID header", http.StatusBadRequest)
+				return
+			}
+
+			_, err = pool.Exec(r.Context(), "INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING;", userID)
+			if err != nil {
+				slog.Error("failed to upsert user", slog.Any("error", err))
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), ParsedUserIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
