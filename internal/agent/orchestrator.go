@@ -183,7 +183,6 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	// 6. Call LLM
 	chatReq := openai.ChatCompletionRequest{
-		Model:    "lemonade",
 		Messages: finalMessages,
 		Stream:   true,
 	}
