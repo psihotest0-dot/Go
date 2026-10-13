@@ -32,23 +32,15 @@ func (a *API) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 	promhttp.Handler().ServeHTTP(w, r)
 }
 
-func getUserID(r *http.Request) (uuid.UUID, error) {
-	userIDStr := r.Header.Get("X-User-ID")
-	if userIDStr == "" {
-		return uuid.Nil, errors.New("missing X-User-ID header")
-	}
-	return uuid.Parse(userIDStr)
-}
-
 func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -83,9 +75,9 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -119,9 +111,9 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -171,9 +163,9 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -214,9 +206,9 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := getUserID(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 

@@ -14,6 +14,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 
+	"go-monolith/internal/api"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/retrieval"
@@ -50,14 +51,9 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	userIDStr := r.Header.Get("X-User-ID")
-	if userIDStr == "" {
-		http.Error(w, "missing X-User-ID header", http.StatusUnauthorized)
-		return
-	}
-	userID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		http.Error(w, "invalid X-User-ID header", http.StatusBadRequest)
+	userID, ok := r.Context().Value(api.ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -77,7 +73,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	// include it in the `GetMessagesBySession` if we append it manually.
 	// Actually, let's append it manually and save both at the end, or save user now.
 	// We will save user now.
-	_, err = o.db.Queries.CreateMessage(r.Context(), db.CreateMessageParams{
+	_, err := o.db.Queries.CreateMessage(r.Context(), db.CreateMessageParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
 		Role:      "user",
