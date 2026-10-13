@@ -60,7 +60,7 @@ func NewLemonadeClient() *LemonadeClient {
 	config.BaseURL = baseURL
 
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: 0,
 	}
 	config.HTTPClient = httpClient
 
