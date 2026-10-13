@@ -110,7 +110,9 @@ func main() {
 
 	apiService := api.New(database)
 
-	orchestrator := agent.NewOrchestrator(database, retrieval.NewRetrievalService(database, embedder), llmClient, nil)
+	retrievalService := retrieval.NewRetrievalService(database, embedder)
+	toolRegistry := agent.NewDefaultToolRegistry(retrievalService)
+	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", apiService.HealthzHandler)
