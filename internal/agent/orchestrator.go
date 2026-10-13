@@ -113,7 +113,13 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	})
 
 	// 3. Construct System/Context Message
-	systemContent := "You are a helpful assistant."
+	systemContent := `You are a helpful assistant.
+You have access to long-term memory tools: search_memories and create_memory.
+Rules:
+- Call search_memories FIRST when asked about past context or personal details.
+- Call create_memory ONLY when the user explicitly shares new personal facts or preferences.
+- NEVER claim you have remembered or saved something unless the create_memory tool call succeeded.`
+
 	if len(contextTexts) > 0 {
 		systemContent += "\n\nRelevant Context:\n" + strings.Join(contextTexts, "\n\n")
 	}
@@ -186,9 +192,56 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	})
 
 	// 6. Call LLM
+	// Define JSON schemas for tools
+	tools := []openai.Tool{
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "create_memory",
+				Description: "Save a new personal fact or preference about the user.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"content": map[string]interface{}{
+							"type":        "string",
+							"description": "The explicit fact about the user in 3rd person.",
+						},
+						"importance": map[string]interface{}{
+							"type":        "integer",
+							"description": "The importance of the fact from 1 to 10.",
+						},
+					},
+					"required": []string{"content"},
+				},
+			},
+		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "search_memories",
+				Description: "Search for past context or personal details about the user.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "The text to search for.",
+						},
+						"limit": map[string]interface{}{
+							"type":        "integer",
+							"description": "The maximum number of results to return (default 5, max 20).",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+	}
+
 	chatReq := openai.ChatCompletionRequest{
 		Messages: finalMessages,
 		Stream:   true,
+		Tools:    tools,
 	}
 
 	stream, err := o.llmClient.ChatStream(r.Context(), chatReq)
@@ -205,6 +258,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Connection", "keep-alive")
 
 	var fullAssistantMessage strings.Builder
+	var toolCalls []openai.ToolCall
 
 	for {
 		resp, err := stream.Recv()
@@ -225,22 +279,137 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if len(resp.Choices) > 0 {
-			chunk := resp.Choices[0].Delta.Content
-			fullAssistantMessage.WriteString(chunk)
+			delta := resp.Choices[0].Delta
 
-			// SSE format
-			dataMap := map[string]string{"content": chunk}
-			dataBytes, _ := json.Marshal(dataMap)
-			fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			} else {
-				slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
-				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-				return
+			// Accumulate ToolCalls
+			if len(delta.ToolCalls) > 0 {
+				for _, tc := range delta.ToolCalls {
+					// We need to merge tool calls based on Index
+					if tc.Index != nil {
+						idx := *tc.Index
+						for len(toolCalls) <= idx {
+							toolCalls = append(toolCalls, openai.ToolCall{})
+						}
+
+						if tc.ID != "" {
+							toolCalls[idx].ID = tc.ID
+						}
+						if tc.Type != "" {
+							toolCalls[idx].Type = tc.Type
+						}
+						if tc.Function.Name != "" {
+							toolCalls[idx].Function.Name = tc.Function.Name
+						}
+						if tc.Function.Arguments != "" {
+							toolCalls[idx].Function.Arguments += tc.Function.Arguments
+						}
+					}
+				}
+			}
+
+			// Stream back only the content
+			chunk := delta.Content
+			if chunk != "" {
+				fullAssistantMessage.WriteString(chunk)
+
+				// SSE format
+				dataMap := map[string]string{"content": chunk}
+				dataBytes, _ := json.Marshal(dataMap)
+				fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				} else {
+					slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
+					http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 	}
+
+	// Execute tool calls if any
+	if len(toolCalls) > 0 {
+		// Append the assistant's tool call message
+		finalMessages = append(finalMessages, openai.ChatCompletionMessage{
+			Role:      openai.ChatMessageRoleAssistant,
+			Content:   fullAssistantMessage.String(),
+			ToolCalls: toolCalls,
+		})
+
+		for _, tc := range toolCalls {
+			if tc.Function.Name != "" {
+				var args map[string]interface{}
+				if tc.Function.Arguments != "" {
+					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				}
+
+				res, err := o.tools.ExecuteTool(r.Context(), tc.Function.Name, args)
+
+				var contentStr string
+				if err != nil {
+					slog.Error("tool execution failed", "tool", tc.Function.Name, "err", err)
+					contentStr = fmt.Sprintf("Error: %v", err)
+				} else {
+					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result", res)
+					resBytes, _ := json.Marshal(res)
+					contentStr = string(resBytes)
+				}
+
+				finalMessages = append(finalMessages, openai.ChatCompletionMessage{
+					Role:       openai.ChatMessageRoleTool,
+					Content:    contentStr,
+					ToolCallID: tc.ID,
+				})
+			}
+		}
+
+		// Second LLM Call
+		chatReq2 := openai.ChatCompletionRequest{
+			Messages: finalMessages,
+			Stream:   true,
+			Tools:    tools, // still pass tools just in case
+		}
+
+		stream2, err := o.llmClient.ChatStream(r.Context(), chatReq2)
+		if err != nil {
+			slog.Error("llm second stream failed", "err", err)
+			// At this point we might have already sent some chunks, so just end it
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			return
+		}
+		defer stream2.Close()
+
+		for {
+			resp2, err := stream2.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				break
+			}
+			if len(resp2.Choices) > 0 {
+				chunk := resp2.Choices[0].Delta.Content
+				if chunk != "" {
+					fullAssistantMessage.WriteString(chunk)
+
+					dataMap := map[string]string{"content": chunk}
+					dataBytes, _ := json.Marshal(dataMap)
+					fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					}
+				}
+			}
+		}
+	}
+
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -251,11 +420,18 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 8. Save Assistant Message
+	contentToSave := fullAssistantMessage.String()
+	// If it was just a tool call with no final content generated, format it
+	if contentToSave == "" && len(toolCalls) > 0 {
+		tcBytes, _ := json.Marshal(toolCalls)
+		contentToSave = fmt.Sprintf("ToolCalls: %s", string(tcBytes))
+	}
+
 	_, err = o.db.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
 		Role:      "assistant",
-		Content:   fullAssistantMessage.String(),
+		Content:   contentToSave,
 	})
 	if err != nil {
 		// Log but cannot return error to client since we already streamed
