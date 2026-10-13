@@ -18,6 +18,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/xuri/excelize/v2 v2.11.0
 	golang.org/x/net v0.61.0
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
