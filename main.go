@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,7 +17,14 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	logFile, err := os.OpenFile("backend.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err != nil {
+		panic("failed to open log file: " + err.Error())
+	}
+	defer logFile.Close()
+
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+	logger := slog.New(slog.NewJSONHandler(multiWriter, nil))
 	slog.SetDefault(logger)
 
 	cfg := config.Load()
@@ -100,7 +108,7 @@ func main() {
 
 	mux.HandleFunc("/v1/files/", apiService.DeleteFileHandler)
 
-	handler := api.Middleware(logger)(mux)
+	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(mux))
 
 	logger.Info("server listening on :8080")
 	if err := http.ListenAndServe(":8080", handler); err != nil {
