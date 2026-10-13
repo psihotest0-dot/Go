@@ -225,7 +225,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			fullAssistantMessage.WriteString(chunk)
 
 			// SSE format
-			dataBytes, _ := json.Marshal(resp)
+			dataMap := map[string]string{"content": chunk}
+			dataBytes, _ := json.Marshal(dataMap)
 			fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
