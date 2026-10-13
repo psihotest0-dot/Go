@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -84,6 +85,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		Content:   req.Content,
 	})
 	if err != nil {
+		slog.Error("failed to save user message", "err", err)
 		http.Error(w, fmt.Sprintf("failed to save user message: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -131,6 +133,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		SessionID: req.SessionID,
 	})
 	if err != nil {
+		slog.Error("failed to get messages", "err", err)
 		http.Error(w, fmt.Sprintf("failed to get messages: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -191,6 +194,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	stream, err := o.llmClient.ChatStream(r.Context(), chatReq)
 	if err != nil {
+		slog.Error("llm stream failed", "err", err)
 		http.Error(w, fmt.Sprintf("llm stream failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -214,6 +218,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			} else {
+				slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
 				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 				return
 			}
@@ -230,6 +235,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			} else {
+				slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
 				http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 				return
 			}
@@ -239,6 +245,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	} else {
+		slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
