@@ -219,7 +219,9 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		return tx.Commit()
 	}
 
-	memories, err := q.GetMemories(ctx, msg.UserID)
+	memories, err := q.GetMemories(ctx, db.GetMemoriesParams{
+		UserID: msg.UserID,
+	})
 	if err != nil {
 		return err
 	}
