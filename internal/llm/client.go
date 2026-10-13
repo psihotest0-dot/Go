@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -22,7 +23,30 @@ type LLMClient interface {
 
 // LemonadeClient implements LLMClient using the standard OpenAI format.
 type LemonadeClient struct {
-	client *openai.Client
+	client      *openai.Client
+	cachedModel string
+	cacheTime   time.Time
+	mu          sync.RWMutex
+}
+
+func (c *LemonadeClient) getDynamicModel(ctx context.Context) string {
+	c.mu.RLock()
+	if time.Since(c.cacheTime) < 5*time.Minute && c.cachedModel != "" {
+		defer c.mu.RUnlock()
+		return c.cachedModel
+	}
+	c.mu.RUnlock()
+
+	models, err := c.client.ListModels(ctx)
+	if err == nil && len(models.Models) > 0 {
+		c.mu.Lock()
+		c.cachedModel = models.Models[0].ID
+		c.cacheTime = time.Now()
+		defer c.mu.Unlock()
+		return c.cachedModel
+	}
+
+	return "lemonade"
 }
 
 // NewLemonadeClient creates a new client connected to the Lemonade server.
@@ -44,12 +68,10 @@ func NewLemonadeClient() *LemonadeClient {
 	return &LemonadeClient{client: client}
 }
 
-func (c *LemonadeClient) setModel(req *openai.ChatCompletionRequest) {
+func (c *LemonadeClient) setModel(ctx context.Context, req *openai.ChatCompletionRequest) {
 	provider := os.Getenv("LLM_PROVIDER")
-	if provider == "lemonade" {
-		req.Model = "lemonade"
-	} else if req.Model == "" {
-		req.Model = "lemonade"
+	if provider == "lemonade" || req.Model == "" || req.Model == "lemonade" {
+		req.Model = c.getDynamicModel(ctx)
 	}
 }
 
@@ -64,7 +86,7 @@ func (c *LemonadeClient) Chat(ctx context.Context, req openai.ChatCompletionRequ
 		}
 	}()
 
-	c.setModel(&req)
+	c.setModel(ctx, &req)
 
 	maxRetries := 4 // 1 initial + 3 retries
 	baseDelay := 100 * time.Millisecond
@@ -91,7 +113,7 @@ func (c *LemonadeClient) Chat(ctx context.Context, req openai.ChatCompletionRequ
 }
 
 func (c *LemonadeClient) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (stream *openai.ChatCompletionStream, err error) {
-	c.setModel(&req)
+	c.setModel(ctx, &req)
 	req.Stream = true
 
 	maxRetries := 4
@@ -138,7 +160,7 @@ func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.Chat
 		}
 	}()
 
-	c.setModel(&req)
+	c.setModel(ctx, &req)
 
 	req.ResponseFormat = &openai.ChatCompletionResponseFormat{
 		Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
