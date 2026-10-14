@@ -10,6 +10,7 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 )
@@ -79,6 +80,35 @@ func (q *Queries) CreateDocumentChunk(ctx context.Context, arg CreateDocumentChu
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const createDocumentChunksBatch = `-- name: CreateDocumentChunksBatch :exec
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+SELECT
+    unnest($1::uuid[]),
+    unnest($2::uuid[]),
+    unnest($3::int[]),
+    unnest($4::text[]),
+    unnest($5::vector[])
+`
+
+type CreateDocumentChunksBatchParams struct {
+	FileIds      []uuid.UUID       `json:"file_ids"`
+	UserIds      []uuid.UUID       `json:"user_ids"`
+	ChunkIndices []int32           `json:"chunk_indices"`
+	Texts        []string          `json:"texts"`
+	Embeddings   []pgvector.Vector `json:"embeddings"`
+}
+
+func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocumentChunksBatchParams) error {
+	_, err := q.db.ExecContext(ctx, createDocumentChunksBatch,
+		pq.Array(arg.FileIds),
+		pq.Array(arg.UserIds),
+		pq.Array(arg.ChunkIndices),
+		pq.Array(arg.Texts),
+		pq.Array(arg.Embeddings),
+	)
+	return err
 }
 
 const createEmbeddingCache = `-- name: CreateEmbeddingCache :one
