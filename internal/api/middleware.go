@@ -72,7 +72,10 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.String("request_id", reqID),
 				slog.String("user_id", userID),
 			)
-			reqLogger.Info("incoming request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+
+			if r.URL.Path != "/healthz" {
+				reqLogger.Info("incoming request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			}
 
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 
