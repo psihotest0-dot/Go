@@ -191,7 +191,9 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 
 	dtos := make([]MemoryDTO, 0, len(mems))
 	for _, m := range mems {
-		dtos = append(dtos, toMemoryDTO(m))
+		if strings.TrimSpace(m.Content) != "" {
+			dtos = append(dtos, toMemoryDTO(m))
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

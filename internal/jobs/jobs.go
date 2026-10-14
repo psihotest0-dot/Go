@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go-monolith/internal/db"
@@ -126,19 +127,26 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		return nil
 	}
 
-	for _, msg := range messages {
-		if msg.Role != "user" {
+	for i, msg := range messages {
+		if i >= 10 {
+			break
+		}
+
+		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
 			continue
 		}
 
-		facts, err := w.analyzeMessage(ctx, msg.Content)
+		msgCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+
+		facts, err := w.analyzeMessage(msgCtx, msg.Content)
 		if err != nil {
 			slog.Error("failed to analyze message", "msg_id", msg.ID, "error", err)
+			cancel()
 			continue
 		}
 
 		if len(facts) == 0 {
-			err = w.processFact(ctx, msg, Fact{
+			err = w.processFact(msgCtx, msg, Fact{
 				FactKey:          "__dummy__",
 				Value:            "",
 				Statement:        "",
@@ -147,15 +155,17 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			if err != nil {
 				slog.Error("failed to process dummy fact", "error", err)
 			}
+			cancel()
 			continue
 		}
 
 		for _, fact := range facts {
-			err = w.processFact(ctx, msg, fact)
+			err = w.processFact(msgCtx, msg, fact)
 			if err != nil {
 				slog.Error("failed to process fact", "fact", fact, "error", err)
 			}
 		}
+		cancel()
 	}
 	return nil
 }
@@ -181,7 +191,13 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 
 	var facts []Fact
 	if len(resp.Choices) > 0 {
-		err = json.Unmarshal([]byte(resp.Choices[0].Message.Content), &facts)
+		cleaned := strings.TrimSpace(resp.Choices[0].Message.Content)
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+		cleaned = strings.TrimPrefix(cleaned, "```")
+		cleaned = strings.TrimSuffix(cleaned, "```")
+		cleaned = strings.TrimSpace(cleaned)
+
+		err = json.Unmarshal([]byte(cleaned), &facts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal facts: %w", err)
 		}
@@ -190,6 +206,10 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 }
 
 func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Message, fact Fact) error {
+	if strings.TrimSpace(fact.Statement) == "" && fact.FactKey != "__dummy__" {
+		return nil
+	}
+
 	tx, err := w.dbClient.SqlDB.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -204,8 +224,8 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		vec := pgvector.NewVector(make([]float32, 384))
 		_, err = q.CreateMemory(ctx, db.CreateMemoryParams{
 			UserID:          msg.UserID,
-			Content:         "",
-			Status:          "candidate",
+			Content:         "[analyzed]",
+			Status:          "superseded",
 			Embedding:       vec,
 			EmbeddingModel:  "none",
 			SourceMessageID: nullMsgID,
