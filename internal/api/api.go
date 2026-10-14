@@ -99,9 +99,64 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fetch all necessary chunks for sources
+	var allChunkIDs []uuid.UUID
+	for _, m := range msgs {
+		if m.SourceChunkIds.Valid {
+			var dbChunks []DBChunkInfo
+			if err := json.Unmarshal(m.SourceChunkIds.RawMessage, &dbChunks); err == nil {
+				for _, c := range dbChunks {
+					allChunkIDs = append(allChunkIDs, c.ChunkID)
+				}
+			}
+		}
+	}
+
+	chunksMap := make(map[uuid.UUID]db.GetDocumentChunksWithFileRow)
+	if len(allChunkIDs) > 0 {
+		chunks, err := a.db.Queries.GetDocumentChunksWithFile(r.Context(), allChunkIDs)
+		if err == nil {
+			for _, chunk := range chunks {
+				chunksMap[chunk.ID] = chunk
+			}
+		} else {
+			slog.Error("failed to get document chunks with file", slog.Any("error", err))
+		}
+	}
+
 	dtos := make([]MessageDTO, 0, len(msgs))
 	for _, m := range msgs {
-		dtos = append(dtos, toMessageDTO(m))
+		dto := toMessageDTO(m)
+		if m.SourceChunkIds.Valid {
+			var dbChunks []DBChunkInfo
+			if err := json.Unmarshal(m.SourceChunkIds.RawMessage, &dbChunks); err == nil {
+				var sources []SourceInfo
+				for _, c := range dbChunks {
+					if chunk, ok := chunksMap[c.ChunkID]; ok {
+						snippet := chunk.Text
+						sourceType := "text"
+						if strings.Contains(snippet, "[source: \"ocr\"]") {
+							sourceType = "ocr"
+							snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
+						}
+						snippet = strings.TrimSpace(snippet)
+						if len(snippet) > 600 {
+							snippet = snippet[:600] + "..."
+						}
+
+						sources = append(sources, SourceInfo{
+							ChunkID:        chunk.ID,
+							FileName:       chunk.FileName,
+							ContentSnippet: snippet,
+							Score:          c.Score,
+							SourceType:     sourceType,
+						})
+					}
+				}
+				dto.Sources = sources
+			}
+		}
+		dtos = append(dtos, dto)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
