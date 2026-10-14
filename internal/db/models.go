@@ -70,12 +70,13 @@ type Memory struct {
 }
 
 type Message struct {
-	ID        uuid.UUID    `json:"id"`
-	UserID    uuid.UUID    `json:"user_id"`
-	SessionID string       `json:"session_id"`
-	Role      string       `json:"role"`
-	Content   string       `json:"content"`
-	CreatedAt sql.NullTime `json:"created_at"`
+	ID             uuid.UUID             `json:"id"`
+	UserID         uuid.UUID             `json:"user_id"`
+	SessionID      string                `json:"session_id"`
+	Role           string                `json:"role"`
+	Content        string                `json:"content"`
+	CreatedAt      sql.NullTime          `json:"created_at"`
+	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
 }
 
 type RiverJob struct {
