@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,10 @@ func NewRetrievalService(database *db.Database, embedder llm.Embedder) *Retrieva
 }
 
 func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, content string, importance int, status string, metadata pqtype.NullRawMessage) (db.Memory, error) {
+	if strings.TrimSpace(content) == "" {
+		return db.Memory{}, fmt.Errorf("cannot create memory with empty content")
+	}
+
 	// Generate embeddings
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{content})
 	if err != nil {
