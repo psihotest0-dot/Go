@@ -226,14 +226,15 @@ func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) (Mem
 }
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content) VALUES ($1, $2, $3, $4) RETURNING id, user_id, session_id, role, content, created_at
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids
 `
 
 type CreateMessageParams struct {
-	UserID    uuid.UUID `json:"user_id"`
-	SessionID string    `json:"session_id"`
-	Role      string    `json:"role"`
-	Content   string    `json:"content"`
+	UserID         uuid.UUID             `json:"user_id"`
+	SessionID      string                `json:"session_id"`
+	Role           string                `json:"role"`
+	Content        string                `json:"content"`
+	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
@@ -242,6 +243,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.SessionID,
 		arg.Role,
 		arg.Content,
+		arg.SourceChunkIds,
 	)
 	var i Message
 	err := row.Scan(
@@ -251,6 +253,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.Role,
 		&i.Content,
 		&i.CreatedAt,
+		&i.SourceChunkIds,
 	)
 	return i, err
 }
@@ -380,6 +383,56 @@ func (q *Queries) GetDocumentChunksByFile(ctx context.Context, fileID uuid.UUID)
 			&i.Text,
 			&i.Embedding,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getDocumentChunksWithFile = `-- name: GetDocumentChunksWithFile :many
+SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, f.file_name
+FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.id = ANY($1::uuid[])
+`
+
+type GetDocumentChunksWithFileRow struct {
+	ID         uuid.UUID       `json:"id"`
+	FileID     uuid.UUID       `json:"file_id"`
+	UserID     uuid.UUID       `json:"user_id"`
+	ChunkIndex int32           `json:"chunk_index"`
+	Text       string          `json:"text"`
+	Embedding  pgvector.Vector `json:"embedding"`
+	CreatedAt  sql.NullTime    `json:"created_at"`
+	FileName   string          `json:"file_name"`
+}
+
+func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, chunkIds []uuid.UUID) ([]GetDocumentChunksWithFileRow, error) {
+	rows, err := q.db.QueryContext(ctx, getDocumentChunksWithFile, pq.Array(chunkIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetDocumentChunksWithFileRow{}
+	for rows.Next() {
+		var i GetDocumentChunksWithFileRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FileID,
+			&i.UserID,
+			&i.ChunkIndex,
+			&i.Text,
+			&i.Embedding,
+			&i.CreatedAt,
+			&i.FileName,
 		); err != nil {
 			return nil, err
 		}
@@ -577,7 +630,7 @@ func (q *Queries) GetMemoryByHash(ctx context.Context, arg GetMemoryByHashParams
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
 `
 
 type GetMessagesBySessionParams struct {
@@ -601,6 +654,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 			&i.Role,
 			&i.Content,
 			&i.CreatedAt,
+			&i.SourceChunkIds,
 		); err != nil {
 			return nil, err
 		}
@@ -616,7 +670,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 }
 
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
-SELECT m.id, m.user_id, m.session_id, m.role, m.content, m.created_at
+SELECT m.id, m.user_id, m.session_id, m.role, m.content, m.created_at, m.source_chunk_ids
 FROM messages m
 LEFT JOIN memories mem ON m.id = mem.source_message_id
 WHERE mem.id IS NULL AND m.user_id = $1
@@ -639,6 +693,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 			&i.Role,
 			&i.Content,
 			&i.CreatedAt,
+			&i.SourceChunkIds,
 		); err != nil {
 			return nil, err
 		}
@@ -700,7 +755,7 @@ memory_text_search AS (
     LIMIT 100
 ),
 chunk_vector_search AS (
-    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY memories.embedding <=> $2) as rank
+    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY document_chunks.embedding <=> $2) as rank
     FROM document_chunks
     WHERE document_chunks.user_id = $3
     ORDER BY rank

@@ -2,7 +2,7 @@
 INSERT INTO users DEFAULT VALUES RETURNING *;
 
 -- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content) VALUES ($1, $2, $3, $4) RETURNING *;
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING *;
 
 -- name: GetMessagesBySession :many
 SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC;
@@ -153,7 +153,7 @@ memory_text_search AS (
     LIMIT 100
 ),
 chunk_vector_search AS (
-    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
+    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY document_chunks.embedding <=> sqlc.arg('embedding')) as rank
     FROM document_chunks
     WHERE document_chunks.user_id = sqlc.arg('user_id')
     ORDER BY rank
@@ -227,3 +227,9 @@ SELECT
     unnest(@chunk_indices::int[]),
     unnest(@texts::text[]),
     unnest(@embeddings::vector[]);
+
+-- name: GetDocumentChunksWithFile :many
+SELECT c.*, f.file_name
+FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.id = ANY(sqlc.arg('chunk_ids')::uuid[]);

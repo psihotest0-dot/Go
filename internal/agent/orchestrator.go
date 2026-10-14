@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -79,6 +80,10 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		SessionID: req.SessionID,
 		Role:      "user",
 		Content:   req.Content,
+		SourceChunkIds: pqtype.NullRawMessage{
+			RawMessage: []byte("[]"),
+			Valid:      true,
+		},
 	})
 	if err != nil {
 		slog.Error("failed to save user message", "err", err)
@@ -94,6 +99,68 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		for _, m := range memories {
 			contextTexts = append(contextTexts, m.Content)
 			memoryIDs = append(memoryIDs, m.ID.String())
+		}
+	}
+
+	// Extract sources for chunks
+	var sources []api.SourceInfo
+	var chunkIDs []uuid.UUID
+	if err == nil {
+		for _, m := range memories {
+			if m.SourceType == "chunk" {
+				chunkIDs = append(chunkIDs, m.ID)
+			}
+		}
+	}
+
+	if len(chunkIDs) > 0 {
+		chunks, err := o.db.Queries.GetDocumentChunksWithFile(r.Context(), chunkIDs)
+		if err == nil {
+			for _, chunk := range chunks {
+				// Map score
+				var score float64
+				for _, m := range memories {
+					if m.ID == chunk.ID {
+						score = m.Score
+						break
+					}
+				}
+
+				snippet := chunk.Text
+				sourceType := "text"
+				if strings.Contains(snippet, "[source: \"ocr\"]") {
+					sourceType = "ocr"
+					snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
+				}
+				snippet = strings.TrimSpace(snippet)
+				if len(snippet) > 600 {
+					snippet = snippet[:600] + "..."
+				}
+
+				sources = append(sources, api.SourceInfo{
+					ChunkID:        chunk.ID,
+					FileName:       chunk.FileName,
+					ContentSnippet: snippet,
+					Score:          score,
+					SourceType:     sourceType,
+				})
+			}
+
+			// Deduplicate based on ChunkID
+			seen := make(map[uuid.UUID]bool)
+			var dedupedSources []api.SourceInfo
+			for _, s := range sources {
+				if !seen[s.ChunkID] {
+					seen[s.ChunkID] = true
+					dedupedSources = append(dedupedSources, s)
+				}
+			}
+			sources = dedupedSources
+
+			// Sort by score descending using sort.Slice
+			sort.Slice(sources, func(i, j int) bool {
+				return sources[i].Score > sources[j].Score
+			})
 		}
 	}
 
@@ -256,6 +323,14 @@ Rules:
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	if len(sources) > 0 {
+		sourcesBytes, _ := json.Marshal(sources)
+		fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(sourcesBytes))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
 
 	var fullAssistantMessage strings.Builder
 	var toolCalls []openai.ToolCall
@@ -427,11 +502,24 @@ Rules:
 		contentToSave = fmt.Sprintf("ToolCalls: %s", string(tcBytes))
 	}
 
+	var dbSources []api.DBChunkInfo
+	for _, s := range sources {
+		dbSources = append(dbSources, api.DBChunkInfo{
+			ChunkID: s.ChunkID,
+			Score:   s.Score,
+		})
+	}
+	dbSourcesBytes, _ := json.Marshal(dbSources)
+
 	_, err = o.db.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
 		Role:      "assistant",
 		Content:   contentToSave,
+		SourceChunkIds: pqtype.NullRawMessage{
+			RawMessage: dbSourcesBytes,
+			Valid:      true,
+		},
 	})
 	if err != nil {
 		// Log but cannot return error to client since we already streamed

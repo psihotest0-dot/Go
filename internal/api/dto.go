@@ -48,6 +48,21 @@ func toMemoryDTO(m db.Memory) MemoryDTO {
 	return dto
 }
 
+
+type SourceInfo struct {
+	ChunkID        uuid.UUID `json:"chunk_id"`
+	FileName       string    `json:"file_name"`
+	PageNumber     *int      `json:"page_number,omitempty"`
+	ContentSnippet string    `json:"content_snippet"`
+	Score          float64   `json:"score"`
+	SourceType     string    `json:"source_type"` // "ocr" | "text"
+}
+
+type DBChunkInfo struct {
+	ChunkID uuid.UUID `json:"chunk_id"`
+	Score   float64   `json:"score"`
+}
+
 type MessageDTO struct {
 	ID        uuid.UUID  `json:"id"`
 	UserID    uuid.UUID  `json:"user_id"`
@@ -55,6 +70,7 @@ type MessageDTO struct {
 	Role      string     `json:"role"`
 	Content   string     `json:"content"`
 	CreatedAt *time.Time `json:"created_at"`
+	Sources   []SourceInfo `json:"sources,omitempty"`
 }
 
 func toMessageDTO(m db.Message) MessageDTO {
