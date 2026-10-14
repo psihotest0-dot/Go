@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,6 +53,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		// Since MaxBytesReader is used, reading all is safe up to 50MB.
 		fileBytes, err := io.ReadAll(file)
 		if err != nil {
+			slog.Error("failed to read file", slog.Any("error", err))
 			http.Error(w, "failed to read file", http.StatusInternalServerError)
 			return
 		}
@@ -82,6 +84,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 
 		err = os.WriteFile(localPath, fileBytes, 0644)
 		if err != nil {
+			slog.Error("failed to save file locally", slog.Any("error", err))
 			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
 			return
 		}
@@ -96,6 +99,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			LocalPath: localPath,
 		})
 		if err != nil {
+			slog.Error("failed to record file in database", slog.Any("error", err))
 			http.Error(w, "failed to record file in database", http.StatusInternalServerError)
 			return
 		}
@@ -130,6 +134,7 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 	filesDB, err := a.db.Queries.GetIngestedFiles(r.Context(), userID)
 	if err != nil {
+		slog.Error("failed to get files", slog.Any("error", err))
 		http.Error(w, "failed to get files", http.StatusInternalServerError)
 		return
 	}
@@ -184,6 +189,7 @@ func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 		UserID: userID,
 	})
 	if err != nil {
+		slog.Error("failed to delete file from db", slog.Any("error", err))
 		http.Error(w, "failed to delete file from db", http.StatusInternalServerError)
 		return
 	}
