@@ -49,23 +49,27 @@ type ChatRequest struct {
 // HandleStreamChat handles incoming chat messages and streams the response.
 func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(api.ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if req.SessionID == "" || req.Content == "" {
+		slog.Warn("missing session_id or content", slog.String("path", r.URL.Path))
 		http.Error(w, "session_id and content are required", http.StatusBadRequest)
 		return
 	}
