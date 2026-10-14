@@ -218,3 +218,12 @@ SELECT id, content, source_type
 FROM combined
 ORDER BY sim DESC
 LIMIT sqlc.arg('match_count');
+
+-- name: CreateDocumentChunksBatch :exec
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+SELECT
+    unnest(@file_ids::uuid[]),
+    unnest(@user_ids::uuid[]),
+    unnest(@chunk_indices::int[]),
+    unnest(@texts::text[]),
+    unnest(@embeddings::vector[]);

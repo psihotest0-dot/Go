@@ -68,7 +68,6 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to extract text: %w", err)
 	}
 
-
 	cyrillicCount := 0
 	runes := []rune(text)
 	for _, r := range runes {
@@ -86,30 +85,53 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	chunks := w.chunkText(text, chunkSize, overlap)
 
+	batchSize := 50
+	for i := 0; i < len(chunks); i += batchSize {
+		end := i + batchSize
+		if end > len(chunks) {
+			end = len(chunks)
+		}
 
-	for i, chunk := range chunks {
-		vectors, err := w.embedder.EmbedTexts(ctx, []string{chunk})
+		batchChunks := chunks[i:end]
+
+		vectors, err := w.embedder.EmbedTexts(ctx, batchChunks)
 		if err != nil {
 			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
-			return fmt.Errorf("failed to embed chunk %d: %w", i, err)
-		}
-		var vec pgvector.Vector
-		if len(vectors) > 0 {
-			vec = pgvector.NewVector(vectors[0])
-		} else {
-			vec = pgvector.NewVector(make([]float32, 384))
+			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, err)
 		}
 
-		_, err = w.dbClient.Queries.CreateDocumentChunk(ctx, db.CreateDocumentChunkParams{
-			FileID:     file.ID,
-			UserID:     file.UserID,
-			ChunkIndex: int32(i),
-			Text:       chunk,
-			Embedding:  vec,
+		// Check if vectors match the number of chunks. If not, pad with zero vectors.
+		if len(vectors) != len(batchChunks) {
+			slog.Warn("Mismatch in vector count vs chunks in batch, padding with zeros", "expected", len(batchChunks), "got", len(vectors))
+			for len(vectors) < len(batchChunks) {
+				vectors = append(vectors, make([]float32, 384))
+			}
+		}
+
+		var fileIDs []uuid.UUID
+		var userIDs []uuid.UUID
+		var chunkIndices []int32
+		var texts []string
+		var embeddings []pgvector.Vector
+
+		for j, chunk := range batchChunks {
+			fileIDs = append(fileIDs, file.ID)
+			userIDs = append(userIDs, file.UserID)
+			chunkIndices = append(chunkIndices, int32(i+j))
+			texts = append(texts, chunk)
+			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
+		}
+
+		err = w.dbClient.Queries.CreateDocumentChunksBatch(ctx, db.CreateDocumentChunksBatchParams{
+			FileIds:      fileIDs,
+			UserIds:      userIDs,
+			ChunkIndices: chunkIndices,
+			Texts:        texts,
+			Embeddings:   embeddings,
 		})
 		if err != nil {
 			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
-			return fmt.Errorf("failed to save chunk %d: %w", i, err)
+			return fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err)
 		}
 	}
 
