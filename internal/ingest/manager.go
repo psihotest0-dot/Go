@@ -22,6 +22,7 @@ func NewManager() *Manager {
 			NewPDFExtractor(),
 			NewDOCXExtractor(),
 			NewXLSXExtractor(),
+			NewImageOCRExtractor(),
 		},
 	}
 }
