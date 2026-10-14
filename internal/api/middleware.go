@@ -91,12 +91,14 @@ func UserMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userIDStr := r.Header.Get("X-User-ID")
 			if userIDStr == "" {
+					slog.Warn("missing X-User-ID header", slog.String("path", r.URL.Path))
 				http.Error(w, "missing X-User-ID header", http.StatusUnauthorized)
 				return
 			}
 
 			userID, err := uuid.Parse(userIDStr)
 			if err != nil {
+					slog.Warn("invalid X-User-ID header", slog.String("header", userIDStr), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid X-User-ID header", http.StatusBadRequest)
 				return
 			}

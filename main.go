@@ -127,6 +127,7 @@ func main() {
 		} else if r.Method == http.MethodGet {
 			apiService.GetMessagesHandler(w, r)
 		} else {
+			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
@@ -137,6 +138,7 @@ func main() {
 		} else if r.Method == http.MethodGet {
 			apiService.GetMemoriesHandler(w, r)
 		} else {
+			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
@@ -149,6 +151,7 @@ func main() {
 		} else if r.Method == http.MethodGet {
 			apiService.GetFilesHandler(w, r)
 		} else {
+			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})

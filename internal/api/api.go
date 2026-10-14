@@ -35,12 +35,14 @@ func (a *API) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -51,6 +53,7 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 		Content   string `json:"content"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -73,18 +76,21 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	sessionID := r.URL.Query().Get("session_id")
 	if sessionID == "" {
+		slog.Warn("missing session_id parameter", slog.String("path", r.URL.Path))
 		http.Error(w, "missing session_id parameter", http.StatusBadRequest)
 		return
 	}
@@ -165,12 +171,14 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -183,6 +191,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		Metadata        pqtype.NullRawMessage `json:"metadata"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -218,12 +227,14 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -258,18 +269,21 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 3 {
+		slog.Warn("invalid path", slog.String("path", r.URL.Path))
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 	idStr := parts[2] // /memories/{id}
 	memoryID, err := uuid.Parse(idStr)
 	if err != nil {
+		slog.Warn("invalid memory id", slog.String("id", idStr), slog.String("path", r.URL.Path))
 		http.Error(w, "invalid memory id", http.StatusBadRequest)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -283,6 +297,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Metadata   pqtype.NullRawMessage `json:"metadata"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -316,6 +331,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
