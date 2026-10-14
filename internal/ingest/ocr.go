@@ -1,13 +1,15 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"os/exec"
 	"strings"
-	// "github.com/otiai10/gosseract/v2" // Uncomment when adding the dependency
 )
 
-// ImageOCRExtractor is an extractor that uses Tesseract OCR to extract text from images.
+// ImageOCRExtractor is an extractor that uses Tesseract OCR to extract text from images via CLI.
 type ImageOCRExtractor struct{}
 
 // NewImageOCRExtractor creates a new ImageOCRExtractor.
@@ -15,38 +17,33 @@ func NewImageOCRExtractor() *ImageOCRExtractor {
 	return &ImageOCRExtractor{}
 }
 
+// Name returns the name of the extractor.
+func (e *ImageOCRExtractor) Name() string {
+	return "Image OCR (Tesseract CLI)"
+}
+
 // Supports checks if the file is an image that can be processed.
 func (e *ImageOCRExtractor) Supports(mimeType, ext string) bool {
 	return strings.HasPrefix(mimeType, "image/")
 }
 
-// Extract extracts text from the image reader.
+// Extract extracts text from the image reader using the Tesseract CLI.
 func (e *ImageOCRExtractor) Extract(ctx context.Context, r io.Reader) (string, error) {
-	// --- Draft Implementation Note ---
-	// Real implementation requires github.com/otiai10/gosseract/v2 and libtesseract-dev
-	//
-	// data, err := io.ReadAll(r)
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to read image data: %w", err)
-	// }
-	//
-	// client := gosseract.NewClient()
-	// defer client.Close()
-	//
-	// // To support Bulgarian and English
-	// client.SetLanguage("bul", "eng")
-	//
-	// err = client.SetImageFromBytes(data)
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to set image for OCR: %w", err)
-	// }
-	//
-	// text, err := client.Text()
-	// if err != nil {
-	// 	return "", fmt.Errorf("failed to extract text via OCR: %w", err)
-	// }
-	//
-	// return text, nil
+	// Execute tesseract CLI, reading from stdin and writing to stdout, using bul and eng languages.
+	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", "bul+eng")
 
-	return "OCR Extraction Draft. To implement, add github.com/otiai10/gosseract/v2 dependency and libtesseract-dev system packages.", nil
+	// Pass the image data via standard input.
+	cmd.Stdin = r
+
+	var outBuf bytes.Buffer
+	var errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("tesseract OCR failed: %w (stderr: %s)", err, errBuf.String())
+	}
+
+	return strings.TrimSpace(outBuf.String()), nil
 }
