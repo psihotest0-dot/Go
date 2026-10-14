@@ -25,12 +25,14 @@ import (
 func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
+			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
 		userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 		if !ok {
+			slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -38,12 +40,14 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		// Enforce size limit (e.g. 50MB)
 		r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 		if err := r.ParseMultipartForm(50 << 20); err != nil {
+			slog.Warn("file too large or invalid multipart form", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
 			return
 		}
 
 		file, handler, err := r.FormFile("file")
 		if err != nil {
+			slog.Warn("missing file", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, "missing file", http.StatusBadRequest)
 			return
 		}
@@ -122,12 +126,14 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 
 func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -150,35 +156,41 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 4 {
+		slog.Warn("invalid path", slog.String("path", r.URL.Path))
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 	idStr := parts[3] // /v1/files/{id}
 	fileID, err := uuid.Parse(idStr)
 	if err != nil {
+		slog.Warn("invalid file id", slog.String("id", idStr), slog.String("path", r.URL.Path))
 		http.Error(w, "invalid file id", http.StatusBadRequest)
 		return
 	}
 
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
+		slog.Warn("file not found", slog.String("id", idStr), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
 	if file.UserID != userID {
+		slog.Warn("unauthorized access to file", slog.String("id", idStr), slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized access to file", http.StatusForbidden)
 		return
 	}
