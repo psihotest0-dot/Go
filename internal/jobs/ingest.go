@@ -143,6 +143,12 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to update status to completed: %w", err)
 	}
 
+	if file.LocalPath != "" {
+		if err := os.Remove(file.LocalPath); err != nil {
+			slog.Warn("Failed to remove local file after ingestion", "file_id", file.ID, "path", file.LocalPath, "error", err)
+		}
+	}
+
 	slog.Info("IngestFileWorker finished successfully", "file_id", job.Args.FileID, "chunks", len(chunks))
 	return nil
 }
