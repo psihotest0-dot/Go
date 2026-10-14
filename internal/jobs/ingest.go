@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"unicode"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
@@ -67,7 +68,24 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to extract text: %w", err)
 	}
 
-	chunks := w.chunkText(text, 400, 50) // ~400 chars, ~50 chars overlap
+
+	cyrillicCount := 0
+	runes := []rune(text)
+	for _, r := range runes {
+		if unicode.Is(unicode.Cyrillic, r) {
+			cyrillicCount++
+		}
+	}
+
+	chunkSize := 800
+	overlap := 100
+	if len(runes) > 0 && float64(cyrillicCount)/float64(len(runes)) > 0.15 {
+		chunkSize = 400
+		overlap = 50
+	}
+
+	chunks := w.chunkText(text, chunkSize, overlap)
+
 
 	for i, chunk := range chunks {
 		vectors, err := w.embedder.EmbedTexts(ctx, []string{chunk})
