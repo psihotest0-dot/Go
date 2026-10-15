@@ -127,16 +127,16 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		return nil
 	}
 
-	for i, msg := range messages {
-		if i >= 10 {
-			break
-		}
-
+	for _, msg := range messages {
 		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
+			err = w.dbClient.Queries.MarkMessageAnalyzed(ctx, msg.ID)
+			if err != nil {
+				slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
+			}
 			continue
 		}
 
-		msgCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		msgCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 
 		facts, err := w.analyzeMessage(msgCtx, msg.Content)
 		if err != nil {
@@ -160,6 +160,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		cancel()
+		break // strictly process 1 valid user message per job run
 	}
 	return nil
 }

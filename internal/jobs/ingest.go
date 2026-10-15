@@ -60,9 +60,9 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
 		return fmt.Errorf("failed to open file: %w", err)
 	}
-	defer f.Close()
 
 	text, err := w.manager.Extract(ctx, file.FileName, f)
+	f.Close()
 	if err != nil {
 		w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
 		return fmt.Errorf("failed to extract text: %w", err)
