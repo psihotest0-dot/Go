@@ -11,17 +11,20 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"go-monolith/internal/db"
+	"go-monolith/internal/llm"
 
 	"github.com/google/uuid"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 )
 
 type API struct {
-	db *db.Database
+	db       *db.Database
+	embedder llm.Embedder
 }
 
-func New(db *db.Database) *API {
-	return &API{db: db}
+func New(db *db.Database, embedder llm.Embedder) *API {
+	return &API{db: db, embedder: embedder}
 }
 
 func (a *API) HealthzHandler(w http.ResponseWriter, r *http.Request) {
@@ -302,13 +305,56 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		if strings.TrimSpace(req.Content) == "" {
+			http.Error(w, "content cannot be empty", http.StatusBadRequest)
+			return
+		}
+
+		existingMem, err := a.db.Queries.GetMemoryByID(r.Context(), db.GetMemoryByIDParams{
+			ID:     memoryID,
+			UserID: userID,
+		})
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.Error(w, "memory not found", http.StatusNotFound)
+			} else {
+				slog.Error("failed to get existing memory", slog.Any("error", err))
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+
+		newContentHash := db.GenerateHash(req.Content)
+		var newEmbedding *pgvector.Vector
+		var newEmbeddingModel sql.NullString
+
+		if newContentHash != existingMem.ContentHash {
+			vectors, err := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+			if err != nil {
+				slog.Error("failed to generate embedding", slog.Any("error", err))
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if len(vectors) > 0 && len(vectors[0]) > 0 {
+				vec := pgvector.NewVector(vectors[0])
+				newEmbedding = &vec
+				newEmbeddingModel = sql.NullString{String: "paraphrase-multilingual-MiniLM-L12-v2", Valid: true}
+			} else {
+				slog.Error("embedder returned empty vector")
+				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
+				return
+			}
+		}
+
 		mem, err := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
 			ID:         memoryID,
 			UserID:     userID,
-			Content:    req.Content,
-			Status:     req.Status,
-			Importance: req.Importance,
+			Content:    sql.NullString{String: req.Content, Valid: true},
+			Status:     sql.NullString{String: req.Status, Valid: true},
+			Importance: sql.NullInt32{Int32: req.Importance, Valid: true},
 			Metadata:   req.Metadata,
+			Embedding:  newEmbedding,
+			EmbeddingModel: newEmbeddingModel,
 		})
 		if err != nil {
 			slog.Error("failed to update memory", slog.Any("error", err))
