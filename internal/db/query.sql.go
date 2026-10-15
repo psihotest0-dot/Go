@@ -137,7 +137,7 @@ func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingC
 const createIngestedFile = `-- name: CreateIngestedFile :one
 INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at
+RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override
 `
 
 type CreateIngestedFileParams struct {
@@ -172,6 +172,8 @@ func (q *Queries) CreateIngestedFile(ctx context.Context, arg CreateIngestedFile
 		&i.LocalPath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.ManualOverride,
 	)
 	return i, err
 }
@@ -465,7 +467,7 @@ func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash strin
 }
 
 const getIngestedFileByHash = `-- name: GetIngestedFileByHash :one
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE user_id = $1 AND file_hash = $2
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE user_id = $1 AND file_hash = $2
 `
 
 type GetIngestedFileByHashParams struct {
@@ -487,12 +489,14 @@ func (q *Queries) GetIngestedFileByHash(ctx context.Context, arg GetIngestedFile
 		&i.LocalPath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.ManualOverride,
 	)
 	return i, err
 }
 
 const getIngestedFileByID = `-- name: GetIngestedFileByID :one
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE id = $1
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE id = $1
 `
 
 func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (IngestedFile, error) {
@@ -509,12 +513,14 @@ func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (Ingest
 		&i.LocalPath,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Category,
+		&i.ManualOverride,
 	)
 	return i, err
 }
 
 const getIngestedFiles = `-- name: GetIngestedFiles :many
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]IngestedFile, error) {
@@ -537,6 +543,8 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 			&i.LocalPath,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Category,
+			&i.ManualOverride,
 		); err != nil {
 			return nil, err
 		}
@@ -765,8 +773,8 @@ memory_text_search AS (
     LIMIT 100
 ),
 chunk_vector_search AS (
-    SELECT source_type, id, content, rank FROM (
-        SELECT 'chunk' as source_type, c.id, c.text as content,
+    SELECT source_type, id, content, rank, category FROM (
+        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
                RANK() OVER (ORDER BY c.embedding <=> $2) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> $2) as file_rank
         FROM document_chunks c
@@ -780,8 +788,8 @@ chunk_vector_search AS (
     LIMIT 100
 ),
 chunk_text_search AS (
-    SELECT source_type, id, content, rank FROM (
-        SELECT 'chunk' as source_type, c.id, c.text as content,
+    SELECT source_type, id, content, rank, category FROM (
+        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
                RANK() OVER (ORDER BY similarity(c.text, $4) DESC) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, $4) DESC) as file_rank
         FROM document_chunks c
@@ -813,7 +821,11 @@ combined_results AS (
         c.id,
         c.text as content,
         'chunk' as source_type,
-        CAST(COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0) AS FLOAT8) as score
+        CAST(
+            COALESCE(1.0 / (60 + cvs.rank), 0.0) +
+            COALESCE(1.0 / (60 + cts.rank), 0.0) +
+            (CASE WHEN COALESCE(cvs.category, cts.category) = $5::text THEN $6::FLOAT8 ELSE 0.0 END)
+        AS FLOAT8) as score
     FROM document_chunks c
     LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
     LEFT JOIN chunk_text_search cts ON c.id = cts.id
@@ -827,10 +839,12 @@ LIMIT $1
 `
 
 type SearchHybridAllParams struct {
-	MatchCount int32           `json:"match_count"`
-	Embedding  pgvector.Vector `json:"embedding"`
-	UserID     uuid.UUID       `json:"user_id"`
-	QueryText  string          `json:"query_text"`
+	MatchCount    int32           `json:"match_count"`
+	Embedding     pgvector.Vector `json:"embedding"`
+	UserID        uuid.UUID       `json:"user_id"`
+	QueryText     string          `json:"query_text"`
+	BoostCategory string          `json:"boost_category"`
+	BoostAmount   float64         `json:"boost_amount"`
 }
 
 type SearchHybridAllRow struct {
@@ -846,6 +860,8 @@ func (q *Queries) SearchHybridAll(ctx context.Context, arg SearchHybridAllParams
 		arg.Embedding,
 		arg.UserID,
 		arg.QueryText,
+		arg.BoostCategory,
+		arg.BoostAmount,
 	)
 	if err != nil {
 		return nil, err
@@ -1066,6 +1082,34 @@ type SupercedeMemoryParams struct {
 
 func (q *Queries) SupercedeMemory(ctx context.Context, arg SupercedeMemoryParams) error {
 	_, err := q.db.ExecContext(ctx, supercedeMemory, arg.ID, arg.UserID)
+	return err
+}
+
+const updateIngestedFileCategory = `-- name: UpdateIngestedFileCategory :exec
+UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1
+`
+
+type UpdateIngestedFileCategoryParams struct {
+	ID       uuid.UUID `json:"id"`
+	Category string    `json:"category"`
+}
+
+func (q *Queries) UpdateIngestedFileCategory(ctx context.Context, arg UpdateIngestedFileCategoryParams) error {
+	_, err := q.db.ExecContext(ctx, updateIngestedFileCategory, arg.ID, arg.Category)
+	return err
+}
+
+const updateIngestedFileCategoryAuto = `-- name: UpdateIngestedFileCategoryAuto :exec
+UPDATE ingested_files SET category = $2, updated_at = NOW() WHERE id = $1 AND manual_override = false
+`
+
+type UpdateIngestedFileCategoryAutoParams struct {
+	ID       uuid.UUID `json:"id"`
+	Category string    `json:"category"`
+}
+
+func (q *Queries) UpdateIngestedFileCategoryAuto(ctx context.Context, arg UpdateIngestedFileCategoryAutoParams) error {
+	_, err := q.db.ExecContext(ctx, updateIngestedFileCategoryAuto, arg.ID, arg.Category)
 	return err
 }
 
