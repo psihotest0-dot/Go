@@ -51,11 +51,11 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			http.Error(w, "missing file", http.StatusBadRequest)
 			return
 		}
-		defer file.Close()
 
 		// Read into memory for hash and mimetype (for files under 50MB this is ok, else temp file is better)
 		// Since MaxBytesReader is used, reading all is safe up to 50MB.
 		fileBytes, err := io.ReadAll(file)
+		file.Close() // explicitly close file after reading to avoid sharing violation on Windows before rename/remove
 		if err != nil {
 			slog.Error("failed to read file", slog.Any("error", err))
 			http.Error(w, "failed to read file", http.StatusInternalServerError)
