@@ -77,6 +77,7 @@ type Message struct {
 	Content        string                `json:"content"`
 	CreatedAt      sql.NullTime          `json:"created_at"`
 	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
+	IsAnalyzed     bool                  `json:"is_analyzed"`
 }
 
 type RiverJob struct {
