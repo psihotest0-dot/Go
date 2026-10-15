@@ -41,10 +41,12 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file for PDF: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	defer func() {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpFile.Name())
+	}()
 
 	if _, err := tmpFile.Write(b); err != nil {
-		tmpFile.Close()
 		return "", fmt.Errorf("failed to write to temp file: %w", err)
 	}
 	tmpFile.Close()

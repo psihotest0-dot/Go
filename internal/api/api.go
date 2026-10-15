@@ -335,25 +335,29 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			if len(vectors) > 0 && len(vectors[0]) > 0 {
-				vec := pgvector.NewVector(vectors[0])
-				newEmbedding = &vec
-				newEmbeddingModel = sql.NullString{String: "paraphrase-multilingual-MiniLM-L12-v2", Valid: true}
-			} else {
+			if len(vectors) == 0 {
+				slog.Error("embedder returned no vectors")
+				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
+				return
+			}
+			if len(vectors[0]) == 0 {
 				slog.Error("embedder returned empty vector")
 				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 				return
 			}
+			vec := pgvector.NewVector(vectors[0])
+			newEmbedding = &vec
+			newEmbeddingModel = sql.NullString{String: "paraphrase-multilingual-MiniLM-L12-v2", Valid: true}
 		}
 
 		mem, err := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
-			ID:         memoryID,
-			UserID:     userID,
-			Content:    sql.NullString{String: req.Content, Valid: true},
-			Status:     sql.NullString{String: req.Status, Valid: true},
-			Importance: sql.NullInt32{Int32: req.Importance, Valid: true},
-			Metadata:   req.Metadata,
-			Embedding:  newEmbedding,
+			ID:             memoryID,
+			UserID:         userID,
+			Content:        sql.NullString{String: req.Content, Valid: true},
+			Status:         sql.NullString{String: req.Status, Valid: true},
+			Importance:     sql.NullInt32{Int32: req.Importance, Valid: true},
+			Metadata:       req.Metadata,
+			Embedding:      newEmbedding,
 			EmbeddingModel: newEmbeddingModel,
 		})
 		if err != nil {
