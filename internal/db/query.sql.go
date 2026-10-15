@@ -638,6 +638,36 @@ func (q *Queries) GetMemoryByHash(ctx context.Context, arg GetMemoryByHashParams
 	return i, err
 }
 
+const getMemoryByID = `-- name: GetMemoryByID :one
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE id = $1 AND user_id = $2
+`
+
+type GetMemoryByIDParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetMemoryByID(ctx context.Context, arg GetMemoryByIDParams) (Memory, error) {
+	row := q.db.QueryRowContext(ctx, getMemoryByID, arg.ID, arg.UserID)
+	var i Memory
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Content,
+		&i.Status,
+		&i.Embedding,
+		&i.EmbeddingModel,
+		&i.SourceMessageID,
+		&i.Importance,
+		&i.Metadata,
+		&i.ContentHash,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.LastUsedAt,
+	)
+	return i, err
+}
+
 const getMessagesBySession = `-- name: GetMessagesBySession :many
 SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
 `
@@ -1129,26 +1159,34 @@ func (q *Queries) UpdateIngestedFileStatus(ctx context.Context, arg UpdateIngest
 
 const updateMemory = `-- name: UpdateMemory :one
 UPDATE memories
-SET content = $2, status = $3, embedding = $4, embedding_model = $5, importance = $6, metadata = $7, content_hash = $8, updated_at = NOW()
-WHERE id = $1 AND user_id = $9
+SET content = COALESCE($3, content),
+    status = COALESCE($4, status),
+    embedding = COALESCE($5::vector, embedding),
+    embedding_model = COALESCE($6, embedding_model),
+    importance = COALESCE($7, importance),
+    metadata = COALESCE($8, metadata),
+    content_hash = COALESCE($9, content_hash),
+    updated_at = NOW()
+WHERE id = $1 AND user_id = $2
 RETURNING id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at
 `
 
 type UpdateMemoryParams struct {
 	ID             uuid.UUID             `json:"id"`
-	Content        string                `json:"content"`
-	Status         string                `json:"status"`
-	Embedding      pgvector.Vector       `json:"embedding"`
-	EmbeddingModel string                `json:"embedding_model"`
-	Importance     int32                 `json:"importance"`
-	Metadata       pqtype.NullRawMessage `json:"metadata"`
-	ContentHash    string                `json:"content_hash"`
 	UserID         uuid.UUID             `json:"user_id"`
+	Content        sql.NullString        `json:"content"`
+	Status         sql.NullString        `json:"status"`
+	Embedding      *pgvector.Vector      `json:"embedding"`
+	EmbeddingModel sql.NullString        `json:"embedding_model"`
+	Importance     sql.NullInt32         `json:"importance"`
+	Metadata       pqtype.NullRawMessage `json:"metadata"`
+	ContentHash    sql.NullString        `json:"content_hash"`
 }
 
 func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Memory, error) {
 	row := q.db.QueryRowContext(ctx, updateMemory,
 		arg.ID,
+		arg.UserID,
 		arg.Content,
 		arg.Status,
 		arg.Embedding,
@@ -1156,7 +1194,6 @@ func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Mem
 		arg.Importance,
 		arg.Metadata,
 		arg.ContentHash,
-		arg.UserID,
 	)
 	var i Memory
 	err := row.Scan(
