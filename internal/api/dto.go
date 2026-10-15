@@ -88,24 +88,28 @@ func toMessageDTO(m db.Message) MessageDTO {
 }
 
 type IngestedFileDTO struct {
-	ID        uuid.UUID  `json:"id"`
-	UserID    uuid.UUID  `json:"user_id"`
-	FileName  string     `json:"file_name"`
-	MimeType  string     `json:"mime_type"`
-	FileSize  int64      `json:"file_size"`
-	Status    string     `json:"status"`
-	CreatedAt *time.Time `json:"created_at"`
-	UpdatedAt *time.Time `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	UserID         uuid.UUID  `json:"user_id"`
+	FileName       string     `json:"file_name"`
+	MimeType       string     `json:"mime_type"`
+	FileSize       int64      `json:"file_size"`
+	Status         string     `json:"status"`
+	CreatedAt      *time.Time `json:"created_at"`
+	UpdatedAt      *time.Time `json:"updated_at"`
+	Category       string     `json:"category"`
+	ManualOverride bool       `json:"manual_override"`
 }
 
 func toIngestedFileDTO(f db.IngestedFile) IngestedFileDTO {
 	dto := IngestedFileDTO{
-		ID:       f.ID,
-		UserID:   f.UserID,
-		FileName: f.FileName,
-		MimeType: f.MimeType,
-		FileSize: f.FileSize,
-		Status:   f.Status,
+		ID:             f.ID,
+		UserID:         f.UserID,
+		FileName:       f.FileName,
+		MimeType:       f.MimeType,
+		FileSize:       f.FileSize,
+		Status:         f.Status,
+		Category:       f.Category,
+		ManualOverride: f.ManualOverride,
 	}
 	if f.CreatedAt.Valid {
 		dto.CreatedAt = &f.CreatedAt.Time
