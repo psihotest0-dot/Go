@@ -21,10 +21,20 @@ ORDER BY created_at DESC;
 -- name: GetMemoryByHash :one
 SELECT * FROM memories WHERE user_id = $1 AND content_hash = $2;
 
+-- name: GetMemoryByID :one
+SELECT * FROM memories WHERE id = $1 AND user_id = $2;
+
 -- name: UpdateMemory :one
 UPDATE memories
-SET content = $2, status = $3, embedding = $4, embedding_model = $5, importance = $6, metadata = $7, content_hash = $8, updated_at = NOW()
-WHERE id = $1 AND user_id = $9
+SET content = COALESCE(sqlc.narg('content'), content),
+    status = COALESCE(sqlc.narg('status'), status),
+    embedding = COALESCE(sqlc.narg('embedding')::vector, embedding),
+    embedding_model = COALESCE(sqlc.narg('embedding_model'), embedding_model),
+    importance = COALESCE(sqlc.narg('importance'), importance),
+    metadata = COALESCE(sqlc.narg('metadata'), metadata),
+    content_hash = COALESCE(sqlc.narg('content_hash'), content_hash),
+    updated_at = NOW()
+WHERE id = $1 AND user_id = $2
 RETURNING *;
 
 

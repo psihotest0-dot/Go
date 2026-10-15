@@ -15,6 +15,13 @@ sql:
               import: "github.com/pgvector/pgvector-go"
               package: "pgvector"
               type: "Vector"
+          - db_type: "vector"
+            nullable: true
+            go_type:
+              import: "github.com/pgvector/pgvector-go"
+              package: "pgvector"
+              type: "Vector"
+              pointer: true
           - column: "document_chunks.embedding"
             go_type:
               import: "github.com/pgvector/pgvector-go"
