@@ -154,13 +154,7 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(dtos)
 }
 
-func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodDelete {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
+func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
 		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
@@ -195,21 +189,31 @@ func (a *API) DeleteFileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete from DB (document_chunks cascade on delete)
-	err = a.db.Queries.DeleteIngestedFile(r.Context(), db.DeleteIngestedFileParams{
-		ID:     fileID,
-		UserID: userID,
-	})
-	if err != nil {
-		slog.Error("failed to delete file from db", slog.Any("error", err))
-		http.Error(w, "failed to delete file from db", http.StatusInternalServerError)
-		return
-	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(toIngestedFileDTO(file))
 
-	// Delete from local storage
-	if file.LocalPath != "" {
-		_ = os.Remove(file.LocalPath)
-	}
+	case http.MethodDelete:
+		// Delete from DB (document_chunks cascade on delete)
+		err = a.db.Queries.DeleteIngestedFile(r.Context(), db.DeleteIngestedFileParams{
+			ID:     fileID,
+			UserID: userID,
+		})
+		if err != nil {
+			slog.Error("failed to delete file from db", slog.Any("error", err))
+			http.Error(w, "failed to delete file from db", http.StatusInternalServerError)
+			return
+		}
 
-	w.WriteHeader(http.StatusNoContent)
+		// Delete from local storage
+		if file.LocalPath != "" {
+			_ = os.Remove(file.LocalPath)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }
