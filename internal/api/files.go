@@ -217,3 +217,76 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
+
+func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 5 {
+		slog.Warn("invalid path", slog.String("path", r.URL.Path))
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	idStr := parts[3] // /v1/files/{id}/category
+	fileID, err := uuid.Parse(idStr)
+	if err != nil {
+		slog.Warn("invalid file id", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		http.Error(w, "invalid file id", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Category string `json:"category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// First verify the file exists and belongs to the user
+	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
+	if err != nil {
+		slog.Warn("file not found", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	if file.UserID != userID {
+		slog.Warn("unauthorized access to file", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		http.Error(w, "unauthorized access to file", http.StatusForbidden)
+		return
+	}
+
+	err = a.db.Queries.UpdateIngestedFileCategory(r.Context(), db.UpdateIngestedFileCategoryParams{
+		ID:       fileID,
+		Category: req.Category,
+	})
+	if err != nil {
+		slog.Error("failed to update file category", slog.Any("error", err))
+		http.Error(w, "failed to update file category", http.StatusInternalServerError)
+		return
+	}
+
+	// Fetch updated file to return
+	updatedFile, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
+	if err != nil {
+		slog.Error("failed to fetch updated file", slog.Any("error", err))
+		http.Error(w, "failed to fetch updated file", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(toIngestedFileDTO(updatedFile))
+}
