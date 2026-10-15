@@ -111,7 +111,7 @@ func (db *Database) UpdateMemoryWithCheck(ctx context.Context, params UpdateMemo
 	}
 
 	if params.Embedding != nil {
-		if len(params.Embedding.Slice()) == 0 {
+		if params.Embedding.Slice() == nil || len(params.Embedding.Slice()) == 0 {
 			return Memory{}, fmt.Errorf("vector must have at least 1 dimension")
 		}
 	}
