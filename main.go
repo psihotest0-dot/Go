@@ -118,7 +118,7 @@ func main() {
 	apiService := api.New(database, embedder)
 
 	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
-	toolRegistry := agent.NewDefaultToolRegistry(retrievalService)
+	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database)
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
 
 	mux := http.NewServeMux()

@@ -270,3 +270,12 @@ UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NO
 
 -- name: UpdateIngestedFileCategoryAuto :exec
 UPDATE ingested_files SET category = $2, updated_at = NOW() WHERE id = $1 AND manual_override = false;
+
+-- name: GetGlobalRules :many
+SELECT value FROM global_rules WHERE user_id = $1 AND enabled = true;
+
+-- name: SaveGlobalRule :exec
+INSERT INTO global_rules (user_id, key, value, updated_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (user_id, key) DO UPDATE
+SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, enabled = true;
