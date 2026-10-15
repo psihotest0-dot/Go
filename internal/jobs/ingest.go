@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"unicode"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/retrieval"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -29,13 +31,15 @@ type IngestFileWorker struct {
 	dbClient *db.Database
 	embedder llm.Embedder
 	manager  *ingest.Manager
+	catMgr   *retrieval.CategoryManager
 }
 
-func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder) *IngestFileWorker {
+func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *retrieval.CategoryManager) *IngestFileWorker {
 	return &IngestFileWorker{
 		dbClient: dbClient,
 		embedder: embedder,
 		manager:  ingest.NewManager(),
+		catMgr:   catMgr,
 	}
 }
 
@@ -135,6 +139,55 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		}
 	}
 
+	if !file.ManualOverride && w.catMgr != nil {
+		votes := make(map[string]int)
+		for i, chunk := range chunks {
+			if i >= 30 {
+				break
+			}
+			vecs, err := w.embedder.EmbedTexts(ctx, []string{chunk})
+			if err != nil || len(vecs) == 0 {
+				continue
+			}
+			vec := vecs[0]
+
+			bestCat := "general"
+			bestScore := float32(-1.0)
+			for cat, centroid := range w.catMgr.GetAllCentroids() {
+				score := cosineSimilarity(vec, centroid)
+				if score > bestScore {
+					bestScore = score
+					bestCat = cat
+				}
+			}
+
+			if bestScore > 0.5 {
+				votes[bestCat]++
+			} else {
+				votes["general"]++
+			}
+		}
+
+		winningCat := "general"
+		maxVotes := -1
+		for cat, voteCount := range votes {
+			if voteCount > maxVotes {
+				maxVotes = voteCount
+				winningCat = cat
+			}
+		}
+
+		err = w.dbClient.Queries.UpdateIngestedFileCategoryAuto(ctx, db.UpdateIngestedFileCategoryAutoParams{
+			ID:       file.ID,
+			Category: winningCat,
+		})
+		if err != nil {
+			slog.Warn("Failed to auto-update file category", "file_id", file.ID, "error", err)
+		} else {
+			slog.Info("Auto-assigned category to file", "file_id", file.ID, "category", winningCat, "votes", maxVotes)
+		}
+	}
+
 	err = w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{
 		ID:     file.ID,
 		Status: "completed",
@@ -176,4 +229,17 @@ func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []stri
 		}
 	}
 	return chunks
+}
+
+func cosineSimilarity(a, b []float32) float32 {
+	var dotProduct, normA, normB float32
+	for i := 0; i < len(a) && i < len(b); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dotProduct / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
