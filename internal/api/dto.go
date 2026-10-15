@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/google/uuid"
 	"go-monolith/internal/db"
+
+	"github.com/google/uuid"
 )
 
 type MemoryDTO struct {
@@ -48,7 +49,6 @@ func toMemoryDTO(m db.Memory) MemoryDTO {
 	return dto
 }
 
-
 type SourceInfo struct {
 	ChunkID        uuid.UUID `json:"chunk_id"`
 	FileName       string    `json:"file_name"`
@@ -64,12 +64,12 @@ type DBChunkInfo struct {
 }
 
 type MessageDTO struct {
-	ID        uuid.UUID  `json:"id"`
-	UserID    uuid.UUID  `json:"user_id"`
-	SessionID string     `json:"session_id"`
-	Role      string     `json:"role"`
-	Content   string     `json:"content"`
-	CreatedAt *time.Time `json:"created_at"`
+	ID        uuid.UUID    `json:"id"`
+	UserID    uuid.UUID    `json:"user_id"`
+	SessionID string       `json:"session_id"`
+	Role      string       `json:"role"`
+	Content   string       `json:"content"`
+	CreatedAt *time.Time   `json:"created_at"`
 	Sources   []SourceInfo `json:"sources,omitempty"`
 }
 
