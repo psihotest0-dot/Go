@@ -107,7 +107,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Extract sources for chunks
-	var sources []api.SourceInfo
+	sources := []api.SourceInfo{}
 	var chunkIDs []uuid.UUID
 	if err == nil {
 		for _, m := range memories {
@@ -328,12 +328,10 @@ Rules:
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	if len(sources) > 0 {
-		sourcesBytes, _ := json.Marshal(sources)
-		fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(sourcesBytes))
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
+	sourcesBytes, _ := json.Marshal(sources)
+	fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(sourcesBytes))
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
 	}
 
 	var fullAssistantMessage strings.Builder
