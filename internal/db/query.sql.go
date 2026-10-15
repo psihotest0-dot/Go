@@ -755,16 +755,32 @@ memory_text_search AS (
     LIMIT 100
 ),
 chunk_vector_search AS (
-    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY document_chunks.embedding <=> $2) as rank
-    FROM document_chunks
-    WHERE document_chunks.user_id = $3
+    SELECT source_type, id, content, rank FROM (
+        SELECT 'chunk' as source_type, c.id, c.text as content,
+               RANK() OVER (ORDER BY c.embedding <=> $2) as rank,
+               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> $2) as file_rank
+        FROM document_chunks c
+        JOIN ingested_files f ON c.file_id = f.id
+        WHERE c.user_id = $3
+          AND f.status = 'completed'
+          AND (c.embedding <=> $2) < 0.45
+    ) sub
+    WHERE file_rank <= 2
     ORDER BY rank
     LIMIT 100
 ),
 chunk_text_search AS (
-    SELECT 'chunk' as source_type, id, text as content, RANK() OVER (ORDER BY similarity(text, $4) DESC) as rank
-    FROM document_chunks
-    WHERE document_chunks.user_id = $3
+    SELECT source_type, id, content, rank FROM (
+        SELECT 'chunk' as source_type, c.id, c.text as content,
+               RANK() OVER (ORDER BY similarity(c.text, $4) DESC) as rank,
+               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, $4) DESC) as file_rank
+        FROM document_chunks c
+        JOIN ingested_files f ON c.file_id = f.id
+        WHERE c.user_id = $3
+          AND f.status = 'completed'
+          AND similarity(c.text, $4) > 0.15
+    ) sub
+    WHERE file_rank <= 2
     ORDER BY rank
     LIMIT 100
 ),
