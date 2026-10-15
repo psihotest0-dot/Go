@@ -136,7 +136,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		if m.SourceChunkIds.Valid {
 			var dbChunks []DBChunkInfo
 			if err := json.Unmarshal(m.SourceChunkIds.RawMessage, &dbChunks); err == nil {
-				var sources []SourceInfo
+				sources := []SourceInfo{}
 				for _, c := range dbChunks {
 					if chunk, ok := chunksMap[c.ChunkID]; ok {
 						snippet := chunk.Text
