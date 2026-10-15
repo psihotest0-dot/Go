@@ -46,6 +46,33 @@ type ChatRequest struct {
 	Content   string `json:"content"`
 }
 
+func buildSystemPrompt(rules []string, ragChunks []string) string {
+	var b strings.Builder
+	b.WriteString(`You are a helpful assistant.
+You have access to long-term memory tools: search_memories, create_memory and save_global_rule.
+Rules:
+- Call search_memories FIRST when asked about past context or personal details.
+- Call create_memory ONLY when the user explicitly shares new personal facts or preferences.
+- Call save_global_rule ONLY when the user explicitly gives you an instruction on how to behave generally.
+- NEVER claim you have remembered or saved something unless the tool call succeeded.
+
+`)
+
+	if len(rules) > 0 {
+		b.WriteString("ЗАДЪЛЖИТЕЛНИ ГЛОБАЛНИ ПРАВИЛА (имат приоритет над всичко останало):\n")
+		for _, r := range rules {
+			b.WriteString("- " + r + "\n")
+		}
+		b.WriteString("\n")
+	}
+
+	if len(ragChunks) > 0 {
+		b.WriteString("Контекст от векторната памет:\n" + strings.Join(ragChunks, "\n\n"))
+	}
+
+	return b.String()
+}
+
 // HandleStreamChat handles incoming chat messages and streams the response.
 func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -191,24 +218,23 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		},
 	})
 
-	// 3. Construct System/Context Message
-	systemContent := `You are a helpful assistant.
-You have access to long-term memory tools: search_memories and create_memory.
-Rules:
-- Call search_memories FIRST when asked about past context or personal details.
-- Call create_memory ONLY when the user explicitly shares new personal facts or preferences.
-- NEVER claim you have remembered or saved something unless the create_memory tool call succeeded.`
-
-	if len(contextTexts) > 0 {
-		systemContent += "\n\nRelevant Context:\n" + strings.Join(contextTexts, "\n\n")
+	// 3. Fetch Global Rules
+	rules, err := o.db.Queries.GetGlobalRules(r.Context(), userID)
+	if err != nil {
+		slog.Error("failed to get global rules", "err", err)
+		http.Error(w, fmt.Sprintf("failed to get global rules: %v", err), http.StatusInternalServerError)
+		return
 	}
+
+	// 4. Construct System/Context Message
+	systemContent := buildSystemPrompt(rules, contextTexts)
 
 	systemMessage := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleSystem,
 		Content: systemContent,
 	}
 
-	// 4. Fetch Message History (including the one we just saved)
+	// 5. Fetch Message History (including the one we just saved)
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
@@ -315,6 +341,27 @@ Rules:
 				},
 			},
 		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "save_global_rule",
+				Description: "Save a new global rule or preference (e.g., 'always speak in Bulgarian'). Overwrites existing rule with same key.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"key": map[string]interface{}{
+							"type":        "string",
+							"description": "The short key for the rule (e.g., 'language', 'tone').",
+						},
+						"value": map[string]interface{}{
+							"type":        "string",
+							"description": "The rule instruction value.",
+						},
+					},
+					"required": []string{"key", "value"},
+				},
+			},
+		},
 	}
 
 	chatReq := openai.ChatCompletionRequest{
@@ -342,8 +389,26 @@ Rules:
 		f.Flush()
 	}
 
+	// Check if Bulgarian language is strictly required by any rule
+	requiresBulgarian := false
+	for _, rule := range rules {
+		ruleLower := strings.ToLower(rule)
+		if strings.Contains(ruleLower, "български") || strings.Contains(ruleLower, "bulgarian") {
+			requiresBulgarian = true
+			break
+		}
+	}
+
 	var fullAssistantMessage strings.Builder
 	var toolCalls []openai.ToolCall
+
+	// Bonus: Bulgarian language enforcement vars
+	var initialBuffer strings.Builder
+	bufferMode := requiresBulgarian
+	charCount := 0
+	cyrillicCount := 0
+	langCheckDone := false
+	failedLangCheck := false
 
 	for {
 		resp, err := stream.Recv()
@@ -397,19 +462,162 @@ Rules:
 			if chunk != "" {
 				fullAssistantMessage.WriteString(chunk)
 
-				// SSE format
-				dataMap := map[string]string{"content": chunk}
-				dataBytes, _ := json.Marshal(dataMap)
-				fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-				if f, ok := w.(http.Flusher); ok {
-					f.Flush()
+				if bufferMode && !langCheckDone {
+					initialBuffer.WriteString(chunk)
+					for _, r := range chunk {
+						// Only count letters
+						if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= 'а' && r <= 'я') || (r >= 'А' && r <= 'Я') {
+							charCount++
+							if (r >= 'а' && r <= 'я') || (r >= 'А' && r <= 'Я') {
+								cyrillicCount++
+							}
+						}
+					}
+
+					// We have enough letters to judge
+					if charCount >= 50 {
+						langCheckDone = true
+						ratio := float64(cyrillicCount) / float64(charCount)
+						if ratio < 0.60 {
+							// Failed the language check. Cancel stream and fallback.
+							failedLangCheck = true
+							break // Break the inner loop, stream will close
+						} else {
+							// Passed. Flush the buffer.
+							dataMap := map[string]string{"content": initialBuffer.String()}
+							dataBytes, _ := json.Marshal(dataMap)
+							fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+							if f, ok := w.(http.Flusher); ok {
+								f.Flush()
+							}
+						}
+					}
 				} else {
-					slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
-					http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-					return
+					// SSE format
+					dataMap := map[string]string{"content": chunk}
+					dataBytes, _ := json.Marshal(dataMap)
+					fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					} else {
+						slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
+						http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+						return
+					}
 				}
 			}
 		}
+		if failedLangCheck {
+			break
+		}
+	}
+
+	// Handle the case where the message ended before 50 letters were accumulated
+	if bufferMode && !langCheckDone && !failedLangCheck {
+		if charCount > 0 {
+			ratio := float64(cyrillicCount) / float64(charCount)
+			if ratio < 0.60 {
+				failedLangCheck = true
+			}
+		}
+
+		if !failedLangCheck && initialBuffer.Len() > 0 {
+			// Passed. Flush the buffer.
+			dataMap := map[string]string{"content": initialBuffer.String()}
+			dataBytes, _ := json.Marshal(dataMap)
+			fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}
+
+	if failedLangCheck {
+		// Close the current stream early explicitly, since we're breaking out
+		stream.Close()
+
+		// 7.1 Language Fallback Stream
+		finalMessages = append(finalMessages, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: "Отговаряй САМО на български език!",
+		})
+
+		chatReqFallback := openai.ChatCompletionRequest{
+			Messages: finalMessages,
+			Stream:   true,
+			Tools:    tools, // still pass tools just in case
+		}
+
+		streamFb, err := o.llmClient.ChatStream(r.Context(), chatReqFallback)
+		if err != nil {
+			slog.Error("llm fallback stream failed", "err", err)
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			return
+		}
+		defer streamFb.Close()
+
+		fullAssistantMessage.Reset()
+
+		for {
+			respFb, err := streamFb.Recv()
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if err != nil {
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				break
+			}
+			if len(respFb.Choices) > 0 {
+				chunk := respFb.Choices[0].Delta.Content
+				if chunk != "" {
+					fullAssistantMessage.WriteString(chunk)
+
+					dataMap := map[string]string{"content": chunk}
+					dataBytes, _ := json.Marshal(dataMap)
+					fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					}
+				}
+			}
+		}
+
+		fmt.Fprintf(w, "data: [DONE]\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		// Save Assistant Message
+		contentToSave := fullAssistantMessage.String()
+		var dbSources []api.DBChunkInfo
+		for _, s := range sources {
+			dbSources = append(dbSources, api.DBChunkInfo{
+				ChunkID: s.ChunkID,
+				Score:   s.Score,
+			})
+		}
+		dbSourcesBytes, _ := json.Marshal(dbSources)
+
+		_, err = o.db.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
+			UserID:    userID,
+			SessionID: req.SessionID,
+			Role:      "assistant",
+			Content:   contentToSave,
+			SourceChunkIds: pqtype.NullRawMessage{
+				RawMessage: dbSourcesBytes,
+				Valid:      true,
+			},
+		})
+		if err != nil {
+			fmt.Printf("failed to save assistant fallback message: %v\n", err)
+		}
+		return
 	}
 
 	// Execute tool calls if any

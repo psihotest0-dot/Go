@@ -8,18 +8,21 @@ import (
 	"github.com/sqlc-dev/pqtype"
 
 	"go-monolith/internal/api"
+	"go-monolith/internal/db"
 	"go-monolith/internal/retrieval"
 )
 
 // DefaultToolRegistry is the concrete implementation of ToolRegistry.
 type DefaultToolRegistry struct {
 	retrieval *retrieval.RetrievalService
+	db        *db.Database
 }
 
 // NewDefaultToolRegistry creates a new DefaultToolRegistry.
-func NewDefaultToolRegistry(r *retrieval.RetrievalService) *DefaultToolRegistry {
+func NewDefaultToolRegistry(r *retrieval.RetrievalService, d *db.Database) *DefaultToolRegistry {
 	return &DefaultToolRegistry{
 		retrieval: r,
+		db:        d,
 	}
 }
 
@@ -35,9 +38,38 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeCreateMemory(ctx, userID, args)
 	case "search_memories":
 		return r.executeSearchMemories(ctx, userID, args)
+	case "save_global_rule":
+		return r.executeSaveGlobalRule(ctx, userID, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
+}
+
+func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
+	key, ok := args["key"].(string)
+	if !ok || key == "" {
+		return nil, fmt.Errorf("invalid or missing 'key' argument")
+	}
+
+	value, ok := args["value"].(string)
+	if !ok || value == "" {
+		return nil, fmt.Errorf("invalid or missing 'value' argument")
+	}
+
+	err := r.db.Queries.SaveGlobalRule(ctx, db.SaveGlobalRuleParams{
+		UserID: userID,
+		Key:    key,
+		Value:  value,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to save global rule: %w", err)
+	}
+
+	return map[string]interface{}{
+		"status": "success",
+		"key":    key,
+		"value":  value,
+	}, nil
 }
 
 func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
