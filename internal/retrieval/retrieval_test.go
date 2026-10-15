@@ -25,7 +25,7 @@ func TestRetrieval_CreateMemory_Mock(t *testing.T) {
 	d := &db.Database{Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder)
+	svc := retrieval.NewRetrievalService(d, embedder, nil)
 
 	userID := uuid.New()
 	content := "This is a test fact."
@@ -52,14 +52,14 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	d := &db.Database{Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder)
+	svc := retrieval.NewRetrievalService(d, embedder, nil)
 
 	userID := uuid.New()
 	query := "Find test fact"
 
 	// Adjust mock to expect the new SearchHybridMemories query pattern
 	mock.ExpectQuery(`(?i).*WITH memory_vector_search AS.*`).
-		WithArgs(10, sqlmock.AnyArg(), userID, query).
+		WithArgs(10, sqlmock.AnyArg(), userID, query, "", 0.0).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "source_type", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", "memory", 1))
 

@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -18,12 +19,14 @@ import (
 type RetrievalService struct {
 	db       *db.Database
 	embedder llm.Embedder
+	catMgr   *CategoryManager
 }
 
-func NewRetrievalService(database *db.Database, embedder llm.Embedder) *RetrievalService {
+func NewRetrievalService(database *db.Database, embedder llm.Embedder, catMgr *CategoryManager) *RetrievalService {
 	return &RetrievalService{
 		db:       database,
 		embedder: embedder,
+		catMgr:   catMgr,
 	}
 }
 
@@ -104,13 +107,42 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 		return results, nil
 	}
 
-	pgVec := pgvector.NewVector(vectors[0])
+	queryVec := vectors[0]
+	pgVec := pgvector.NewVector(queryVec)
+
+	boostCategory := ""
+	boostAmount := 0.0
+
+	if s.catMgr != nil {
+		bestCat := ""
+		bestScore := float32(-1.0)
+		secondBestScore := float32(-1.0)
+
+		for cat, centroid := range s.catMgr.GetAllCentroids() {
+			score := cosineSimilarity(queryVec, centroid)
+			if score > bestScore {
+				secondBestScore = bestScore
+				bestScore = score
+				bestCat = cat
+			} else if score > secondBestScore {
+				secondBestScore = score
+			}
+		}
+
+		margin := bestScore - secondBestScore
+		if margin >= 0.08 {
+			boostCategory = bestCat
+			boostAmount = 0.08
+		}
+	}
 
 	params := db.SearchHybridAllParams{
-		UserID:     userID,
-		MatchCount: int32(limit),
-		Embedding:  pgVec,
-		QueryText:  query,
+		UserID:        userID,
+		MatchCount:    int32(limit),
+		Embedding:     pgVec,
+		QueryText:     query,
+		BoostCategory: boostCategory,
+		BoostAmount:   boostAmount,
 	}
 
 	rows, err := s.db.Queries.SearchHybridAll(ctx, params)
@@ -128,4 +160,17 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 	}
 
 	return results, nil
+}
+
+func cosineSimilarity(a, b []float32) float32 {
+	var dotProduct, normA, normB float32
+	for i := 0; i < len(a) && i < len(b); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dotProduct / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
