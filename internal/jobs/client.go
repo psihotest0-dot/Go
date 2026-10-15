@@ -11,14 +11,15 @@ import (
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/retrieval"
 )
 
-func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Database, llmClient llm.LLMClient, embedder llm.Embedder) (*river.Client[pgx.Tx], error) {
+func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Database, llmClient llm.LLMClient, embedder llm.Embedder, catMgr *retrieval.CategoryManager) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, NewMemoryConsolidationPeriodicWorker(database))
 	river.AddWorker(workers, NewMemoryConsolidationWorker(database, llmClient, embedder))
 	river.AddWorker(workers, NewEmbeddingCacheGCWorker(database))
-	river.AddWorker(workers, NewIngestFileWorker(database, embedder))
+	river.AddWorker(workers, NewIngestFileWorker(database, embedder, catMgr))
 
 	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues: map[string]river.QueueConfig{
