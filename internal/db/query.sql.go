@@ -466,6 +466,33 @@ func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash strin
 	return i, err
 }
 
+const getGlobalRules = `-- name: GetGlobalRules :many
+SELECT value FROM global_rules WHERE user_id = $1 AND enabled = true
+`
+
+func (q *Queries) GetGlobalRules(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getGlobalRules, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		items = append(items, value)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getIngestedFileByHash = `-- name: GetIngestedFileByHash :one
 SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE user_id = $1 AND file_hash = $2
 `
@@ -783,6 +810,24 @@ UPDATE messages SET is_analyzed = TRUE WHERE id = $1
 
 func (q *Queries) MarkMessageAnalyzed(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.ExecContext(ctx, markMessageAnalyzed, id)
+	return err
+}
+
+const saveGlobalRule = `-- name: SaveGlobalRule :exec
+INSERT INTO global_rules (user_id, key, value, updated_at)
+VALUES ($1, $2, $3, now())
+ON CONFLICT (user_id, key) DO UPDATE
+SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, enabled = true
+`
+
+type SaveGlobalRuleParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Key    string    `json:"key"`
+	Value  string    `json:"value"`
+}
+
+func (q *Queries) SaveGlobalRule(ctx context.Context, arg SaveGlobalRuleParams) error {
+	_, err := q.db.ExecContext(ctx, saveGlobalRule, arg.UserID, arg.Key, arg.Value)
 	return err
 }
 
