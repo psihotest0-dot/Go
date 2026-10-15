@@ -40,6 +40,15 @@ type EmbeddingCache struct {
 	CreatedAt   sql.NullTime    `json:"created_at"`
 }
 
+type GlobalRule struct {
+	ID        int32     `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	Enabled   bool      `json:"enabled"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type IngestedFile struct {
 	ID             uuid.UUID    `json:"id"`
 	UserID         uuid.UUID    `json:"user_id"`
