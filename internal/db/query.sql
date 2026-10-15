@@ -32,14 +32,14 @@ RETURNING *;
 WITH vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
     FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status = 'active'
+    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 ),
 text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
     FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status = 'active'
+    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 )
@@ -57,7 +57,7 @@ LIMIT sqlc.arg('match_count');
 -- name: SearchTextMemories :many
 SELECT m.*
 FROM memories m
-WHERE m.user_id = sqlc.arg('user_id') AND m.status = 'active'
+WHERE m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
 ORDER BY similarity(m.content, sqlc.arg('query_text')) DESC
 LIMIT sqlc.arg('match_count');
 
@@ -78,17 +78,18 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetUnanalyzedMessages :many
-SELECT m.*
-FROM messages m
-LEFT JOIN memories mem ON m.id = mem.source_message_id
-WHERE mem.id IS NULL AND m.user_id = $1
-ORDER BY m.created_at ASC;
+SELECT *
+FROM messages
+WHERE is_analyzed = FALSE AND user_id = $1
+ORDER BY created_at ASC;
 
 -- name: GetUsersWithUnanalyzedMessages :many
-SELECT DISTINCT m.user_id
-FROM messages m
-LEFT JOIN memories mem ON m.id = mem.source_message_id
-WHERE mem.id IS NULL;
+SELECT DISTINCT user_id
+FROM messages
+WHERE is_analyzed = FALSE;
+
+-- name: MarkMessageAnalyzed :exec
+UPDATE messages SET is_analyzed = TRUE WHERE id = $1;
 
 -- name: DeleteOldEmbeddingCache :execrows
 WITH deleted AS (
@@ -141,14 +142,14 @@ WITH
 memory_vector_search AS (
     SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
     FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status = 'active'
+    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 ),
 memory_text_search AS (
     SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
     FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status = 'active'
+    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 ),
@@ -222,7 +223,7 @@ DELETE FROM ingested_files WHERE id = $1 AND user_id = $2;
 WITH combined AS (
     SELECT m.id, m.content, 'memory' as source_type, similarity(m.content, sqlc.arg('query_text')) as sim
     FROM memories m
-    WHERE m.user_id = sqlc.arg('user_id') AND m.status = 'active'
+    WHERE m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
 
     UNION ALL
 
