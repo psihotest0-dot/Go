@@ -113,6 +113,14 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		for _, m := range memories {
 			if m.SourceType == "chunk" {
 				chunkIDs = append(chunkIDs, m.ID)
+			} else if m.SourceType == "memory" {
+				sources = append(sources, api.SourceInfo{
+					ChunkID:        m.ID,
+					FileName:       "Памет (Memory)",
+					ContentSnippet: m.Content,
+					Score:          m.Score,
+					SourceType:     "memory",
+				})
 			}
 		}
 	}

@@ -226,7 +226,7 @@ func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) (Mem
 }
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed
 `
 
 type CreateMessageParams struct {
@@ -254,6 +254,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.Content,
 		&i.CreatedAt,
 		&i.SourceChunkIds,
+		&i.IsAnalyzed,
 	)
 	return i, err
 }
@@ -630,7 +631,7 @@ func (q *Queries) GetMemoryByHash(ctx context.Context, arg GetMemoryByHashParams
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
 `
 
 type GetMessagesBySessionParams struct {
@@ -655,6 +656,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 			&i.Content,
 			&i.CreatedAt,
 			&i.SourceChunkIds,
+			&i.IsAnalyzed,
 		); err != nil {
 			return nil, err
 		}
@@ -670,11 +672,10 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 }
 
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
-SELECT m.id, m.user_id, m.session_id, m.role, m.content, m.created_at, m.source_chunk_ids
-FROM messages m
-LEFT JOIN memories mem ON m.id = mem.source_message_id
-WHERE mem.id IS NULL AND m.user_id = $1
-ORDER BY m.created_at ASC
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed
+FROM messages
+WHERE is_analyzed = FALSE AND user_id = $1
+ORDER BY created_at ASC
 `
 
 func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) ([]Message, error) {
@@ -694,6 +695,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 			&i.Content,
 			&i.CreatedAt,
 			&i.SourceChunkIds,
+			&i.IsAnalyzed,
 		); err != nil {
 			return nil, err
 		}
@@ -709,10 +711,9 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 }
 
 const getUsersWithUnanalyzedMessages = `-- name: GetUsersWithUnanalyzedMessages :many
-SELECT DISTINCT m.user_id
-FROM messages m
-LEFT JOIN memories mem ON m.id = mem.source_message_id
-WHERE mem.id IS NULL
+SELECT DISTINCT user_id
+FROM messages
+WHERE is_analyzed = FALSE
 `
 
 func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UUID, error) {
@@ -738,19 +739,28 @@ func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UU
 	return items, nil
 }
 
+const markMessageAnalyzed = `-- name: MarkMessageAnalyzed :exec
+UPDATE messages SET is_analyzed = TRUE WHERE id = $1
+`
+
+func (q *Queries) MarkMessageAnalyzed(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, markMessageAnalyzed, id)
+	return err
+}
+
 const searchHybridAll = `-- name: SearchHybridAll :many
 WITH
 memory_vector_search AS (
     SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY memories.embedding <=> $2) as rank
     FROM memories
-    WHERE memories.user_id = $3 AND memories.status = 'active'
+    WHERE memories.user_id = $3 AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 ),
 memory_text_search AS (
     SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
     FROM memories
-    WHERE memories.user_id = $3 AND memories.status = 'active'
+    WHERE memories.user_id = $3 AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 ),
@@ -867,14 +877,14 @@ const searchHybridMemories = `-- name: SearchHybridMemories :many
 WITH vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> $3) as rank
     FROM memories
-    WHERE memories.user_id = $1 AND memories.status = 'active'
+    WHERE memories.user_id = $1 AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 ),
 text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
     FROM memories
-    WHERE memories.user_id = $1 AND memories.status = 'active'
+    WHERE memories.user_id = $1 AND memories.status IN ('active', 'candidate')
     ORDER BY rank
     LIMIT 100
 )
@@ -943,7 +953,7 @@ const searchTextAll = `-- name: SearchTextAll :many
 WITH combined AS (
     SELECT m.id, m.content, 'memory' as source_type, similarity(m.content, $2) as sim
     FROM memories m
-    WHERE m.user_id = $3 AND m.status = 'active'
+    WHERE m.user_id = $3 AND m.status IN ('active', 'candidate')
 
     UNION ALL
 
@@ -995,7 +1005,7 @@ func (q *Queries) SearchTextAll(ctx context.Context, arg SearchTextAllParams) ([
 const searchTextMemories = `-- name: SearchTextMemories :many
 SELECT m.id, m.user_id, m.content, m.status, m.embedding, m.embedding_model, m.source_message_id, m.importance, m.metadata, m.content_hash, m.created_at, m.updated_at, m.last_used_at
 FROM memories m
-WHERE m.user_id = $1 AND m.status = 'active'
+WHERE m.user_id = $1 AND m.status IN ('active', 'candidate')
 ORDER BY similarity(m.content, $2) DESC
 LIMIT $3
 `
