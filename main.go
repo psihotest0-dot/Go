@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 
@@ -92,7 +93,13 @@ func main() {
 	llmClient := llm.NewLemonadeClient()
 	embedder := llm.NewHTTPEmbedder(database)
 
-	riverClient, err := jobs.NewRiverClient(ctx, database.Pool, database, llmClient, embedder)
+	catMgr, err := retrieval.NewCategoryManager(ctx, embedder)
+	if err != nil {
+		logger.Error("failed to create category manager", slog.Any("error", err))
+		// don't exit, just continue without it if it fails
+	}
+
+	riverClient, err := jobs.NewRiverClient(ctx, database.Pool, database, llmClient, embedder, catMgr)
 	if err != nil {
 		logger.Error("failed to create river client", slog.Any("error", err))
 		os.Exit(1)
@@ -110,7 +117,7 @@ func main() {
 
 	apiService := api.New(database)
 
-	retrievalService := retrieval.NewRetrievalService(database, embedder)
+	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
 	toolRegistry := agent.NewDefaultToolRegistry(retrievalService)
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
 
@@ -156,7 +163,13 @@ func main() {
 		}
 	})
 
-	protectedMux.HandleFunc("/v1/files/", apiService.FileByIDHandler)
+	protectedMux.HandleFunc("/v1/files/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/category") {
+			apiService.FileCategoryHandler(w, r)
+		} else {
+			apiService.FileByIDHandler(w, r)
+		}
+	})
 
 	userMiddleware := api.UserMiddleware(database.Pool)
 
