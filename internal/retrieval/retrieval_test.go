@@ -58,8 +58,8 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	query := "Find test fact"
 
 	// Adjust mock to expect the new SearchHybridMemories query pattern
-	mock.ExpectQuery(`(?i).*WITH memory_vector_search AS.*`).
-		WithArgs(10, sqlmock.AnyArg(), userID, query).
+	mock.ExpectQuery(`(?i).*WITH\s+memory_vector_search AS.*`).
+		WithArgs(10, sqlmock.AnyArg(), userID, query, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "source_type", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", "memory", 1))
 

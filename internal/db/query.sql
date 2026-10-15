@@ -128,6 +128,9 @@ SELECT * FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC;
 -- name: UpdateIngestedFileStatus :exec
 UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1;
 
+-- name: SetIngestedFileCategory :exec
+UPDATE ingested_files SET category = $2, manual_override = $3, updated_at = NOW() WHERE id = $1;
+
 -- name: CreateDocumentChunk :one
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
 VALUES ($1, $2, $3, $4, $5)
@@ -154,8 +157,9 @@ memory_text_search AS (
     LIMIT 100
 ),
 chunk_vector_search AS (
-    SELECT source_type, id, content, rank FROM (
+    SELECT source_type, id, content, rank, category FROM (
         SELECT 'chunk' as source_type, c.id, c.text as content,
+               f.category,
                RANK() OVER (ORDER BY c.embedding <=> sqlc.arg('embedding')) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> sqlc.arg('embedding')) as file_rank
         FROM document_chunks c
@@ -169,8 +173,9 @@ chunk_vector_search AS (
     LIMIT 100
 ),
 chunk_text_search AS (
-    SELECT source_type, id, content, rank FROM (
+    SELECT source_type, id, content, rank, category FROM (
         SELECT 'chunk' as source_type, c.id, c.text as content,
+               f.category,
                RANK() OVER (ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as file_rank
         FROM document_chunks c
@@ -202,7 +207,9 @@ combined_results AS (
         c.id,
         c.text as content,
         'chunk' as source_type,
-        CAST(COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0) AS FLOAT8) as score
+        CAST(COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0) AS FLOAT8)
+        + CASE WHEN COALESCE(cvs.category, cts.category) = sqlc.arg('boost_category')::TEXT THEN sqlc.arg('boost_amount')::FLOAT8 ELSE 0.0 END
+        as score
     FROM document_chunks c
     LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
     LEFT JOIN chunk_text_search cts ON c.id = cts.id
