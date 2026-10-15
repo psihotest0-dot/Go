@@ -136,7 +136,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			continue
 		}
 
-		msgCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		msgCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 
 		facts, err := w.analyzeMessage(msgCtx, msg.Content)
 		if err != nil {
@@ -145,26 +145,20 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			continue
 		}
 
-		if len(facts) == 0 {
-			err = w.processFact(msgCtx, msg, Fact{
-				FactKey:          "__dummy__",
-				Value:            "",
-				Statement:        "",
-				IsExplicitChange: false,
-			})
-			if err != nil {
-				slog.Error("failed to process dummy fact", "error", err)
+		if len(facts) > 0 {
+			for _, fact := range facts {
+				err = w.processFact(msgCtx, msg, fact)
+				if err != nil {
+					slog.Error("failed to process fact", "fact", fact, "error", err)
+				}
 			}
-			cancel()
-			continue
 		}
 
-		for _, fact := range facts {
-			err = w.processFact(msgCtx, msg, fact)
-			if err != nil {
-				slog.Error("failed to process fact", "fact", fact, "error", err)
-			}
+		err = w.dbClient.Queries.MarkMessageAnalyzed(ctx, msg.ID)
+		if err != nil {
+			slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
 		}
+
 		cancel()
 	}
 	return nil
@@ -206,7 +200,7 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 }
 
 func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Message, fact Fact) error {
-	if strings.TrimSpace(fact.Statement) == "" && fact.FactKey != "__dummy__" {
+	if strings.TrimSpace(fact.Statement) == "" {
 		return nil
 	}
 
@@ -217,27 +211,6 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 	defer tx.Rollback()
 
 	q := w.dbClient.Queries.WithTx(tx)
-
-	if fact.FactKey == "__dummy__" {
-		nullMsgID := uuid.NullUUID{UUID: msg.ID, Valid: true}
-		h := fmt.Sprintf("dummy-%s", msg.ID.String())
-		vec := pgvector.NewVector(make([]float32, 384))
-		_, err = q.CreateMemory(ctx, db.CreateMemoryParams{
-			UserID:          msg.UserID,
-			Content:         "[analyzed]",
-			Status:          "superseded",
-			Embedding:       vec,
-			EmbeddingModel:  "none",
-			SourceMessageID: nullMsgID,
-			Importance:      0,
-			Metadata:        pqtype.NullRawMessage{},
-			ContentHash:     h,
-		})
-		if err != nil {
-			return err
-		}
-		return tx.Commit()
-	}
 
 	memories, err := q.GetMemories(ctx, db.GetMemoriesParams{
 		UserID: msg.UserID,
