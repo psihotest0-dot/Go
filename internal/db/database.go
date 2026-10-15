@@ -104,8 +104,17 @@ func (db *Database) CreateMemoryWithCheck(ctx context.Context, params CreateMemo
 	return mem, nil
 }
 
-// UpdateMemoryWithCheck updates a memory after regenerating the content hash.
+// UpdateMemoryWithCheck updates a memory after regenerating the content hash if content is provided.
 func (db *Database) UpdateMemoryWithCheck(ctx context.Context, params UpdateMemoryParams) (Memory, error) {
-	params.ContentHash = GenerateHash(params.Content)
+	if params.Content.Valid && params.Content.String != "" {
+		params.ContentHash = sql.NullString{String: GenerateHash(params.Content.String), Valid: true}
+	}
+
+	if params.Embedding != nil {
+		if len(params.Embedding.Slice()) == 0 {
+			return Memory{}, fmt.Errorf("vector must have at least 1 dimension")
+		}
+	}
+
 	return db.Queries.UpdateMemory(ctx, params)
 }

@@ -115,7 +115,7 @@ func main() {
 		}
 	}()
 
-	apiService := api.New(database)
+	apiService := api.New(database, embedder)
 
 	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
 	toolRegistry := agent.NewDefaultToolRegistry(retrievalService)

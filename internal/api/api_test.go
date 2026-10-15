@@ -10,6 +10,8 @@ import (
 	"os"
 	"testing"
 
+	"go-monolith/internal/llm"
+
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	goose "github.com/pressly/goose/v3"
@@ -48,7 +50,9 @@ func setupTestDB(t *testing.T) *db.Database {
 
 func setupAPI(t *testing.T) (*api.API, *db.Database, uuid.UUID) {
 	database := setupTestDB(t)
-	apiService := api.New(database)
+	// We use a mock embedder for tests to avoid hitting the actual embedding API
+	mockEmbedder := &llm.MockEmbedder{}
+	apiService := api.New(database, mockEmbedder)
 
 	// Create test user
 	user, err := database.Queries.CreateUser(context.Background())
