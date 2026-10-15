@@ -156,7 +156,7 @@ func main() {
 		}
 	})
 
-	protectedMux.HandleFunc("/v1/files/", apiService.DeleteFileHandler)
+	protectedMux.HandleFunc("/v1/files/", apiService.FileByIDHandler)
 
 	userMiddleware := api.UserMiddleware(database.Pool)
 
