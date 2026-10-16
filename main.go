@@ -16,6 +16,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/prompts"
 	"go-monolith/internal/retrieval"
 )
 
@@ -74,6 +75,8 @@ func main() {
 
 	cfg := config.Load()
 	logger.Info("loaded config", slog.String("db_url", cfg.DatabaseURL))
+
+	prompts.Init("prompts")
 
 	ctx := context.Background()
 
