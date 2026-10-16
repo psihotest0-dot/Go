@@ -90,6 +90,13 @@ type Fact struct {
 func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[MemoryConsolidationArgs]) error {
 	slog.Info("MemoryConsolidationWorker started", "user_id", job.Args.UserID)
 
+	// Promote existing candidate memories to active
+	_, err := w.dbClient.SqlDB.ExecContext(ctx, "UPDATE memories SET status = 'active' WHERE user_id = $1 AND status = 'candidate'", job.Args.UserID)
+	if err != nil {
+		slog.Warn("Failed to promote candidate memories to active", "user_id", job.Args.UserID, "error", err)
+	}
+
+
 	conn, err := w.dbClient.SqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to acquire connection for advisory lock: %w", err)
@@ -235,7 +242,7 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		}
 	}
 
-	status := "candidate"
+	status := "active"
 	if conflict != nil {
 		if fact.IsExplicitChange {
 			status = "active"
@@ -247,10 +254,10 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 				return err
 			}
 		} else {
-			status = "candidate"
+			status = "active"
 		}
 	} else {
-		status = "candidate"
+		status = "active"
 	}
 
 	vectors, err := w.embedder.EmbedTexts(ctx, []string{fact.Statement})
