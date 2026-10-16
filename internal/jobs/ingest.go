@@ -161,7 +161,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 				}
 			}
 
-			if bestScore > 0.5 {
+			if bestScore > 0.20 {
 				votes[bestCat]++
 			} else {
 				votes["general"]++
