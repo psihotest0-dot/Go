@@ -49,7 +49,7 @@ func TestRetrieval_Integration(t *testing.T) {
 	assert.Equal(t, content, mem.Content)
 
 	query := "What is the capital of France?"
-	results, err := svc.SearchSimilar(ctx, user.ID, query, 1)
+	results, err := svc.SearchMemories(ctx, user.ID, query, 1)
 	require.NoError(t, err)
 	assert.Len(t, results, 1)
 	assert.Equal(t, content, results[0].Content)
@@ -113,7 +113,7 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	// Target: "Връх Мусала е най-високият на Балканите."
 	// Query: "Кой е наи-високия врух на балканите?"
 	query := "Кой е наи-високия врух на балканите?"
-	results, err := svc.SearchSimilar(ctx, user.ID, query, 3)
+	results, err := svc.SearchMemories(ctx, user.ID, query, 3)
 	require.NoError(t, err)
 
 	found := false

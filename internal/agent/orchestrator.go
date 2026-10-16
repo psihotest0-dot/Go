@@ -46,12 +46,13 @@ type ChatRequest struct {
 	Content   string `json:"content"`
 }
 
-func buildSystemPrompt(rules []string, ragChunks []string) string {
+func buildSystemPrompt(rules []string, memories []string, chunks []string) string {
 	var b strings.Builder
 	b.WriteString(`You are a helpful assistant.
-You have access to long-term memory tools: search_memories, create_memory and save_global_rule.
+You have access to memory and knowledge base tools: search_memories, search_documents, create_memory and save_global_rule.
 Rules:
 - Call search_memories FIRST when asked about past context or personal details.
+- Call search_documents / search_knowledge_base FIRST when asked about uploaded files, documents, or books.
 - Call create_memory ONLY when the user explicitly shares new personal facts or preferences.
 - Call save_global_rule ONLY when the user explicitly gives you an instruction on how to behave generally.
 - NEVER claim you have remembered or saved something unless the tool call succeeded.
@@ -66,8 +67,12 @@ Rules:
 		b.WriteString("\n")
 	}
 
-	if len(ragChunks) > 0 {
-		b.WriteString("Контекст от векторната памет:\n" + strings.Join(ragChunks, "\n\n"))
+	if len(memories) > 0 {
+		b.WriteString("### Лична памет за потребителя (Memories):\n" + strings.Join(memories, "\n\n") + "\n\n")
+	}
+
+	if len(chunks) > 0 {
+		b.WriteString("### Контекст от документи (Documents):\n" + strings.Join(chunks, "\n\n") + "\n\n")
 	}
 
 	return b.String()
@@ -123,85 +128,70 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 2. Retrieval: hybrid search for context
-	memories, err := o.retrieval.SearchSimilar(r.Context(), userID, req.Content, 5)
-	var contextTexts []string
+	// Search Memories
+	memories, errM := o.retrieval.SearchMemories(r.Context(), userID, req.Content, 5)
+	var memoryTexts []string
 	var memoryIDs []string
-	if err == nil {
-		for _, m := range memories {
-			contextTexts = append(contextTexts, m.Content)
-			memoryIDs = append(memoryIDs, m.ID.String())
-		}
-	}
-
-	// Extract sources for chunks
 	sources := []api.SourceInfo{}
-	var chunkIDs []uuid.UUID
-	if err == nil {
+	if errM == nil {
 		for _, m := range memories {
-			if m.SourceType == "chunk" {
-				chunkIDs = append(chunkIDs, m.ID)
-			} else if m.SourceType == "memory" {
-				sources = append(sources, api.SourceInfo{
-					ChunkID:        m.ID,
-					FileName:       "Памет (Memory)",
-					ContentSnippet: m.Content,
-					Score:          m.Score,
-					SourceType:     "memory",
-				})
-			}
-		}
-	}
-
-	if len(chunkIDs) > 0 {
-		chunks, err := o.db.Queries.GetDocumentChunksWithFile(r.Context(), chunkIDs)
-		if err == nil {
-			for _, chunk := range chunks {
-				// Map score
-				var score float64
-				for _, m := range memories {
-					if m.ID == chunk.ID {
-						score = m.Score
-						break
-					}
-				}
-
-				snippet := chunk.Text
-				sourceType := "text"
-				if strings.Contains(snippet, "[source: \"ocr\"]") {
-					sourceType = "ocr"
-					snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
-				}
-				snippet = strings.TrimSpace(snippet)
-				if len(snippet) > 600 {
-					snippet = snippet[:600] + "..."
-				}
-
-				sources = append(sources, api.SourceInfo{
-					ChunkID:        chunk.ID,
-					FileName:       chunk.FileName,
-					ContentSnippet: snippet,
-					Score:          score,
-					SourceType:     sourceType,
-				})
-			}
-
-			// Deduplicate based on ChunkID
-			seen := make(map[uuid.UUID]bool)
-			var dedupedSources []api.SourceInfo
-			for _, s := range sources {
-				if !seen[s.ChunkID] {
-					seen[s.ChunkID] = true
-					dedupedSources = append(dedupedSources, s)
-				}
-			}
-			sources = dedupedSources
-
-			// Sort by score descending using sort.Slice
-			sort.Slice(sources, func(i, j int) bool {
-				return sources[i].Score > sources[j].Score
+			memoryTexts = append(memoryTexts, m.Content)
+			memoryIDs = append(memoryIDs, m.ID.String())
+			sources = append(sources, api.SourceInfo{
+				ChunkID:        m.ID,
+				FileName:       "Памет (Memory)",
+				ContentSnippet: m.Content,
+				Score:          m.Score,
+				SourceType:     "memory",
 			})
 		}
 	}
+
+	// Search Chunks
+	chunks, errC := o.retrieval.SearchChunks(r.Context(), userID, req.Content, 5)
+	var chunkTexts []string
+	var chunkIDs []uuid.UUID
+	if errC == nil {
+		for _, c := range chunks {
+			chunkTexts = append(chunkTexts, c.Content)
+			chunkIDs = append(chunkIDs, c.ID)
+
+			snippet := c.Content
+			sourceType := "text"
+			if strings.Contains(snippet, "[source: \"ocr\"]") {
+				sourceType = "ocr"
+				snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
+			}
+			snippet = strings.TrimSpace(snippet)
+			if len(snippet) > 600 {
+				snippet = snippet[:600] + "..."
+			}
+
+			sources = append(sources, api.SourceInfo{
+				ChunkID:        c.ID,
+				FileName:       c.FileName,
+				ContentSnippet: snippet,
+				Score:          c.Score,
+				SourceType:     sourceType,
+			})
+		}
+	}
+
+	// Deduplicate based on ChunkID
+	seen := make(map[uuid.UUID]bool)
+	var dedupedSources []api.SourceInfo
+	for _, s := range sources {
+		if !seen[s.ChunkID] {
+			seen[s.ChunkID] = true
+			dedupedSources = append(dedupedSources, s)
+		}
+	}
+	sources = dedupedSources
+
+	// Sort by score descending using sort.Slice
+	sort.Slice(sources, func(i, j int) bool {
+		return sources[i].Score > sources[j].Score
+	})
 
 	// Log trace
 	traceDetails, _ := json.Marshal(map[string]interface{}{
@@ -227,7 +217,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// 4. Construct System/Context Message
-	systemContent := buildSystemPrompt(rules, contextTexts)
+	systemContent := buildSystemPrompt(rules, memoryTexts, chunkTexts)
 
 	systemMessage := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleSystem,
@@ -325,6 +315,27 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			Function: &openai.FunctionDefinition{
 				Name:        "search_memories",
 				Description: "Search for past context or personal details about the user.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "The text to search for.",
+						},
+						"limit": map[string]interface{}{
+							"type":        "integer",
+							"description": "The maximum number of results to return (default 5, max 20).",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "search_documents",
+				Description: "Search for context, information, or answers within the uploaded documents and files.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
