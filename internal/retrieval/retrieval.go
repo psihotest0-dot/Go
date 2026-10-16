@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -60,6 +61,9 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 	// Create memory in database with check
 	mem, err := s.db.CreateMemoryWithCheck(ctx, params)
 	if err != nil {
+		if errors.Is(err, db.ErrMemoryExists) {
+			return mem, err
+		}
 		return db.Memory{}, fmt.Errorf("failed to create memory: %w", err)
 	}
 

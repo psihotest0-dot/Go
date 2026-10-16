@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -88,6 +89,15 @@ func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uu
 	// Always save as "active" to avoid conflicts, letting the background worker consolidate.
 	mem, err := r.retrieval.CreateMemory(ctx, userID, content, importance, "active", pqtype.NullRawMessage{})
 	if err != nil {
+		if errors.Is(err, db.ErrMemoryExists) {
+			// If it's the exact same content, we can just return success
+			return map[string]interface{}{
+				"status":    "success",
+				"message":   "Memory already exists",
+				"memory_id": mem.ID, // CreateMemoryWithCheck returns existing on ErrMemoryExists
+				"content":   mem.Content,
+			}, nil
+		}
 		return nil, fmt.Errorf("failed to create memory: %w", err)
 	}
 
