@@ -736,6 +736,55 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 	return items, nil
 }
 
+const getTopMemories = `-- name: GetTopMemories :many
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
+WHERE user_id = $1 AND status IN ('active', 'candidate')
+ORDER BY importance DESC, last_used_at DESC
+LIMIT $2
+`
+
+type GetTopMemoriesParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Limit  int32     `json:"limit"`
+}
+
+func (q *Queries) GetTopMemories(ctx context.Context, arg GetTopMemoriesParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, getTopMemories, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Memory{}
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Content,
+			&i.Status,
+			&i.Embedding,
+			&i.EmbeddingModel,
+			&i.SourceMessageID,
+			&i.Importance,
+			&i.Metadata,
+			&i.ContentHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
 SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed
 FROM messages
@@ -947,12 +996,12 @@ text_search AS (
     ORDER BY rank
     LIMIT 100
 )
-SELECT m.id, m.content, CAST(COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0) AS FLOAT8) as score
+SELECT m.id, m.content, CAST(COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0) + 0.01 * (COALESCE(m.importance, 5)::FLOAT8 / 10.0) AS FLOAT8) as score
 FROM memories m
 LEFT JOIN vector_search vs ON m.id = vs.id
 LEFT JOIN text_search ts ON m.id = ts.id
 WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
-  AND m.user_id = $1
+  AND m.user_id = $1 AND m.status != 'superseded'
 ORDER BY score DESC
 LIMIT $2
 `
