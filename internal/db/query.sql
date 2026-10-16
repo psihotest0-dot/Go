@@ -1,3 +1,8 @@
+-- name: GetTopMemories :many
+SELECT * FROM memories
+WHERE user_id = sqlc.arg('user_id') AND status IN ('active', 'candidate')
+ORDER BY importance DESC, last_used_at DESC
+LIMIT sqlc.arg('limit');
 -- name: CreateUser :one
 INSERT INTO users DEFAULT VALUES RETURNING *;
 
@@ -53,12 +58,12 @@ text_search AS (
     ORDER BY rank
     LIMIT 100
 )
-SELECT m.id, m.content, CAST(COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0) AS FLOAT8) as score
+SELECT m.id, m.content, CAST(COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0) + 0.01 * (COALESCE(m.importance, 5)::FLOAT8 / 10.0) AS FLOAT8) as score
 FROM memories m
 LEFT JOIN vector_search vs ON m.id = vs.id
 LEFT JOIN text_search ts ON m.id = ts.id
 WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
-  AND m.user_id = sqlc.arg('user_id')
+  AND m.user_id = sqlc.arg('user_id') AND m.status != 'superseded'
 ORDER BY score DESC
 LIMIT sqlc.arg('match_count');
 
