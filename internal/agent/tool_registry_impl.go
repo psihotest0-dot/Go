@@ -85,8 +85,8 @@ func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uu
 		importance = int(imp)
 	}
 
-	// Always save as "candidate" to avoid conflicts, letting the background worker consolidate.
-	mem, err := r.retrieval.CreateMemory(ctx, userID, content, importance, "candidate", pqtype.NullRawMessage{})
+	// Always save as "active" to avoid conflicts, letting the background worker consolidate.
+	mem, err := r.retrieval.CreateMemory(ctx, userID, content, importance, "active", pqtype.NullRawMessage{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create memory: %w", err)
 	}
