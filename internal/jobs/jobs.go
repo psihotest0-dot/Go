@@ -11,6 +11,7 @@ import (
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/prompts"
 
 	"database/sql"
 
@@ -96,7 +97,6 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		slog.Warn("Failed to promote candidate memories to active", "user_id", job.Args.UserID, "error", err)
 	}
 
-
 	conn, err := w.dbClient.SqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to acquire connection for advisory lock: %w", err)
@@ -173,11 +173,17 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 }
 
 func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content string) ([]Fact, error) {
+	systemPrompt, err := prompts.GlobalManager.Render("memory_reflector.tmpl", nil)
+	if err != nil {
+		slog.Error("failed to render memory_reflector prompt", "err", err)
+		systemPrompt = "Extract facts about the user. Return an array of JSON objects with keys: fact_key, value, statement, is_explicit_change."
+	}
+
 	req := openai.ChatCompletionRequest{
 		Messages: []openai.ChatCompletionMessage{
 			{
 				Role:    openai.ChatMessageRoleSystem,
-				Content: "Extract facts about the user. Return an array of JSON objects with keys: fact_key (e.g. location, name), value, statement (the exact fact sentence), is_explicit_change (boolean indicating if the user explicitly changed a previous fact, like 'I moved to').",
+				Content: systemPrompt,
 			},
 			{
 				Role:    openai.ChatMessageRoleUser,

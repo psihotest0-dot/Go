@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -19,15 +20,24 @@ import (
 	"go-monolith/internal/api"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/prompts"
 	"go-monolith/internal/retrieval"
 )
 
+type sessionSummary struct {
+	mu            sync.Mutex
+	text          string
+	lastDropCount int
+	isGenerating  bool
+}
+
 // Orchestrator orchestrates the main agent pipeline.
 type Orchestrator struct {
-	db        *db.Database
-	retrieval *retrieval.RetrievalService
-	llmClient llm.LLMClient
-	tools     ToolRegistry
+	db               *db.Database
+	retrieval        *retrieval.RetrievalService
+	llmClient        llm.LLMClient
+	tools            ToolRegistry
+	sessionSummaries sync.Map
 }
 
 // NewOrchestrator creates a new Orchestrator.
@@ -44,38 +54,6 @@ func NewOrchestrator(database *db.Database, r *retrieval.RetrievalService, l llm
 type ChatRequest struct {
 	SessionID string `json:"session_id"`
 	Content   string `json:"content"`
-}
-
-func buildSystemPrompt(rules []string, memories []string, chunks []string) string {
-	var b strings.Builder
-	b.WriteString(`You are a helpful assistant.
-You have access to memory and knowledge base tools: search_memories, search_documents, create_memory and save_global_rule.
-Rules:
-- Call search_memories FIRST when asked about past context or personal details.
-- Call search_documents / search_knowledge_base FIRST when asked about uploaded files, documents, or books.
-- Call create_memory ONLY when the user explicitly shares new personal facts or preferences.
-- Call save_global_rule ONLY when the user explicitly gives you an instruction on how to behave generally.
-- NEVER claim you have remembered or saved something unless the tool call succeeded.
-
-`)
-
-	if len(rules) > 0 {
-		b.WriteString("ЗАДЪЛЖИТЕЛНИ ГЛОБАЛНИ ПРАВИЛА (имат приоритет над всичко останало):\n")
-		for _, r := range rules {
-			b.WriteString("- " + r + "\n")
-		}
-		b.WriteString("\n")
-	}
-
-	if len(memories) > 0 {
-		b.WriteString("### Лична памет за потребителя (Memories):\n" + strings.Join(memories, "\n\n") + "\n\n")
-	}
-
-	if len(chunks) > 0 {
-		b.WriteString("### Контекст от документи (Documents):\n" + strings.Join(chunks, "\n\n") + "\n\n")
-	}
-
-	return b.String()
 }
 
 // HandleStreamChat handles incoming chat messages and streams the response.
@@ -216,12 +194,17 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// 4. Construct System/Context Message
-	systemContent := buildSystemPrompt(rules, memoryTexts, chunkTexts)
-
-	systemMessage := openai.ChatCompletionMessage{
-		Role:    openai.ChatMessageRoleSystem,
-		Content: systemContent,
+	// 4. Fetch Top Memories
+	topMemoriesDb, err := o.db.Queries.GetTopMemories(r.Context(), db.GetTopMemoriesParams{
+		UserID: userID,
+		Limit:  5,
+	})
+	if err != nil {
+		slog.Error("failed to get top memories", "err", err)
+	}
+	var topMemories []string
+	for _, m := range topMemoriesDb {
+		topMemories = append(topMemories, m.Content)
 	}
 
 	// 5. Fetch Message History (including the one we just saved)
@@ -247,18 +230,19 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		historyMessages = append(historyMessages, msg)
 	}
 
-	// 5. Pruning Logic (Sliding Window based on character count)
-	maxChars := 2000
-	var finalMessages []openai.ChatCompletionMessage
-	finalMessages = append(finalMessages, systemMessage)
+	// 6. Sliding Window and Rolling Summary
+	var oldMessages []openai.ChatCompletionMessage
 
 	// Keep taking from history (newest to oldest) until we hit the char limit
+	maxChars := 12000
 	var reversedKeep []openai.ChatCompletionMessage
-	currentChars := utf8.RuneCountInString(systemMessage.Content)
+	currentChars := 0
 
 	for i := len(historyMessages) - 1; i >= 0; i-- {
 		msgLen := utf8.RuneCountInString(historyMessages[i].Content)
-		if currentChars+msgLen > maxChars && len(reversedKeep) > 0 {
+		// Prune if char limit exceeded or more than 10 messages kept
+		if (currentChars+msgLen > maxChars && len(reversedKeep) > 0) || len(reversedKeep) >= 10 {
+			oldMessages = historyMessages[:i+1]
 			break
 		}
 		reversedKeep = append(reversedKeep, historyMessages[i])
@@ -266,15 +250,114 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Revert the kept messages back to chronological order
+	var finalHistory []openai.ChatCompletionMessage
 	for i := len(reversedKeep) - 1; i >= 0; i-- {
-		finalMessages = append(finalMessages, reversedKeep[i])
+		finalHistory = append(finalHistory, reversedKeep[i])
 	}
+	historyMessages = finalHistory
+
+	droppedMessagesCount := len(oldMessages)
+	var rollingSummary string
+
+	v, _ := o.sessionSummaries.LoadOrStore(req.SessionID, &sessionSummary{})
+	summaryState := v.(*sessionSummary)
+
+	summaryState.mu.Lock()
+	rollingSummary = summaryState.text
+	lastDropCount := summaryState.lastDropCount
+	isGenerating := summaryState.isGenerating
+	if droppedMessagesCount > 0 && (droppedMessagesCount-lastDropCount) >= 6 && !isGenerating {
+		summaryState.isGenerating = true
+	} else {
+		droppedMessagesCount = 0 // Don't generate
+	}
+	summaryState.mu.Unlock()
+
+	if droppedMessagesCount > 0 {
+		var newOlds []openai.ChatCompletionMessage
+		if droppedMessagesCount > lastDropCount {
+			newOlds = oldMessages[lastDropCount:]
+		}
+
+		go func(sessID string, olds []openai.ChatCompletionMessage, dropCount int, previousSummary string) {
+			defer func() {
+				v, ok := o.sessionSummaries.Load(sessID)
+				if ok {
+					state := v.(*sessionSummary)
+					state.mu.Lock()
+					state.isGenerating = false
+					state.mu.Unlock()
+				}
+			}()
+
+			if len(olds) == 0 {
+				return
+			}
+
+			var oldTexts []string
+			for _, m := range olds {
+				oldTexts = append(oldTexts, fmt.Sprintf("%s: %s", m.Role, m.Content))
+			}
+
+			summaryPrompt, err := prompts.GlobalManager.Render("rolling_summary.tmpl", map[string]interface{}{
+				"MessagesText":    strings.Join(oldTexts, "\n"),
+				"PreviousSummary": previousSummary,
+			})
+			if err == nil {
+				summaryReq := openai.ChatCompletionRequest{
+					Messages: []openai.ChatCompletionMessage{
+						{
+							Role:    openai.ChatMessageRoleSystem,
+							Content: summaryPrompt,
+						},
+					},
+				}
+				// Use pure Chat instead of ChatWithJSONSchema since we want a plain text summary
+				summaryResp, sumErr := o.llmClient.Chat(context.Background(), summaryReq)
+				if sumErr == nil && len(summaryResp.Choices) > 0 {
+					if v, ok := o.sessionSummaries.Load(sessID); ok {
+						state := v.(*sessionSummary)
+						state.mu.Lock()
+						state.text = summaryResp.Choices[0].Message.Content
+						state.lastDropCount = dropCount
+						state.mu.Unlock()
+					}
+				} else {
+					slog.Error("failed to generate rolling summary", "err", sumErr)
+				}
+			} else {
+				slog.Error("failed to render rolling summary prompt", "err", err)
+			}
+		}(req.SessionID, newOlds, droppedMessagesCount, rollingSummary)
+	}
+
+	// 7. Construct System/Context Message
+	systemContent, err := prompts.GlobalManager.Render("chat_system.tmpl", map[string]interface{}{
+		"Rules":            rules,
+		"TopMemories":      topMemories,
+		"RollingSummary":   rollingSummary,
+		"RelevantMemories": memoryTexts,
+		"Chunks":           chunkTexts,
+	})
+	if err != nil {
+		slog.Error("failed to render system prompt", "err", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	systemMessage := openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleSystem,
+		Content: systemContent,
+	}
+
+	var finalMessages []openai.ChatCompletionMessage
+	finalMessages = append(finalMessages, systemMessage)
+	finalMessages = append(finalMessages, historyMessages...)
 
 	// Log trace for prune
 	tracePruneDetails, _ := json.Marshal(map[string]interface{}{
 		"total_messages": len(historyMessages) + 1,
 		"pruned_to":      len(finalMessages),
-		"total_chars":    currentChars,
 	})
 	_, _ = o.db.Queries.CreateAgentTrace(r.Context(), db.CreateAgentTraceParams{
 		UserID:    userID,

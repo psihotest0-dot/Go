@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -72,8 +73,9 @@ func RunMigrations(connString string) error {
 
 // GenerateHash generates a SHA256 hash for the given content.
 func GenerateHash(content string) string {
+	normalized := strings.ToLower(strings.TrimSpace(content))
 	h := sha256.New()
-	h.Write([]byte(content))
+	h.Write([]byte(normalized))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
