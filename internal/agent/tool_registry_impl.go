@@ -38,6 +38,8 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeCreateMemory(ctx, userID, args)
 	case "search_memories":
 		return r.executeSearchMemories(ctx, userID, args)
+	case "search_documents", "search_knowledge_base":
+		return r.executeSearchDocuments(ctx, userID, args)
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
 	default:
@@ -110,7 +112,7 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 		limit = 20
 	}
 
-	results, err := r.retrieval.SearchSimilar(ctx, userID, query, limit)
+	results, err := r.retrieval.SearchMemories(ctx, userID, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search memories: %w", err)
 	}
@@ -121,6 +123,41 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 			"id":      res.ID,
 			"content": res.Content,
 			"score":   res.Score,
+		})
+	}
+
+	return map[string]interface{}{
+		"status":  "success",
+		"results": formattedResults,
+	}, nil
+}
+
+func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("invalid or missing 'query' argument")
+	}
+
+	limit := 5
+	if lim, ok := args["limit"].(float64); ok {
+		limit = int(lim)
+	}
+	if limit > 20 {
+		limit = 20
+	}
+
+	results, err := r.retrieval.SearchChunks(ctx, userID, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search documents: %w", err)
+	}
+
+	var formattedResults []map[string]interface{}
+	for _, res := range results {
+		formattedResults = append(formattedResults, map[string]interface{}{
+			"id":        res.ID,
+			"content":   res.Content,
+			"score":     res.Score,
+			"file_name": res.FileName,
 		})
 	}
 

@@ -53,22 +53,20 @@ text_search AS (
     ORDER BY rank
     LIMIT 100
 )
-SELECT m.*
+SELECT m.id, m.content, CAST(COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0) AS FLOAT8) as score
 FROM memories m
 LEFT JOIN vector_search vs ON m.id = vs.id
 LEFT JOIN text_search ts ON m.id = ts.id
 WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
   AND m.user_id = sqlc.arg('user_id')
-ORDER BY
-    COALESCE(1.0 / (60 + vs.rank), 0.0) +
-    COALESCE(1.0 / (60 + ts.rank), 0.0) DESC
+ORDER BY score DESC
 LIMIT sqlc.arg('match_count');
 
 -- name: SearchTextMemories :many
-SELECT m.*
+SELECT m.id, m.content, CAST(similarity(m.content, sqlc.arg('query_text')) AS FLOAT8) as score
 FROM memories m
 WHERE m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
-ORDER BY similarity(m.content, sqlc.arg('query_text')) DESC
+ORDER BY score DESC
 LIMIT sqlc.arg('match_count');
 
 -- name: DeleteMemory :exec
@@ -147,108 +145,9 @@ RETURNING *;
 SELECT * FROM document_chunks WHERE file_id = $1 ORDER BY chunk_index ASC;
 
 
--- name: SearchHybridAll :many
-WITH
-memory_vector_search AS (
-    SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
-    FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
-    ORDER BY rank
-    LIMIT 100
-),
-memory_text_search AS (
-    SELECT 'memory' as source_type, id, content, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
-    FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
-    ORDER BY rank
-    LIMIT 100
-),
-chunk_vector_search AS (
-    SELECT source_type, id, content, rank, category FROM (
-        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
-               RANK() OVER (ORDER BY c.embedding <=> sqlc.arg('embedding')) as rank,
-               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> sqlc.arg('embedding')) as file_rank
-        FROM document_chunks c
-        JOIN ingested_files f ON c.file_id = f.id
-        WHERE c.user_id = sqlc.arg('user_id')
-          AND f.status = 'completed'
-          AND (c.embedding <=> sqlc.arg('embedding')) < 0.45
-    ) sub
-    WHERE file_rank <= 2
-    ORDER BY rank
-    LIMIT 100
-),
-chunk_text_search AS (
-    SELECT source_type, id, content, rank, category FROM (
-        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
-               RANK() OVER (ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as rank,
-               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as file_rank
-        FROM document_chunks c
-        JOIN ingested_files f ON c.file_id = f.id
-        WHERE c.user_id = sqlc.arg('user_id')
-          AND f.status = 'completed'
-          AND similarity(c.text, sqlc.arg('query_text')) > 0.15
-    ) sub
-    WHERE file_rank <= 2
-    ORDER BY rank
-    LIMIT 100
-),
-combined_results AS (
-    SELECT
-        m.id,
-        m.content,
-        'memory' as source_type,
-        CAST(COALESCE(1.0 / (60 + mvs.rank), 0.0) + COALESCE(1.0 / (60 + mts.rank), 0.0) AS FLOAT8) as score
-    FROM memories m
-    LEFT JOIN memory_vector_search mvs ON m.id = mvs.id
-    LEFT JOIN memory_text_search mts ON m.id = mts.id
-    WHERE (mvs.id IS NOT NULL OR mts.id IS NOT NULL)
-      AND m.user_id = sqlc.arg('user_id')
-      AND m.status = 'active'
-
-    UNION ALL
-
-    SELECT
-        c.id,
-        c.text as content,
-        'chunk' as source_type,
-        CAST(
-            COALESCE(1.0 / (60 + cvs.rank), 0.0) +
-            COALESCE(1.0 / (60 + cts.rank), 0.0) +
-            (CASE WHEN COALESCE(cvs.category, cts.category) = sqlc.arg('boost_category')::text THEN sqlc.arg('boost_amount')::FLOAT8 ELSE 0.0 END)
-        AS FLOAT8) as score
-    FROM document_chunks c
-    LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
-    LEFT JOIN chunk_text_search cts ON c.id = cts.id
-    WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
-      AND c.user_id = sqlc.arg('user_id')
-)
-SELECT id, content, source_type, score
-FROM combined_results
-ORDER BY score DESC
-LIMIT sqlc.arg('match_count');
-
-
 -- name: DeleteIngestedFile :exec
 DELETE FROM ingested_files WHERE id = $1 AND user_id = $2;
 
-
--- name: SearchTextAll :many
-WITH combined AS (
-    SELECT m.id, m.content, 'memory' as source_type, similarity(m.content, sqlc.arg('query_text')) as sim
-    FROM memories m
-    WHERE m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
-
-    UNION ALL
-
-    SELECT c.id, c.text as content, 'chunk' as source_type, similarity(c.text, sqlc.arg('query_text')) as sim
-    FROM document_chunks c
-    WHERE c.user_id = sqlc.arg('user_id')
-)
-SELECT id, content, source_type
-FROM combined
-ORDER BY sim DESC
-LIMIT sqlc.arg('match_count');
 
 -- name: CreateDocumentChunksBatch :exec
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
@@ -279,3 +178,62 @@ INSERT INTO global_rules (user_id, key, value, updated_at)
 VALUES ($1, $2, $3, now())
 ON CONFLICT (user_id, key) DO UPDATE
 SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, enabled = true;
+
+-- name: SearchHybridChunks :many
+WITH chunk_vector_search AS (
+    SELECT source_type, id, content, rank, category FROM (
+        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
+               RANK() OVER (ORDER BY c.embedding <=> sqlc.arg('embedding')) as rank,
+               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> sqlc.arg('embedding')) as file_rank
+        FROM document_chunks c
+        JOIN ingested_files f ON c.file_id = f.id
+        WHERE c.user_id = sqlc.arg('user_id')
+          AND f.status = 'completed'
+          AND (c.embedding <=> sqlc.arg('embedding')) < 0.45
+    ) sub
+    WHERE file_rank <= 2
+    ORDER BY rank
+    LIMIT 100
+),
+chunk_text_search AS (
+    SELECT source_type, id, content, rank, category FROM (
+        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
+               RANK() OVER (ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as rank,
+               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as file_rank
+        FROM document_chunks c
+        JOIN ingested_files f ON c.file_id = f.id
+        WHERE c.user_id = sqlc.arg('user_id')
+          AND f.status = 'completed'
+          AND similarity(c.text, sqlc.arg('query_text')) > 0.15
+    ) sub
+    WHERE file_rank <= 2
+    ORDER BY rank
+    LIMIT 100
+)
+SELECT
+    c.id,
+    c.text as content,
+    f.file_name,
+    CAST(
+        COALESCE(1.0 / (60 + cvs.rank), 0.0) +
+        COALESCE(1.0 / (60 + cts.rank), 0.0) +
+        (CASE WHEN COALESCE(cvs.category, cts.category) = sqlc.arg('boost_category')::text THEN sqlc.arg('boost_amount')::FLOAT8 ELSE 0.0 END)
+    AS FLOAT8) as score
+FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
+LEFT JOIN chunk_text_search cts ON c.id = cts.id
+WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
+  AND c.user_id = sqlc.arg('user_id')
+ORDER BY score DESC
+LIMIT sqlc.arg('match_count');
+
+-- name: SearchTextChunks :many
+SELECT c.id, c.text as content, f.file_name, CAST(similarity(c.text, sqlc.arg('query_text')) AS FLOAT8) as score
+FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.user_id = sqlc.arg('user_id')
+  AND f.status = 'completed'
+ORDER BY score DESC
+LIMIT sqlc.arg('match_count');
+
