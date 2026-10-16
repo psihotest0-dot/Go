@@ -72,26 +72,26 @@ type SearchResult struct {
 	Content    string
 	SourceType string
 	Score      float64
+	FileName   string
 }
 
-func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
+func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
 	start := time.Now()
 	defer func() {
-		metrics.StageLatency.WithLabelValues("search").Observe(time.Since(start).Seconds())
+		metrics.StageLatency.WithLabelValues("search_memories").Observe(time.Since(start).Seconds())
 	}()
 
 	var results []SearchResult
 
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
 	if err != nil || len(vectors) == 0 {
-		// Fallback to text search if embedder times out or fails
-		fmt.Printf("Fallback to text search due to embedder error: %v\n", err)
-		params := db.SearchTextAllParams{
+		fmt.Printf("Fallback to text search memories due to embedder error: %v\n", err)
+		params := db.SearchTextMemoriesParams{
 			UserID:     userID,
 			QueryText:  query,
 			MatchCount: int32(limit),
 		}
-		rows, searchErr := s.db.Queries.SearchTextAll(ctx, params)
+		rows, searchErr := s.db.Queries.SearchTextMemories(ctx, params)
 		if searchErr != nil {
 			return nil, fmt.Errorf("failed to search text memories during fallback: %w", searchErr)
 		}
@@ -100,8 +100,68 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 			results = append(results, SearchResult{
 				ID:         m.ID,
 				Content:    m.Content,
-				SourceType: m.SourceType,
-				Score:      0, // text fallback doesn't map directly to RRF score
+				SourceType: "memory",
+				Score:      m.Score,
+			})
+		}
+		return results, nil
+	}
+
+	queryVec := vectors[0]
+	pgVec := pgvector.NewVector(queryVec)
+
+	params := db.SearchHybridMemoriesParams{
+		UserID:     userID,
+		MatchCount: int32(limit),
+		Embedding:  pgVec,
+		QueryText:  query,
+	}
+
+	rows, err := s.db.Queries.SearchHybridMemories(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
+	}
+
+	for _, row := range rows {
+		results = append(results, SearchResult{
+			ID:         row.ID,
+			Content:    row.Content,
+			SourceType: "memory",
+			Score:      row.Score,
+		})
+	}
+
+	return results, nil
+}
+
+func (s *RetrievalService) SearchChunks(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("search_chunks").Observe(time.Since(start).Seconds())
+	}()
+
+	var results []SearchResult
+
+	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
+	if err != nil || len(vectors) == 0 {
+		fmt.Printf("Fallback to text search chunks due to embedder error: %v\n", err)
+		params := db.SearchTextChunksParams{
+			UserID:     userID,
+			QueryText:  query,
+			MatchCount: int32(limit),
+		}
+		rows, searchErr := s.db.Queries.SearchTextChunks(ctx, params)
+		if searchErr != nil {
+			return nil, fmt.Errorf("failed to search text chunks during fallback: %w", searchErr)
+		}
+
+		for _, m := range rows {
+			results = append(results, SearchResult{
+				ID:         m.ID,
+				Content:    m.Content,
+				SourceType: "chunk",
+				Score:      m.Score,
+				FileName:   m.FileName,
 			})
 		}
 		return results, nil
@@ -136,7 +196,7 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 		}
 	}
 
-	params := db.SearchHybridAllParams{
+	params := db.SearchHybridChunksParams{
 		UserID:        userID,
 		MatchCount:    int32(limit),
 		Embedding:     pgVec,
@@ -145,17 +205,18 @@ func (s *RetrievalService) SearchSimilar(ctx context.Context, userID uuid.UUID, 
 		BoostAmount:   boostAmount,
 	}
 
-	rows, err := s.db.Queries.SearchHybridAll(ctx, params)
+	rows, err := s.db.Queries.SearchHybridChunks(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
+		return nil, fmt.Errorf("failed to search hybrid chunks: %w", err)
 	}
 
 	for _, row := range rows {
 		results = append(results, SearchResult{
 			ID:         row.ID,
 			Content:    row.Content,
-			SourceType: row.SourceType,
+			SourceType: "chunk",
 			Score:      row.Score,
+			FileName:   row.FileName,
 		})
 	}
 
