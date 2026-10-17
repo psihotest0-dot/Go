@@ -107,7 +107,9 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 		// Check if vectors match the number of chunks. If not, return an error.
 		if len(vectors) != len(batchChunks) {
-			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+			if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"}); updateErr != nil {
+				slog.Error("Failed to update status to failed", "file_id", file.ID, "error", updateErr)
+			}
 			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(batchChunks), len(vectors))
 		}
 
