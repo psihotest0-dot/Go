@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/sqlc-dev/pqtype"
@@ -108,6 +109,14 @@ func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uu
 	}, nil
 }
 
+func truncateString(s string, maxRunes int) string {
+	if utf8.RuneCountInString(s) <= maxRunes {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:maxRunes]) + "..."
+}
+
 func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
@@ -118,8 +127,9 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 	if lim, ok := args["limit"].(float64); ok {
 		limit = int(lim)
 	}
-	if limit > 20 {
-		limit = 20
+	// Enforce hard cap of 5 chunks for LLM context limits
+	if limit > 5 {
+		limit = 5
 	}
 
 	results, err := r.retrieval.SearchMemories(ctx, userID, query, limit)
@@ -129,9 +139,10 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 
 	var formattedResults []map[string]interface{}
 	for _, res := range results {
+		content := truncateString(res.Content, 1500)
 		formattedResults = append(formattedResults, map[string]interface{}{
 			"id":      res.ID,
-			"content": res.Content,
+			"content": content,
 			"score":   res.Score,
 		})
 	}
@@ -152,8 +163,9 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	if lim, ok := args["limit"].(float64); ok {
 		limit = int(lim)
 	}
-	if limit > 20 {
-		limit = 20
+	// Enforce hard cap of 5 chunks for LLM context limits
+	if limit > 5 {
+		limit = 5
 	}
 
 	results, err := r.retrieval.SearchChunks(ctx, userID, query, limit)
@@ -163,9 +175,10 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 
 	var formattedResults []map[string]interface{}
 	for _, res := range results {
+		content := truncateString(res.Content, 1500)
 		formattedResults = append(formattedResults, map[string]interface{}{
 			"id":        res.ID,
-			"content":   res.Content,
+			"content":   content,
 			"score":     res.Score,
 			"file_name": res.FileName,
 		})
