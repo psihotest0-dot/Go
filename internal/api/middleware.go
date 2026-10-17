@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"runtime/debug"
 	"strconv"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var uuidRegex = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 
 type key int
 
@@ -84,8 +87,15 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			duration := time.Since(start).Seconds()
 
-			metrics.QPS.WithLabelValues(r.Method, r.URL.Path, strconv.Itoa(rw.status)).Inc()
-			metrics.Latency.WithLabelValues(r.Method, r.URL.Path).Observe(duration)
+			pathForMetrics := r.URL.Path
+			if r.Pattern != "" {
+				pathForMetrics = r.Pattern
+			} else {
+				pathForMetrics = uuidRegex.ReplaceAllString(pathForMetrics, "{id}")
+			}
+
+			metrics.QPS.WithLabelValues(r.Method, pathForMetrics, strconv.Itoa(rw.status)).Inc()
+			metrics.Latency.WithLabelValues(r.Method, pathForMetrics).Observe(duration)
 		})
 	}
 }
