@@ -203,6 +203,30 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		req.Status = "candidate"
 	}
 
+	var newEmbedding pgvector.Vector
+	var newEmbeddingModel string
+
+	if strings.TrimSpace(req.Content) != "" {
+		vectors, err := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+		if err != nil {
+			slog.Error("failed to generate embedding", slog.Any("error", err))
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(vectors) == 0 {
+			slog.Error("embedder returned no vectors")
+			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
+			return
+		}
+		if len(vectors[0]) == 0 {
+			slog.Error("embedder returned empty vector")
+			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
+			return
+		}
+		newEmbedding = pgvector.NewVector(vectors[0])
+		newEmbeddingModel = "paraphrase-multilingual-MiniLM-L12-v2"
+	}
+
 	mem, err := a.db.CreateMemoryWithCheck(r.Context(), db.CreateMemoryParams{
 		UserID:          userID,
 		Content:         req.Content,
@@ -210,6 +234,8 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		SourceMessageID: req.SourceMessageID,
 		Importance:      req.Importance,
 		Metadata:        req.Metadata,
+		Embedding:       newEmbedding,
+		EmbeddingModel:  newEmbeddingModel,
 	})
 
 	if errors.Is(err, db.ErrMemoryExists) {

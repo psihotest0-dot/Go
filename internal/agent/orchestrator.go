@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -487,26 +488,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		f.Flush()
 	}
 
-	// Check if Bulgarian language is strictly required by any rule
-	requiresBulgarian := false
-	for _, rule := range rules {
-		ruleLower := strings.ToLower(rule)
-		if strings.Contains(ruleLower, "български") || strings.Contains(ruleLower, "bulgarian") {
-			requiresBulgarian = true
-			break
-		}
-	}
-
 	var fullAssistantMessage strings.Builder
 	var toolCalls []openai.ToolCall
-
-	// Bonus: Bulgarian language enforcement vars
-	var initialBuffer strings.Builder
-	bufferMode := requiresBulgarian
-	charCount := 0
-	cyrillicCount := 0
-	langCheckDone := false
-	failedLangCheck := false
 
 	for {
 		resp, err := stream.Recv()
@@ -560,162 +543,19 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			if chunk != "" {
 				fullAssistantMessage.WriteString(chunk)
 
-				if bufferMode && !langCheckDone {
-					initialBuffer.WriteString(chunk)
-					for _, r := range chunk {
-						// Only count letters
-						if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= 'а' && r <= 'я') || (r >= 'А' && r <= 'Я') {
-							charCount++
-							if (r >= 'а' && r <= 'я') || (r >= 'А' && r <= 'Я') {
-								cyrillicCount++
-							}
-						}
-					}
-
-					// We have enough letters to judge
-					if charCount >= 50 {
-						langCheckDone = true
-						ratio := float64(cyrillicCount) / float64(charCount)
-						if ratio < 0.60 {
-							// Failed the language check. Cancel stream and fallback.
-							failedLangCheck = true
-							break // Break the inner loop, stream will close
-						} else {
-							// Passed. Flush the buffer.
-							dataMap := map[string]string{"content": initialBuffer.String()}
-							dataBytes, _ := json.Marshal(dataMap)
-							fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-							if f, ok := w.(http.Flusher); ok {
-								f.Flush()
-							}
-						}
-					}
-				} else {
-					// SSE format
-					dataMap := map[string]string{"content": chunk}
-					dataBytes, _ := json.Marshal(dataMap)
-					fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-					if f, ok := w.(http.Flusher); ok {
-						f.Flush()
-					} else {
-						slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
-						http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-						return
-					}
-				}
-			}
-		}
-		if failedLangCheck {
-			break
-		}
-	}
-
-	// Handle the case where the message ended before 50 letters were accumulated
-	if bufferMode && !langCheckDone && !failedLangCheck {
-		if charCount > 0 {
-			ratio := float64(cyrillicCount) / float64(charCount)
-			if ratio < 0.60 {
-				failedLangCheck = true
-			}
-		}
-
-		if !failedLangCheck && initialBuffer.Len() > 0 {
-			// Passed. Flush the buffer.
-			dataMap := map[string]string{"content": initialBuffer.String()}
-			dataBytes, _ := json.Marshal(dataMap)
-			fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-		}
-	}
-
-	if failedLangCheck {
-		// Close the current stream early explicitly, since we're breaking out
-		stream.Close()
-
-		// 7.1 Language Fallback Stream
-		finalMessages = append(finalMessages, openai.ChatCompletionMessage{
-			Role:    openai.ChatMessageRoleSystem,
-			Content: "Отговаряй САМО на български език!",
-		})
-
-		chatReqFallback := openai.ChatCompletionRequest{
-			Messages: finalMessages,
-			Stream:   true,
-			Tools:    tools, // still pass tools just in case
-		}
-
-		streamFb, err := o.llmClient.ChatStream(r.Context(), chatReqFallback)
-		if err != nil {
-			slog.Error("llm fallback stream failed", "err", err)
-			fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-			return
-		}
-		defer streamFb.Close()
-
-		fullAssistantMessage.Reset()
-
-		for {
-			respFb, err := streamFb.Recv()
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				// SSE format
+				dataMap := map[string]string{"content": chunk}
+				dataBytes, _ := json.Marshal(dataMap)
+				fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
-				}
-				break
-			}
-			if len(respFb.Choices) > 0 {
-				chunk := respFb.Choices[0].Delta.Content
-				if chunk != "" {
-					fullAssistantMessage.WriteString(chunk)
-
-					dataMap := map[string]string{"content": chunk}
-					dataBytes, _ := json.Marshal(dataMap)
-					fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
-					if f, ok := w.(http.Flusher); ok {
-						f.Flush()
-					}
+				} else {
+					slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
+					http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+					return
 				}
 			}
 		}
-
-		fmt.Fprintf(w, "data: [DONE]\n\n")
-		if f, ok := w.(http.Flusher); ok {
-			f.Flush()
-		}
-
-		// Save Assistant Message
-		contentToSave := fullAssistantMessage.String()
-		var dbSources []api.DBChunkInfo
-		for _, s := range sources {
-			dbSources = append(dbSources, api.DBChunkInfo{
-				ChunkID: s.ChunkID,
-				Score:   s.Score,
-			})
-		}
-		dbSourcesBytes, _ := json.Marshal(dbSources)
-
-		_, err = o.db.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
-			UserID:    userID,
-			SessionID: req.SessionID,
-			Role:      "assistant",
-			Content:   contentToSave,
-			SourceChunkIds: pqtype.NullRawMessage{
-				RawMessage: dbSourcesBytes,
-				Valid:      true,
-			},
-		})
-		if err != nil {
-			fmt.Printf("failed to save assistant fallback message: %v\n", err)
-		}
-		return
 	}
 
 	// Execute tool calls if any
@@ -815,7 +655,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 				}
 			}
 
-			fallbackFinalMessages := finalMessages
+			fallbackFinalMessages := slices.Clone(finalMessages)
 			fallbackFinalMessages = append(fallbackFinalMessages, openai.ChatCompletionMessage{
 				Role:    openai.ChatMessageRoleUser,
 				Content: "Отговори на въпроса на потребителя въз основа на намерените документи по-долу.\n\n" + toolResponses.String(),
