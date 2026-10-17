@@ -134,6 +134,8 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		return nil
 	}
 
+	processedCount := 0
+
 	for _, msg := range messages {
 		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
 			err = w.dbClient.Queries.MarkMessageAnalyzed(ctx, msg.ID)
@@ -167,7 +169,10 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		cancel()
-		break // strictly process 1 valid user message per job run
+		processedCount++
+		if processedCount >= 5 {
+			break
+		}
 	}
 	return nil
 }
@@ -250,20 +255,13 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 
 	status := "active"
 	if conflict != nil {
-		if fact.IsExplicitChange {
-			status = "active"
-			err = q.SupercedeMemory(ctx, db.SupercedeMemoryParams{
-				ID:     conflict.ID,
-				UserID: msg.UserID,
-			})
-			if err != nil {
-				return err
-			}
-		} else {
-			status = "active"
+		err = q.SupercedeMemory(ctx, db.SupercedeMemoryParams{
+			ID:     conflict.ID,
+			UserID: msg.UserID,
+		})
+		if err != nil {
+			return err
 		}
-	} else {
-		status = "active"
 	}
 
 	vectors, err := w.embedder.EmbedTexts(ctx, []string{fact.Statement})
