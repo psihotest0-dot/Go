@@ -767,30 +767,94 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 			}
 			return
 		}
-		defer stream2.Close()
 
-		for {
-			resp2, err := stream2.Recv()
-			if errors.Is(err, io.EOF) {
-				break
+		var secondCallText strings.Builder
+
+		func() {
+			defer stream2.Close()
+			for {
+				resp2, err := stream2.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+					if f, ok := w.(http.Flusher); ok {
+						f.Flush()
+					}
+					break
+				}
+				if len(resp2.Choices) > 0 {
+					chunk := resp2.Choices[0].Delta.Content
+					if chunk != "" {
+						secondCallText.WriteString(chunk)
+						fullAssistantMessage.WriteString(chunk)
+
+						dataMap := map[string]string{"content": chunk}
+						dataBytes, _ := json.Marshal(dataMap)
+						fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+						if f, ok := w.(http.Flusher); ok {
+							f.Flush()
+						}
+					}
+				}
 			}
+		}()
+
+		// Fallback third call if empty text after tool usage
+		if strings.TrimSpace(secondCallText.String()) == "" {
+			var toolResponses strings.Builder
+			for _, tcMsg := range finalMessages {
+				if tcMsg.Role == openai.ChatMessageRoleTool {
+					toolResponses.WriteString(tcMsg.Content)
+					toolResponses.WriteString("\n\n")
+				}
+			}
+
+			fallbackFinalMessages := finalMessages
+			fallbackFinalMessages = append(fallbackFinalMessages, openai.ChatCompletionMessage{
+				Role:    openai.ChatMessageRoleUser,
+				Content: "Отговори на въпроса на потребителя въз основа на намерените документи по-долу.\n\n" + toolResponses.String(),
+			})
+
+			chatReqFallbackTool := chatReq2
+			chatReqFallbackTool.Messages = fallbackFinalMessages
+			chatReqFallbackTool.Tools = nil // Force text generation
+
+			stream3, err := o.llmClient.ChatStream(r.Context(), chatReqFallbackTool)
 			if err != nil {
+				slog.Error("llm third stream failed", "err", err)
 				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 				if f, ok := w.(http.Flusher); ok {
 					f.Flush()
 				}
-				break
+				return
 			}
-			if len(resp2.Choices) > 0 {
-				chunk := resp2.Choices[0].Delta.Content
-				if chunk != "" {
-					fullAssistantMessage.WriteString(chunk)
+			defer stream3.Close()
 
-					dataMap := map[string]string{"content": chunk}
-					dataBytes, _ := json.Marshal(dataMap)
-					fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+			for {
+				resp3, err := stream3.Recv()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 					if f, ok := w.(http.Flusher); ok {
 						f.Flush()
+					}
+					break
+				}
+				if len(resp3.Choices) > 0 {
+					chunk := resp3.Choices[0].Delta.Content
+					if chunk != "" {
+						fullAssistantMessage.WriteString(chunk)
+
+						dataMap := map[string]string{"content": chunk}
+						dataBytes, _ := json.Marshal(dataMap)
+						fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+						if f, ok := w.(http.Flusher); ok {
+							f.Flush()
+						}
 					}
 				}
 			}
