@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -43,6 +44,10 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	r = r.WithContext(ctx)
 
 	userID, ok := r.Context().Value(api.ParsedUserIDKey).(uuid.UUID)
 	if !ok {

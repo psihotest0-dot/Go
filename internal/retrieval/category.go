@@ -87,26 +87,44 @@ func (cm *CategoryManager) initializeCentroids(ctx context.Context) error {
 		},
 	}
 
-	for cat, sentences := range categories {
-		vectors, err := cm.embedder.EmbedTexts(ctx, sentences)
-		if err != nil {
-			return fmt.Errorf("failed to embed sentences for category %s: %w", cat, err)
-		}
+	var allSentences []string
+	var catOrder []string
+	var sentencesPerCat []int
 
-		if len(vectors) == 0 {
+	for cat, sentences := range categories {
+		catOrder = append(catOrder, cat)
+		sentencesPerCat = append(sentencesPerCat, len(sentences))
+		allSentences = append(allSentences, sentences...)
+	}
+
+	vectors, err := cm.embedder.EmbedTexts(ctx, allSentences)
+	if err != nil {
+		return fmt.Errorf("failed to embed sentences for categories: %w", err)
+	}
+
+	if len(vectors) != len(allSentences) {
+		return fmt.Errorf("expected %d vectors, got %d", len(allSentences), len(vectors))
+	}
+
+	offset := 0
+	for i, cat := range catOrder {
+		count := sentencesPerCat[i]
+		if count == 0 {
 			continue
 		}
 
-		// Calculate centroid (average of vectors)
-		vecLen := len(vectors[0])
+		catVectors := vectors[offset : offset+count]
+		offset += count
+
+		vecLen := len(catVectors[0])
 		centroid := make([]float32, vecLen)
-		for _, vec := range vectors {
-			for i := 0; i < vecLen; i++ {
-				centroid[i] += vec[i]
+		for _, vec := range catVectors {
+			for j := 0; j < vecLen; j++ {
+				centroid[j] += vec[j]
 			}
 		}
-		for i := 0; i < vecLen; i++ {
-			centroid[i] /= float32(len(vectors))
+		for j := 0; j < vecLen; j++ {
+			centroid[j] /= float32(len(catVectors))
 		}
 
 		cm.centroids[cat] = centroid
