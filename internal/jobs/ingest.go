@@ -89,6 +89,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	chunks := w.chunkText(text, chunkSize, overlap)
 
+	var allVectors [][]float32
 	batchSize := 50
 	for i := 0; i < len(chunks); i += batchSize {
 		end := i + batchSize
@@ -111,6 +112,8 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 				vectors = append(vectors, make([]float32, 384))
 			}
 		}
+
+		allVectors = append(allVectors, vectors...)
 
 		var fileIDs []uuid.UUID
 		var userIDs []uuid.UUID
@@ -141,15 +144,17 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	if !file.ManualOverride && w.catMgr != nil {
 		votes := make(map[string]int)
-		for i, chunk := range chunks {
+		for i, _ := range chunks {
 			if i >= 30 {
 				break
 			}
-			vecs, err := w.embedder.EmbedTexts(ctx, []string{chunk})
-			if err != nil || len(vecs) == 0 {
+			if i >= len(allVectors) {
+				break
+			}
+			vec := allVectors[i]
+			if len(vec) == 0 {
 				continue
 			}
-			vec := vecs[0]
 
 			bestCat := "general"
 			bestScore := float32(-1.0)
