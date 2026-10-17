@@ -182,7 +182,7 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 	req := openai.ChatCompletionRequest{
 		Messages: []openai.ChatCompletionMessage{
 			{
-				Role:    openai.ChatMessageRoleSystem,
+				Role:    openai.ChatMessageRoleUser,
 				Content: systemPrompt,
 			},
 			{
