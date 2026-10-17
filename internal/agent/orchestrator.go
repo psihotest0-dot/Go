@@ -240,10 +240,14 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	for i := len(historyMessages) - 1; i >= 0; i-- {
 		msgLen := utf8.RuneCountInString(historyMessages[i].Content)
+
 		// Prune if char limit exceeded or more than 10 messages kept
-		if (currentChars+msgLen > maxChars && len(reversedKeep) > 0) || len(reversedKeep) >= 10 {
-			oldMessages = historyMessages[:i+1]
-			break
+		// Ensure the latest user message is never pruned
+		if i != len(historyMessages)-1 {
+			if (currentChars+msgLen > maxChars && len(reversedKeep) > 0) || len(reversedKeep) >= 10 {
+				oldMessages = historyMessages[:i+1]
+				break
+			}
 		}
 		reversedKeep = append(reversedKeep, historyMessages[i])
 		currentChars += msgLen
@@ -307,7 +311,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 				summaryReq := openai.ChatCompletionRequest{
 					Messages: []openai.ChatCompletionMessage{
 						{
-							Role:    openai.ChatMessageRoleSystem,
+							Role:    openai.ChatMessageRoleUser,
 							Content: summaryPrompt,
 						},
 					},
