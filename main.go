@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 
@@ -180,9 +183,31 @@ func main() {
 
 	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(mux))
 
-	logger.Info("server listening on :8080")
-	if err := http.ListenAndServe(":8080", handler); err != nil {
-		logger.Error("server failed", slog.Any("error", err))
-		os.Exit(1)
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: handler,
+	}
+
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		logger.Info("server listening on :8080")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("server failed", slog.Any("error", err))
+			os.Exit(1)
+		}
+	}()
+
+	<-shutdownCtx.Done()
+	logger.Info("shutting down server gracefully...")
+
+	shutdownTimeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownTimeoutCtx); err != nil {
+		logger.Error("server shutdown failed", slog.Any("error", err))
+	} else {
+		logger.Info("server stopped gracefully")
 	}
 }
