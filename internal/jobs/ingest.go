@@ -105,12 +105,12 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, err)
 		}
 
-		// Check if vectors match the number of chunks. If not, pad with zero vectors.
+		// Check if vectors match the number of chunks. If not, return an error.
 		if len(vectors) != len(batchChunks) {
-			slog.Warn("Mismatch in vector count vs chunks in batch, padding with zeros", "expected", len(batchChunks), "got", len(vectors))
-			for len(vectors) < len(batchChunks) {
-				vectors = append(vectors, make([]float32, 384))
+			if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"}); updateErr != nil {
+				slog.Error("Failed to update status to failed", "file_id", file.ID, "error", updateErr)
 			}
+			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(batchChunks), len(vectors))
 		}
 
 		allVectors = append(allVectors, vectors...)
