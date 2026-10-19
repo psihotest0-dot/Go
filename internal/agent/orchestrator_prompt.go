@@ -110,5 +110,39 @@ func toolDefinitions() []openai.Tool {
 				},
 			},
 		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "web_search",
+				Description: "Search the web for a query and return a ranked list of structured results.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"query": map[string]interface{}{
+							"type":        "string",
+							"description": "The search query. Supports operators such as site:, -site:, and quoted phrases. Must contain 1 to 128 Unicode characters.",
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        "web_fetch",
+				Description: "Fetch a web page and return its title and content as Markdown.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"url": map[string]interface{}{
+							"type":        "string",
+							"description": "The URL to fetch. Must be at most 8192 characters and an HTTP or HTTPS URL with a host.",
+						},
+					},
+					"required": []string{"url"},
+				},
+			},
+		},
 	}
 }
