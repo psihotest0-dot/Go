@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -44,9 +48,89 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeSearchDocuments(ctx, userID, args)
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
+	case "web_search":
+		return r.executeWebSearch(ctx, args)
+	case "web_fetch":
+		return r.executeWebFetch(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
+}
+
+func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return nil, fmt.Errorf("invalid or missing 'query' argument")
+	}
+
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+
+	reqBody, _ := json.Marshal(map[string]interface{}{"query": query})
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.deepseek.com/v1/tools/search", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to perform search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("search API returned status %d: %v", resp.StatusCode, result)
+	}
+
+	return result, nil
+}
+
+func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	url, ok := args["url"].(string)
+	if !ok || url == "" {
+		return nil, fmt.Errorf("invalid or missing 'url' argument")
+	}
+
+	apiKey := os.Getenv("DEEPSEEK_API_KEY")
+
+	reqBody, _ := json.Marshal(map[string]interface{}{"url": url})
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.deepseek.com/v1/tools/fetch", bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to perform fetch request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch API returned status %d: %v", resp.StatusCode, result)
+	}
+
+	return result, nil
 }
 
 func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
