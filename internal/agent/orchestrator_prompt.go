@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"time"
+
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/prompts"
@@ -8,6 +10,7 @@ import (
 
 func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 	systemContent, err := prompts.GlobalManager.Render("chat_system.tmpl", map[string]interface{}{
+		"CurrentDate":      time.Now().Format("2006-01-02 15:04:05"),
 		"Rules":            ctx.Rules,
 		"TopMemories":      ctx.TopMemories,
 		"RollingSummary":   ctx.RollingSum,
@@ -120,7 +123,7 @@ func toolDefinitions() []openai.Tool {
 					"properties": map[string]interface{}{
 						"query": map[string]interface{}{
 							"type":        "string",
-							"description": "The search query. Supports operators such as site:, -site:, and quoted phrases. Must contain 1 to 128 Unicode characters.",
+							"description": "The search query. Supports operators such as site:, -site:, and quoted phrases. Append the current year or month if looking for recent news or events. Must contain 1 to 128 Unicode characters.",
 						},
 					},
 					"required": []string{"query"},
