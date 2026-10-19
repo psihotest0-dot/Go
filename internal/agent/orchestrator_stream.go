@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	openai "github.com/sashabaranov/go-openai"
 
@@ -129,6 +130,11 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, fi
 					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result", res)
 					resBytes, _ := json.Marshal(res)
 					contentStr = string(resBytes)
+
+					if utf8.RuneCountInString(contentStr) > 8192 {
+						runes := []rune(contentStr)
+						contentStr = string(runes[:8192]) + "... [TRUNCATED]"
+					}
 				}
 
 				finalMessages = append(finalMessages, openai.ChatCompletionMessage{
