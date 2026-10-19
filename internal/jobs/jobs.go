@@ -73,6 +73,10 @@ type MemoryConsolidationWorker struct {
 	embedder  llm.Embedder
 }
 
+func (w *MemoryConsolidationWorker) Timeout(job *river.Job[MemoryConsolidationArgs]) time.Duration {
+	return 15 * time.Minute
+}
+
 func NewMemoryConsolidationWorker(dbClient *db.Database, llmClient llm.LLMClient, embedder llm.Embedder) *MemoryConsolidationWorker {
 	return &MemoryConsolidationWorker{
 		dbClient:  dbClient,
@@ -149,7 +153,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			continue
 		}
 
-		msgCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		msgCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
 
 		facts, err := w.analyzeMessage(msgCtx, msg.Content)
 		if err != nil {
