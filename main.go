@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"go-monolith/internal/agent"
@@ -57,6 +58,8 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 }
 
 func main() {
+	_ = godotenv.Load()
+
 	logFile := &lumberjack.Logger{
 		Filename:   "backend.log",
 		MaxSize:    5, // megabytes
