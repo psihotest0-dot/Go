@@ -119,21 +119,21 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 }
 
 // ProcessChat executes the chat pipeline without HTTP dependencies.
-func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, error) {
+func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, string, error) {
 	ctx = context.WithValue(ctx, api.ParsedUserIDKey, userID)
 
 	if req.SessionID == "" || req.Content == "" {
-		return "", fmt.Errorf("session_id and content are required")
+		return "", "", fmt.Errorf("session_id and content are required")
 	}
 
 	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
 		slog.Error("failed to save user message", "err", err)
-		return "", fmt.Errorf("failed to save user message: %w", err)
+		return "", "", fmt.Errorf("failed to save user message: %w", err)
 	}
 
 	chatCtx, memoryIDs, err := o.loadContext(ctx, userID, req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	_ = o.writeTrace(ctx, userID, req.SessionID, "search", map[string]interface{}{
@@ -147,7 +147,7 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
 		slog.Error("failed to render system prompt", "err", err)
-		return "", fmt.Errorf("failed to render system prompt: %w", err)
+		return "", "", fmt.Errorf("failed to render system prompt: %w", err)
 	}
 
 	var finalMessages []openai.ChatCompletionMessage
@@ -161,9 +161,9 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 
 	tools := toolDefinitions()
 
-	assistantContent, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, chatCtx.Sources)
+	assistantContent, reasoningContent, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, chatCtx.Sources)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
@@ -173,5 +173,5 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 		"response_length": len(assistantContent),
 	})
 
-	return assistantContent, nil
+	return assistantContent, reasoningContent, nil
 }

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/google/uuid"
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"strings"
 
 	"go-monolith/internal/agent"
 )
@@ -73,14 +74,43 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	userID := b.generateDeterministicUUID(msg.Chat.ID)
-	sessionID := fmt.Sprintf("tg-%d", msg.Chat.ID)
+	if len(msg.Text) > 6 && msg.Text[:6] == "/link " {
+		uidStr := strings.TrimSpace(msg.Text[6:])
+		uid, err := uuid.Parse(uidStr)
+		if err != nil {
+			b.sendReply(msg.Chat.ID, "Невалиден UUID.")
+			return
+		}
 
-	if err := b.upsertUser(ctx, userID); err != nil {
-		slog.Error("Failed to upsert telegram user", slog.Any("error", err), slog.Int64("chat_id", msg.Chat.ID))
-		b.sendReply(msg.Chat.ID, "Възникна грешка при обработка на потребителя.")
+		if err := b.upsertUser(ctx, uid); err != nil {
+			slog.Error("Failed to upsert user", slog.Any("error", err))
+			b.sendReply(msg.Chat.ID, "Грешка при запазване на потребителя.")
+			return
+		}
+
+		_, err = b.dbPool.Exec(ctx, "INSERT INTO telegram_users (telegram_chat_id, user_id) VALUES ($1, $2) ON CONFLICT (telegram_chat_id) DO UPDATE SET user_id = EXCLUDED.user_id;", msg.Chat.ID, uid)
+		if err != nil {
+			slog.Error("Failed to link telegram user", slog.Any("error", err))
+			b.sendReply(msg.Chat.ID, "Възникна грешка при свързването.")
+			return
+		}
+
+		b.sendReply(msg.Chat.ID, "Успешно свързан с бекенда! Вече имам достъп до твоите документи и памет.")
 		return
 	}
+
+	var userID uuid.UUID
+	err := b.dbPool.QueryRow(ctx, "SELECT user_id FROM telegram_users WHERE telegram_chat_id = $1;", msg.Chat.ID).Scan(&userID)
+	if err != nil {
+		userID = b.generateDeterministicUUID(msg.Chat.ID)
+		if err := b.upsertUser(ctx, userID); err != nil {
+			slog.Error("Failed to upsert telegram user", slog.Any("error", err), slog.Int64("chat_id", msg.Chat.ID))
+			b.sendReply(msg.Chat.ID, "Възникна грешка при обработка на потребителя.")
+			return
+		}
+	}
+
+	sessionID := fmt.Sprintf("tg-%d", msg.Chat.ID)
 
 	req := agent.ChatRequest{
 		SessionID: sessionID,
@@ -91,14 +121,19 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	action := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
 	b.api.Send(action)
 
-	answer, err := b.orchestrator.ProcessChat(ctx, userID, req)
+	answer, reasoning, err := b.orchestrator.ProcessChat(ctx, userID, req)
 	if err != nil {
 		slog.Error("Failed to process telegram chat", slog.Any("error", err), slog.Int64("chat_id", msg.Chat.ID))
 		b.sendReply(msg.Chat.ID, "Възникна грешка при генерирането на отговор.")
 		return
 	}
 
-	b.sendReply(msg.Chat.ID, answer)
+	finalReply := answer
+	if reasoning != "" {
+		finalReply = "*Лили мисли:*\n" + reasoning + "\n\n" + answer
+	}
+
+	b.sendReply(msg.Chat.ID, finalReply)
 }
 
 func (b *Bot) sendReply(chatID int64, text string) {

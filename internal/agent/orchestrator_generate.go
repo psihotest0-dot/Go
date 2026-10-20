@@ -18,7 +18,7 @@ import (
 
 // generateResponse handles the LLM generation and tool calling logic, but unlike streamResponse, it
 // does not write SSE events to an HTTP ResponseWriter. Instead, it accumulates the result and returns it.
-func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (string, []openai.ToolCall, error) {
+func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (string, string, []openai.ToolCall, error) {
 	chatReq := openai.ChatCompletionRequest{
 		Messages: finalMessages,
 		Stream:   true,
@@ -28,11 +28,12 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 	stream, err := o.llmClient.ChatStream(ctx, chatReq)
 	if err != nil {
 		slog.Error("llm stream failed", "err", err)
-		return "", nil, err
+		return "", "", nil, err
 	}
 	defer stream.Close()
 
 	var fullAssistantMessage strings.Builder
+	var fullReasoningMessage strings.Builder
 	var toolCalls []openai.ToolCall
 
 	for {
@@ -42,11 +43,16 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 		}
 		if err != nil {
 			slog.Error("stream reading failed", "err", err)
-			return "", nil, err
+			return "", "", nil, err
 		}
 
 		if len(resp.Choices) > 0 {
 			delta := resp.Choices[0].Delta
+
+			reasoningChunk := delta.ReasoningContent
+			if reasoningChunk != "" {
+				fullReasoningMessage.WriteString(reasoningChunk)
+			}
 
 			if len(delta.ToolCalls) > 0 {
 				for _, tc := range delta.ToolCalls {
@@ -127,7 +133,7 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 		stream2, err := o.llmClient.ChatStream(ctx, chatReq2)
 		if err != nil {
 			slog.Error("llm second stream failed", "err", err)
-			return fullAssistantMessage.String(), toolCalls, err
+			return fullAssistantMessage.String(), fullReasoningMessage.String(), toolCalls, err
 		}
 
 		var secondCallText strings.Builder
@@ -143,6 +149,11 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 					break
 				}
 				if len(resp2.Choices) > 0 {
+					reasoningChunk := resp2.Choices[0].Delta.ReasoningContent
+					if reasoningChunk != "" {
+						fullReasoningMessage.WriteString(reasoningChunk)
+					}
+
 					chunk := resp2.Choices[0].Delta.Content
 					if chunk != "" {
 						secondCallText.WriteString(chunk)
@@ -174,7 +185,7 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 			stream3, err := o.llmClient.ChatStream(ctx, chatReqFallbackTool)
 			if err != nil {
 				slog.Error("llm third stream failed", "err", err)
-				return fullAssistantMessage.String(), toolCalls, err
+				return fullAssistantMessage.String(), fullReasoningMessage.String(), toolCalls, err
 			}
 			defer stream3.Close()
 
@@ -187,6 +198,11 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 					break
 				}
 				if len(resp3.Choices) > 0 {
+					reasoningChunk := resp3.Choices[0].Delta.ReasoningContent
+					if reasoningChunk != "" {
+						fullReasoningMessage.WriteString(reasoningChunk)
+					}
+
 					chunk := resp3.Choices[0].Delta.Content
 					if chunk != "" {
 						fullAssistantMessage.WriteString(chunk)
@@ -196,5 +212,5 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 		}
 	}
 
-	return fullAssistantMessage.String(), toolCalls, nil
+	return fullAssistantMessage.String(), fullReasoningMessage.String(), toolCalls, nil
 }
