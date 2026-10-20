@@ -88,6 +88,20 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, fi
 				}
 			}
 
+			reasoningChunk := delta.ReasoningContent
+			if reasoningChunk != "" {
+				dataMap := map[string]string{"reasoning_content": reasoningChunk}
+				dataBytes, _ := json.Marshal(dataMap)
+				fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				} else {
+					slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
+					http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+					return "", nil, errors.New("streaming unsupported")
+				}
+			}
+
 			chunk := delta.Content
 			if chunk != "" {
 				fullAssistantMessage.WriteString(chunk)
@@ -178,6 +192,16 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, fi
 					break
 				}
 				if len(resp2.Choices) > 0 {
+					reasoningChunk := resp2.Choices[0].Delta.ReasoningContent
+					if reasoningChunk != "" {
+						dataMap := map[string]string{"reasoning_content": reasoningChunk}
+						dataBytes, _ := json.Marshal(dataMap)
+						fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+						if f, ok := w.(http.Flusher); ok {
+							f.Flush()
+						}
+					}
+
 					chunk := resp2.Choices[0].Delta.Content
 					if chunk != "" {
 						secondCallText.WriteString(chunk)
@@ -237,6 +261,16 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, fi
 					break
 				}
 				if len(resp3.Choices) > 0 {
+					reasoningChunk := resp3.Choices[0].Delta.ReasoningContent
+					if reasoningChunk != "" {
+						dataMap := map[string]string{"reasoning_content": reasoningChunk}
+						dataBytes, _ := json.Marshal(dataMap)
+						fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
+						if f, ok := w.(http.Flusher); ok {
+							f.Flush()
+						}
+					}
+
 					chunk := resp3.Choices[0].Delta.Content
 					if chunk != "" {
 						fullAssistantMessage.WriteString(chunk)
