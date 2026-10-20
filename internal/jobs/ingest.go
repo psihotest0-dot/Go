@@ -131,6 +131,11 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			userIDs = append(userIDs, file.UserID)
 			chunkIndices = append(chunkIndices, int32(i+j))
 			texts = append(texts, chunk)
+
+			if len(vectors[j]) != 384 {
+				w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+				return fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
+			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
 		}
 
