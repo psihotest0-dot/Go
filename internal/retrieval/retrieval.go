@@ -45,6 +45,9 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 	if len(vectors) == 0 {
 		return db.Memory{}, fmt.Errorf("no embedding returned")
 	}
+	if len(vectors[0]) != 384 {
+		return db.Memory{}, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
+	}
 
 	pgVec := pgvector.NewVector(vectors[0])
 
@@ -88,7 +91,7 @@ func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID,
 	var results []SearchResult
 
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
-	if err != nil || len(vectors) == 0 {
+	if err != nil || len(vectors) == 0 || len(vectors[0]) != 384 {
 		fmt.Printf("Fallback to text search memories due to embedder error: %v\n", err)
 		params := db.SearchTextMemoriesParams{
 			UserID:     userID,
@@ -147,7 +150,7 @@ func (s *RetrievalService) SearchChunks(ctx context.Context, userID uuid.UUID, q
 	var results []SearchResult
 
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
-	if err != nil || len(vectors) == 0 {
+	if err != nil || len(vectors) == 0 || len(vectors[0]) != 384 {
 		fmt.Printf("Fallback to text search chunks due to embedder error: %v\n", err)
 		params := db.SearchTextChunksParams{
 			UserID:     userID,
