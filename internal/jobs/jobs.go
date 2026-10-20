@@ -277,7 +277,7 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		return err
 	}
 	var vec pgvector.Vector
-	if len(vectors) > 0 {
+	if len(vectors) > 0 && len(vectors[0]) == 384 {
 		vec = pgvector.NewVector(vectors[0])
 	} else {
 		vec = pgvector.NewVector(make([]float32, 384))

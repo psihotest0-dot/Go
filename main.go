@@ -22,6 +22,7 @@ import (
 	"go-monolith/internal/llm"
 	"go-monolith/internal/prompts"
 	"go-monolith/internal/retrieval"
+	"go-monolith/internal/telegram"
 )
 
 type LevelFilterHandler struct {
@@ -129,6 +130,16 @@ func main() {
 	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
 	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database)
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
+
+	if cfg.TelegramBotToken != "" {
+		tgBot, err := telegram.NewBot(cfg.TelegramBotToken, orchestrator, database.Pool)
+		if err != nil {
+			logger.Error("failed to initialize telegram bot", slog.Any("error", err))
+		} else {
+			go tgBot.Start(ctx)
+		}
+	}
+
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", apiService.HealthzHandler)
