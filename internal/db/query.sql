@@ -47,14 +47,18 @@ RETURNING *;
 WITH vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
     FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
+    WHERE memories.user_id = sqlc.arg('user_id')
+      AND memories.status IN ('active', 'candidate')
+      AND (memories.embedding <=> sqlc.arg('embedding')) < 0.45
     ORDER BY rank
     LIMIT 100
 ),
 text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
     FROM memories
-    WHERE memories.user_id = sqlc.arg('user_id') AND memories.status IN ('active', 'candidate')
+    WHERE memories.user_id = sqlc.arg('user_id')
+      AND memories.status IN ('active', 'candidate')
+      AND similarity(content, sqlc.arg('query_text')) > 0.15
     ORDER BY rank
     LIMIT 100
 )
