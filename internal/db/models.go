@@ -118,6 +118,11 @@ type RiverMigration struct {
 	VersionLine string    `json:"version_line"`
 }
 
+type TelegramUser struct {
+	TelegramChatID int64     `json:"telegram_chat_id"`
+	UserID         uuid.UUID `json:"user_id"`
+}
+
 type User struct {
 	ID        uuid.UUID    `json:"id"`
 	CreatedAt sql.NullTime `json:"created_at"`
