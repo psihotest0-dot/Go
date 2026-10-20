@@ -985,14 +985,18 @@ const searchHybridMemories = `-- name: SearchHybridMemories :many
 WITH vector_search AS (
     SELECT id, RANK() OVER (ORDER BY memories.embedding <=> $3) as rank
     FROM memories
-    WHERE memories.user_id = $1 AND memories.status IN ('active', 'candidate')
+    WHERE memories.user_id = $1
+      AND memories.status IN ('active', 'candidate')
+      AND (memories.embedding <=> $3) < 0.45
     ORDER BY rank
     LIMIT 100
 ),
 text_search AS (
     SELECT id, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank
     FROM memories
-    WHERE memories.user_id = $1 AND memories.status IN ('active', 'candidate')
+    WHERE memories.user_id = $1
+      AND memories.status IN ('active', 'candidate')
+      AND similarity(content, $4) > 0.15
     ORDER BY rank
     LIMIT 100
 )
