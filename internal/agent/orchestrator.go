@@ -120,6 +120,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 // ProcessChat executes the chat pipeline without HTTP dependencies.
 func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, error) {
+	ctx = context.WithValue(ctx, api.ParsedUserIDKey, userID)
+
 	if req.SessionID == "" || req.Content == "" {
 		return "", fmt.Errorf("session_id and content are required")
 	}
