@@ -5,10 +5,11 @@ import (
 )
 
 type Config struct {
-	LLMBaseURL  string
-	EmbedderURL string
-	EmbedModel  string
-	DatabaseURL string
+	LLMBaseURL       string
+	EmbedderURL      string
+	EmbedModel       string
+	DatabaseURL      string
+	TelegramBotToken string
 }
 
 func Load() *Config {
@@ -17,9 +18,10 @@ func Load() *Config {
 		dbURL = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 	}
 	return &Config{
-		LLMBaseURL:  os.Getenv("LLM_BASE_URL"),
-		EmbedderURL: os.Getenv("EMBEDDER_URL"),
-		EmbedModel:  os.Getenv("EMBED_MODEL"),
-		DatabaseURL: dbURL,
+		LLMBaseURL:       os.Getenv("LLM_BASE_URL"),
+		EmbedderURL:      os.Getenv("EMBEDDER_URL"),
+		EmbedModel:       os.Getenv("EMBED_MODEL"),
+		DatabaseURL:      dbURL,
+		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 	}
 }
