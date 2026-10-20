@@ -736,6 +736,17 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 	return items, nil
 }
 
+const getTelegramUser = `-- name: GetTelegramUser :one
+SELECT user_id FROM telegram_users WHERE telegram_chat_id = $1
+`
+
+func (q *Queries) GetTelegramUser(ctx context.Context, telegramChatID int64) (uuid.UUID, error) {
+	row := q.db.QueryRowContext(ctx, getTelegramUser, telegramChatID)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
+}
+
 const getTopMemories = `-- name: GetTopMemories :many
 SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
 WHERE user_id = $1 AND status IN ('active', 'candidate')
@@ -851,6 +862,22 @@ func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const linkTelegramUser = `-- name: LinkTelegramUser :exec
+INSERT INTO telegram_users (telegram_chat_id, user_id)
+VALUES ($1, $2)
+ON CONFLICT (telegram_chat_id) DO UPDATE SET user_id = EXCLUDED.user_id
+`
+
+type LinkTelegramUserParams struct {
+	TelegramChatID int64     `json:"telegram_chat_id"`
+	UserID         uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) LinkTelegramUser(ctx context.Context, arg LinkTelegramUserParams) error {
+	_, err := q.db.ExecContext(ctx, linkTelegramUser, arg.TelegramChatID, arg.UserID)
+	return err
 }
 
 const markMessageAnalyzed = `-- name: MarkMessageAnalyzed :exec
