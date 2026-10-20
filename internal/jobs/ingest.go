@@ -99,18 +99,23 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 		batchChunks := chunks[i:end]
 
-		vectors, err := w.embedder.EmbedTexts(ctx, batchChunks)
+		var enrichedBatch []string
+		for _, chunk := range batchChunks {
+			enrichedBatch = append(enrichedBatch, fmt.Sprintf("Файл: %s. Съдържание: %s", file.FileName, chunk))
+		}
+
+		vectors, err := w.embedder.EmbedTexts(ctx, enrichedBatch)
 		if err != nil {
 			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
 			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, err)
 		}
 
 		// Check if vectors match the number of chunks. If not, return an error.
-		if len(vectors) != len(batchChunks) {
+		if len(vectors) != len(enrichedBatch) {
 			if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"}); updateErr != nil {
 				slog.Error("Failed to update status to failed", "file_id", file.ID, "error", updateErr)
 			}
-			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(batchChunks), len(vectors))
+			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors))
 		}
 
 		allVectors = append(allVectors, vectors...)
