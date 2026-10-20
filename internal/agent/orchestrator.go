@@ -117,3 +117,59 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		"response_length": len(assistantContent),
 	})
 }
+
+// ProcessChat executes the chat pipeline without HTTP dependencies.
+func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, error) {
+	if req.SessionID == "" || req.Content == "" {
+		return "", fmt.Errorf("session_id and content are required")
+	}
+
+	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
+		slog.Error("failed to save user message", "err", err)
+		return "", fmt.Errorf("failed to save user message: %w", err)
+	}
+
+	chatCtx, memoryIDs, err := o.loadContext(ctx, userID, req)
+	if err != nil {
+		return "", err
+	}
+
+	_ = o.writeTrace(ctx, userID, req.SessionID, "search", map[string]interface{}{
+		"query":      req.Content,
+		"memory_ids": memoryIDs,
+	})
+
+	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
+	chatCtx.RollingSum = o.rollingSummary(ctx, req.SessionID, oldMessages, droppedCount)
+
+	systemMessage, err := buildSystemPrompt(chatCtx)
+	if err != nil {
+		slog.Error("failed to render system prompt", "err", err)
+		return "", fmt.Errorf("failed to render system prompt: %w", err)
+	}
+
+	var finalMessages []openai.ChatCompletionMessage
+	finalMessages = append(finalMessages, systemMessage)
+	finalMessages = append(finalMessages, history...)
+
+	_ = o.writeTrace(ctx, userID, req.SessionID, "prune", map[string]interface{}{
+		"total_messages": len(chatCtx.History) + 1,
+		"pruned_to":      len(finalMessages),
+	})
+
+	tools := toolDefinitions()
+
+	assistantContent, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, chatCtx.Sources)
+	if err != nil {
+		return "", err
+	}
+
+	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
+	_ = o.persistAssistantMessage(context.Background(), userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+
+	_ = o.writeTrace(context.Background(), userID, req.SessionID, "stream_end", map[string]interface{}{
+		"response_length": len(assistantContent),
+	})
+
+	return assistantContent, nil
+}
