@@ -17,49 +17,45 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	var chatCtx chatContext
 	var memoryIDs []string
 
-	// Search Memories
-	memories, errM := o.retrieval.SearchMemories(ctx, userID, req.Content, 5)
+	// Call new SearchAll method
+	memories, chunks, errM := o.retrieval.SearchAll(ctx, userID, req.Content, 5)
 	if errM != nil {
-		slog.Warn("Failed to search memories", "error", errM)
-	} else {
-		for _, m := range memories {
-			chatCtx.Memories = append(chatCtx.Memories, m.Content)
-			memoryIDs = append(memoryIDs, m.ID.String())
-			chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
-				ChunkID:        m.ID,
-				FileName:       "Памет (Memory)",
-				ContentSnippet: m.Content,
-				Score:          m.Score,
-				SourceType:     "memory",
-			})
-		}
+		slog.Warn("Failed to search all", "error", errM)
 	}
 
-	// Search Chunks
-	chunks, errC := o.retrieval.SearchChunks(ctx, userID, req.Content, 5)
-	if errC == nil {
-		for _, c := range chunks {
-			chatCtx.Chunks = append(chatCtx.Chunks, c.Content)
+	for _, m := range memories {
+		chatCtx.Memories = append(chatCtx.Memories, m.Content)
+		memoryIDs = append(memoryIDs, m.ID.String())
+		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
+			ChunkID:        m.ID,
+			FileName:       "Памет (Memory)",
+			ContentSnippet: m.Content,
+			Score:          m.Score,
+			SourceType:     "memory",
+		})
+	}
 
-			snippet := c.Content
-			sourceType := "text"
-			if strings.Contains(snippet, "[source: \"ocr\"]") {
-				sourceType = "ocr"
-				snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
-			}
-			snippet = strings.TrimSpace(snippet)
-			if len(snippet) > 600 {
-				snippet = snippet[:600] + "..."
-			}
+	for _, c := range chunks {
+		chatCtx.Chunks = append(chatCtx.Chunks, c.Content)
 
-			chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
-				ChunkID:        c.ID,
-				FileName:       c.FileName,
-				ContentSnippet: snippet,
-				Score:          c.Score,
-				SourceType:     sourceType,
-			})
+		snippet := c.Content
+		sourceType := "text"
+		if strings.Contains(snippet, "[source: \"ocr\"]") {
+			sourceType = "ocr"
+			snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
 		}
+		snippet = strings.TrimSpace(snippet)
+		if len(snippet) > 600 {
+			snippet = snippet[:600] + "..."
+		}
+
+		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
+			ChunkID:        c.ID,
+			FileName:       c.FileName,
+			ContentSnippet: snippet,
+			Score:          c.Score,
+			SourceType:     sourceType,
+		})
 	}
 
 	// Deduplicate based on ChunkID
