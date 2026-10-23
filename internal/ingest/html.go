@@ -32,6 +32,15 @@ func (e *HTMLExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 	}
 
 	var buf strings.Builder
+
+	isBlockElement := func(tag string) bool {
+		switch tag {
+		case "p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "article", "section", "blockquote":
+			return true
+		}
+		return false
+	}
+
 	var f func(*html.Node)
 	f = func(n *html.Node) {
 		if n.Type == html.TextNode {
@@ -39,11 +48,15 @@ func (e *HTMLExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 			if text != "" {
 				buf.WriteString(text + " ")
 			}
-		} else if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style") {
+		} else if n.Type == html.ElementNode && (n.Data == "script" || n.Data == "style" || n.Data == "noscript" || n.Data == "template") {
 			return
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			f(c)
+		}
+
+		if n.Type == html.ElementNode && isBlockElement(n.Data) {
+			buf.WriteString("\n\n")
 		}
 	}
 	f(doc)

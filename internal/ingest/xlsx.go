@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/xuri/excelize/v2"
@@ -38,6 +39,7 @@ func (e *XLSXExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 	for _, sheet := range sheets {
 		rows, err := f.GetRows(sheet)
 		if err != nil {
+			slog.Warn("failed to get rows for sheet", slog.String("sheet", sheet), slog.Any("error", err))
 			continue
 		}
 		for _, row := range rows {
