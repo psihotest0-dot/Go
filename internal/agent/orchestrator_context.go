@@ -19,7 +19,9 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 
 	// Search Memories
 	memories, errM := o.retrieval.SearchMemories(ctx, userID, req.Content, 5)
-	if errM == nil {
+	if errM != nil {
+		slog.Warn("Failed to search memories", "error", errM)
+	} else {
 		for _, m := range memories {
 			chatCtx.Memories = append(chatCtx.Memories, m.Content)
 			memoryIDs = append(memoryIDs, m.ID.String())
@@ -100,13 +102,17 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
+		Limit:     maxHistoryMessages,
 	})
 	if err != nil {
 		slog.Error("failed to get messages", "err", err)
 		return chatCtx, memoryIDs, err
 	}
 
-	for _, m := range dbMsgs {
+	// dbMsgs are returned in DESC order (newest first).
+	// We need them in ASC order (oldest first) for the prompt history.
+	for i := len(dbMsgs) - 1; i >= 0; i-- {
+		m := dbMsgs[i]
 		msg := openai.ChatCompletionMessage{
 			Role:    m.Role,
 			Content: m.Content,
