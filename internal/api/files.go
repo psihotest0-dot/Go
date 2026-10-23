@@ -108,9 +108,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		err = os.WriteFile(localPath, fileBytes, 0644)
-		if err != nil {
-			slog.Error("failed to save file locally", slog.Any("error", err))
+		ioErr := os.WriteFile(localPath, fileBytes, 0644)
+		if ioErr != nil {
+			slog.Error("failed to save file locally", slog.Any("error", ioErr))
 			_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
 				ID:     ingestedFile.ID,
 				Status: "failed",
@@ -121,11 +121,11 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		}
 
 		if riverClient != nil {
-			_, err = riverClient.Insert(r.Context(), jobs.IngestFileArgs{
+			_, jobErr := riverClient.Insert(r.Context(), jobs.IngestFileArgs{
 				FileID: ingestedFile.ID,
 			}, nil)
-			if err != nil {
-				slog.Error("failed to enqueue ingest job", slog.Any("error", err))
+			if jobErr != nil {
+				slog.Error("failed to enqueue ingest job", slog.Any("error", jobErr))
 				_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
 					ID:     ingestedFile.ID,
 					Status: "failed",
