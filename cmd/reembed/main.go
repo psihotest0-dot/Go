@@ -33,15 +33,14 @@ func main() {
 
 	embedder := llm.NewHTTPEmbedder(database)
 
-	offset := int32(0)
 	limit := int32(*batchSize)
 
 	logger.Info("Starting re-embedding process", slog.Int("batch_size", *batchSize))
 
 	for {
 		memories, err := database.Queries.GetAllMemoriesForReembedding(ctx, db.GetAllMemoriesForReembeddingParams{
-			Limit:  limit,
-			Offset: offset,
+			EmbeddingModel: *modelName,
+			Limit:          limit,
 		})
 		if err != nil {
 			logger.Error("failed to get memories", slog.Any("error", err))
@@ -70,6 +69,7 @@ func main() {
 					Embedding:      pgVec,
 					EmbeddingModel: *modelName,
 					ID:             mem.ID,
+					UserID:         mem.UserID,
 				})
 				if err != nil {
 					logger.Error("failed to update memory embedding", slog.Any("error", err), slog.Any("id", mem.ID))
@@ -77,8 +77,7 @@ func main() {
 			}
 		}
 
-		offset += limit
-		logger.Info("processed batch", slog.Int("offset", int(offset)))
+		logger.Info("processed batch")
 	}
 
 	logger.Info("re-embedding process complete")
