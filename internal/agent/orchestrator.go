@@ -161,7 +161,7 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 
 	tools := toolDefinitions()
 
-	assistantContent, reasoningContent, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, chatCtx.Sources)
+	assistantContent, reasoningContent, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, chatCtx.Sources, nil)
 	if err != nil {
 		return "", "", err
 	}
