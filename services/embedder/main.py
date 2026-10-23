@@ -1,7 +1,8 @@
 import os
 import sys
+import threading
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from typing import List
 from sentence_transformers import SentenceTransformer
 
@@ -16,6 +17,7 @@ app = FastAPI(title="CPU Embedding Service")
 
 # Global variable to hold the model
 model = None
+_model_lock = threading.Lock()
 
 @app.on_event("startup")
 def load_model():
@@ -33,7 +35,18 @@ def load_model():
         sys.exit(1)
 
 class EmbedRequest(BaseModel):
-    texts: List[str]
+    texts: List[str] = Field(
+        ...,
+        max_length=256,
+        description="List of texts to embed. Maximum 256 texts."
+    )
+
+    @field_validator('texts')
+    def check_text_length(cls, v):
+        for text in v:
+            if len(text) > 10000:
+                raise ValueError("Each text must be at most 10000 characters long")
+        return v
 
 @app.post("/embed")
 def embed(request: EmbedRequest):
@@ -42,10 +55,15 @@ def embed(request: EmbedRequest):
 
     # Process in batches
     vectors = []
-    for i in range(0, len(request.texts), MAX_BATCH_SIZE):
-        batch_texts = request.texts[i:i + MAX_BATCH_SIZE]
-        embeddings = model.encode(batch_texts, convert_to_numpy=True)
-        vectors.extend(embeddings.tolist())
+    with _model_lock:
+        for i in range(0, len(request.texts), MAX_BATCH_SIZE):
+            batch_texts = request.texts[i:i + MAX_BATCH_SIZE]
+            embeddings = model.encode(
+                batch_texts,
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            )
+            vectors.extend(embeddings.tolist())
 
     return {
         "model": MODEL_NAME,
