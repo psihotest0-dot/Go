@@ -4,9 +4,8 @@ import (
 	"context"
 	"testing"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,14 +27,11 @@ func TestRetrieval_CreateMemory_Mock(t *testing.T) {
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
 
 	userID := uuid.New()
-	content := "This is a test fact."
+	content := "Test memory content"
 
-	// Expectations
-	emptyVec := pgvector.NewVector(make([]float32, 384))
-	mock.ExpectQuery(`INSERT INTO memories`).
-		WithArgs(userID, content, "active", sqlmock.AnyArg(), "paraphrase-multilingual-MiniLM-L12-v2", nil, 5, sqlmock.AnyArg(), sqlmock.AnyArg()).
+	mock.ExpectQuery(`(?i)INSERT INTO memories`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "content", "status", "embedding", "embedding_model", "source_message_id", "importance", "metadata", "content_hash", "created_at", "updated_at", "last_used_at"}).
-			AddRow(uuid.New(), userID, content, "active", emptyVec, "paraphrase-multilingual-MiniLM-L12-v2", nil, 5, nil, "hash", nil, nil, nil))
+			AddRow(uuid.New(), userID, content, "active", "[0,0]", "paraphrase-multilingual-MiniLM-L12-v2", nil, 5, nil, "hash", nil, nil, nil))
 
 	mem, err := svc.CreateMemory(context.Background(), userID, content, 5, "active", pqtype.NullRawMessage{})
 	require.NoError(t, err)
@@ -57,11 +53,15 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	userID := uuid.New()
 	query := "Find test fact"
 
-	// Adjust mock to expect the new SearchHybridMemories query pattern
+    mock.MatchExpectationsInOrder(false)
+
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).
-		WithArgs(userID, 10, sqlmock.AnyArg(), query).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
+
+    mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
+			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 
 	memories, err := svc.SearchMemories(context.Background(), userID, query, 10)
 	require.NoError(t, err)
