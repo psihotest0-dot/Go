@@ -1,0 +1,40 @@
+<<<<<<< SEARCH
+		// Update cache and result
+		for i, vec := range embedResp.Vectors {
+			origIdx := indicesToEmbed[i]
+			chunkVectors[origIdx] = vec
+
+			h := hashContent(textsToEmbed[i])
+			pgVec := pgvector.NewVector(vec)
+
+			_, cacheErr := c.db.Queries.CreateEmbeddingCache(ctx, db.CreateEmbeddingCacheParams{
+				ContentHash: h,
+				Embedding:   pgVec,
+			})
+			if cacheErr != nil && !errors.Is(cacheErr, sql.ErrNoRows) {
+				// We can ignore unique constraint errors if two concurrent processes insert it
+			}
+		}
+=======
+		// Update cache and result
+		for i, vec := range embedResp.Vectors {
+			origIdx := indicesToEmbed[i]
+			chunkVectors[origIdx] = vec
+
+			h := hashContent(textsToEmbed[i])
+			pgVec := pgvector.NewVector(vec)
+
+			_, cacheErr := c.db.Queries.CreateEmbeddingCache(ctx, db.CreateEmbeddingCacheParams{
+				ContentHash: h,
+				Embedding:   pgVec,
+			})
+			if cacheErr != nil {
+				var pqErr *pq.Error
+				if errors.As(cacheErr, &pqErr) && pqErr.Code == "23505" {
+					// Ignore unique constraint violation
+				} else {
+					slog.Warn("Failed to cache embedding", "error", cacheErr, "hash", h)
+				}
+			}
+		}
+>>>>>>> REPLACE

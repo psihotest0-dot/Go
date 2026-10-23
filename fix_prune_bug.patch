@@ -1,0 +1,41 @@
+<<<<<<< SEARCH
+			// Now i is at the message preceding the tool block.
+			// It MUST be the assistant message with tool calls. Let's include it.
+			if i >= 0 && messages[i].Role == openai.ChatMessageRoleAssistant && len(messages[i].ToolCalls) > 0 {
+				// Include the assistant message
+				keptMessages = append([]openai.ChatCompletionMessage{messages[i]}, keptMessages...)
+
+				// Include the tool block
+				for j := i + 1; j <= toolBlockEnd; j++ {
+					keptMessages = append(keptMessages, messages[j])
+				}
+				i-- // move past the assistant message
+			} else {
+				// Fallback if structure is malformed: just include the tool block we found
+				for j := i + 1; j <= toolBlockEnd; j++ {
+					keptMessages = append(keptMessages, messages[j])
+				}
+				// i is already decremented
+			}
+=======
+			// Now i is at the message preceding the tool block.
+			// It MUST be the assistant message with tool calls. Let's include it.
+			var block []openai.ChatCompletionMessage
+			if i >= 0 && messages[i].Role == openai.ChatMessageRoleAssistant && len(messages[i].ToolCalls) > 0 {
+				// Include the assistant message
+				block = append(block, messages[i])
+
+				// Include the tool block
+				for j := i + 1; j <= toolBlockEnd; j++ {
+					block = append(block, messages[j])
+				}
+				i-- // move past the assistant message
+			} else {
+				// Fallback if structure is malformed: just include the tool block we found
+				for j := i + 1; j <= toolBlockEnd; j++ {
+					block = append(block, messages[j])
+				}
+				// i is already decremented
+			}
+			keptMessages = append(block, keptMessages...)
+>>>>>>> REPLACE
