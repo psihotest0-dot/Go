@@ -84,6 +84,10 @@ func main() {
 	logger.Info("loaded config", slog.String("db_url", cfg.DatabaseURL))
 
 	prompts.Init("prompts")
+	if err := prompts.GlobalManager.Preload("chat_system.tmpl"); err != nil {
+		logger.Error("failed to preload critical templates", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	ctx := context.Background()
 
