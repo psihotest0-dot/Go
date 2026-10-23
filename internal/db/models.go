@@ -6,8 +6,6 @@ package db
 
 import (
 	"database/sql"
-	"encoding/json"
-	"time"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -38,15 +36,6 @@ type EmbeddingCache struct {
 	ContentHash string          `json:"content_hash"`
 	Embedding   pgvector.Vector `json:"embedding"`
 	CreatedAt   sql.NullTime    `json:"created_at"`
-}
-
-type GlobalRule struct {
-	ID        int32     `json:"id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Key       string    `json:"key"`
-	Value     string    `json:"value"`
-	Enabled   bool      `json:"enabled"`
-	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type IngestedFile struct {
@@ -89,38 +78,6 @@ type Message struct {
 	CreatedAt      sql.NullTime          `json:"created_at"`
 	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
 	IsAnalyzed     bool                  `json:"is_analyzed"`
-}
-
-type RiverJob struct {
-	ID           int64                 `json:"id"`
-	CreatedAt    time.Time             `json:"created_at"`
-	State        string                `json:"state"`
-	Attempt      int32                 `json:"attempt"`
-	MaxAttempts  int32                 `json:"max_attempts"`
-	AttemptedAt  sql.NullTime          `json:"attempted_at"`
-	FinalizedAt  sql.NullTime          `json:"finalized_at"`
-	Queue        string                `json:"queue"`
-	Priority     int32                 `json:"priority"`
-	Args         json.RawMessage       `json:"args"`
-	AttemptedBy  pqtype.NullRawMessage `json:"attempted_by"`
-	Errors       pqtype.NullRawMessage `json:"errors"`
-	Tags         []string              `json:"tags"`
-	ScheduledAt  time.Time             `json:"scheduled_at"`
-	Kind         string                `json:"kind"`
-	UniqueKey    []byte                `json:"unique_key"`
-	UniqueStates interface{}           `json:"unique_states"`
-}
-
-type RiverMigration struct {
-	ID          int64     `json:"id"`
-	CreatedAt   time.Time `json:"created_at"`
-	Version     int64     `json:"version"`
-	VersionLine string    `json:"version_line"`
-}
-
-type TelegramUser struct {
-	TelegramChatID int64     `json:"telegram_chat_id"`
-	UserID         uuid.UUID `json:"user_id"`
 }
 
 type User struct {

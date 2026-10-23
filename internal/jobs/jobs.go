@@ -146,7 +146,10 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
-			err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), msg.ID)
+			err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), db.MarkMessageAnalyzedParams{
+				ID:     msg.ID,
+				UserID: msg.UserID,
+			})
 			if err != nil {
 				slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
 			}
@@ -171,7 +174,10 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			}
 		}
 
-		err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), msg.ID)
+		err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), db.MarkMessageAnalyzedParams{
+			ID:     msg.ID,
+			UserID: msg.UserID,
+		})
 		if err != nil {
 			slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
 		}

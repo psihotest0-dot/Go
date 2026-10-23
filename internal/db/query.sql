@@ -1,7 +1,7 @@
 -- name: GetTopMemories :many
 SELECT * FROM memories
 WHERE user_id = sqlc.arg('user_id') AND status IN ('active', 'candidate')
-ORDER BY importance DESC, last_used_at DESC
+ORDER BY importance DESC, last_used_at DESC NULLS LAST
 LIMIT sqlc.arg('limit');
 -- name: CreateUser :one
 INSERT INTO users DEFAULT VALUES RETURNING *;
@@ -98,7 +98,8 @@ RETURNING *;
 SELECT *
 FROM messages
 WHERE is_analyzed = FALSE AND user_id = $1
-ORDER BY created_at ASC;
+ORDER BY created_at ASC
+LIMIT 100;
 
 -- name: GetUsersWithUnanalyzedMessages :many
 SELECT DISTINCT user_id
@@ -106,7 +107,7 @@ FROM messages
 WHERE is_analyzed = FALSE;
 
 -- name: MarkMessageAnalyzed :exec
-UPDATE messages SET is_analyzed = TRUE WHERE id = $1;
+UPDATE messages SET is_analyzed = TRUE WHERE id = $1 AND user_id = $2;
 
 -- name: DeleteOldEmbeddingCache :execrows
 WITH deleted AS (
@@ -123,10 +124,10 @@ UPDATE memories
 SET status = 'superseded', updated_at = NOW()
 WHERE id = $1 AND user_id = $2;
 -- name: GetAllMemoriesForReembedding :many
-SELECT * FROM memories ORDER BY created_at ASC LIMIT $1 OFFSET $2;
+SELECT * FROM memories WHERE embedding_model != $1 LIMIT $2;
 
 -- name: UpdateMemoryEmbedding :exec
-UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3;
+UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3 AND user_id = $4;
 
 -- name: CreateIngestedFile :one
 INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
@@ -143,7 +144,7 @@ SELECT * FROM ingested_files WHERE id = $1;
 SELECT * FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC;
 
 -- name: UpdateIngestedFileStatus :exec
-UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1;
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3;
 
 -- name: CreateDocumentChunk :one
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
@@ -151,7 +152,7 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetDocumentChunksByFile :many
-SELECT * FROM document_chunks WHERE file_id = $1 ORDER BY chunk_index ASC;
+SELECT * FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC;
 
 
 -- name: DeleteIngestedFile :exec
@@ -171,10 +172,10 @@ SELECT
 SELECT c.*, f.file_name
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
-WHERE c.id = ANY(sqlc.arg('chunk_ids')::uuid[]);
+WHERE c.id = ANY(sqlc.arg('chunk_ids')::uuid[]) AND c.user_id = sqlc.arg('user_id');
 
 -- name: UpdateIngestedFileCategory :exec
-UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1;
+UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1 AND user_id = $3;
 
 -- name: UpdateIngestedFileCategoryAuto :exec
 UPDATE ingested_files SET category = $2, updated_at = NOW() WHERE id = $1 AND manual_override = false;
