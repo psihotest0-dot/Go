@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivermigrate"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
@@ -21,7 +22,8 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 	river.AddWorker(workers, NewEmbeddingCacheGCWorker(database))
 	river.AddWorker(workers, NewIngestFileWorker(database, embedder, catMgr))
 
-	riverClient, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
+	driver := riverpgxv5.New(pool)
+	riverClient, err := river.NewClient(driver, &river.Config{
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 100},
 		},
@@ -44,6 +46,15 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 		},
 	})
 	if err != nil {
+		return nil, err
+	}
+
+	migrator, err := rivermigrate.New(driver, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return nil, err
 	}
 
