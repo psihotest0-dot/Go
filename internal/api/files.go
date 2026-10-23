@@ -114,6 +114,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
 				ID:     ingestedFile.ID,
 				Status: "failed",
+				UserID: userID,
 			})
 			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
 			return
@@ -128,6 +129,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 				_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
 					ID:     ingestedFile.ID,
 					Status: "failed",
+				UserID: userID,
 				})
 			}
 		}
@@ -286,6 +288,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	err = a.db.Queries.UpdateIngestedFileCategory(r.Context(), db.UpdateIngestedFileCategoryParams{
 		ID:       fileID,
 		Category: req.Category,
+		UserID:   userID,
 	})
 	if err != nil {
 		slog.Error("failed to update file category", slog.Any("error", err))

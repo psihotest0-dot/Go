@@ -123,7 +123,10 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	chunksMap := make(map[uuid.UUID]db.GetDocumentChunksWithFileRow)
 	if len(allChunkIDs) > 0 {
-		chunks, err := a.db.Queries.GetDocumentChunksWithFile(r.Context(), allChunkIDs)
+		chunks, err := a.db.Queries.GetDocumentChunksWithFile(r.Context(), db.GetDocumentChunksWithFileParams{
+			ChunkIds: allChunkIDs,
+			UserID:   userID,
+		})
 		if err == nil {
 			for _, chunk := range chunks {
 				chunksMap[chunk.ID] = chunk
@@ -386,7 +389,10 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Embedding:      newEmbedding,
 			EmbeddingModel: newEmbeddingModel,
 		})
-		if err != nil {
+		if errors.Is(err, db.ErrMemoryExists) {
+			http.Error(w, "Memory already exists", http.StatusConflict)
+			return
+		} else if err != nil {
 			slog.Error("failed to update memory", slog.Any("error", err))
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

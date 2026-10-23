@@ -54,6 +54,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	err = w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{
 		ID:     file.ID,
 		Status: "processing",
+		UserID: file.UserID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update status to processing: %w", err)
@@ -61,7 +62,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	f, err := os.Open(file.LocalPath)
 	if err != nil {
-		w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+		w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed", UserID: file.UserID})
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 
@@ -106,13 +107,13 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 		vectors, err := w.embedder.EmbedTexts(ctx, enrichedBatch)
 		if err != nil {
-			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed", UserID: file.UserID})
 			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, err)
 		}
 
 		// Check if vectors match the number of chunks. If not, return an error.
 		if len(vectors) != len(enrichedBatch) {
-			if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"}); updateErr != nil {
+			if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed", UserID: file.UserID}); updateErr != nil {
 				slog.Error("Failed to update status to failed", "file_id", file.ID, "error", updateErr)
 			}
 			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors))
@@ -133,7 +134,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			texts = append(texts, chunk)
 
 			if len(vectors[j]) != 384 {
-				w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+				w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed", UserID: file.UserID})
 				return fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
 			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
@@ -147,7 +148,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			Embeddings:   embeddings,
 		})
 		if err != nil {
-			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed", UserID: file.UserID})
 			return fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err)
 		}
 	}
@@ -206,6 +207,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	err = w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{
 		ID:     file.ID,
 		Status: "completed",
+		UserID: file.UserID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update status to completed: %w", err)
