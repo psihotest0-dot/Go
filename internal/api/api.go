@@ -206,6 +206,23 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		req.Status = "candidate"
 	}
 
+	contentHash := db.GenerateHash(req.Content)
+	existingMem, err := a.db.Queries.GetMemoryByHash(r.Context(), db.GetMemoryByHashParams{
+		UserID:      userID,
+		ContentHash: contentHash,
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		slog.Error("failed to get memory by hash", slog.Any("error", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict) // 409 Conflict
+		json.NewEncoder(w).Encode(toMemoryDTO(existingMem))
+		return
+	}
+
 	var newEmbedding pgvector.Vector
 	var newEmbeddingModel string
 
