@@ -47,8 +47,8 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 		_ = os.Remove(tmpFile.Name())
 	}()
 
-	if _, err := tmpFile.Write(b); err != nil {
-		return "", fmt.Errorf("failed to write to temp file: %w", err)
+	if _, wErr := tmpFile.Write(b); wErr != nil {
+		return "", fmt.Errorf("failed to write to temp file: %w", wErr)
 	}
 
 	// 1. Try to extract text using pdftotext for the entire file
