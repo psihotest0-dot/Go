@@ -45,11 +45,8 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		return db.Memory{}, fmt.Errorf("failed to generate embedding: %w", err)
 	}
 
-	if len(vectors) == 0 {
+	if len(vectors) == 0 || len(vectors[0]) == 0 {
 		return db.Memory{}, fmt.Errorf("no embedding returned")
-	}
-	if len(vectors[0]) != 384 {
-		return db.Memory{}, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
 	}
 
 	pgVec := pgvector.NewVector(vectors[0])
@@ -100,8 +97,8 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	} else if len(vectors) == 0 {
 		slog.Error("embedder returned empty result")
 		fallback = true
-	} else if len(vectors[0]) != 384 {
-		return nil, nil, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
+	} else if len(vectors[0]) == 0 {
+		return nil, nil, fmt.Errorf("embedder returned zero-dimension vectors")
 	}
 
 	var memories []SearchResult

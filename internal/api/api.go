@@ -233,13 +233,8 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if len(vectors) == 0 {
+		if len(vectors) == 0 || len(vectors[0]) == 0 {
 			slog.Error("embedder returned no vectors")
-			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
-			return
-		}
-		if len(vectors[0]) != 384 {
-			slog.Error("embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
 			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 			return
 		}
@@ -381,13 +376,8 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			if len(vectors) == 0 {
+			if len(vectors) == 0 || len(vectors[0]) == 0 {
 				slog.Error("embedder returned no vectors")
-				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
-				return
-			}
-			if len(vectors[0]) != 384 {
-				slog.Error("embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
 				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 				return
 			}

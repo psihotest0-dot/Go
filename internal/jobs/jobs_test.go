@@ -119,3 +119,53 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	assert.True(t, superseded, "Old memory should be superseded")
 	assert.True(t, active, "New memory should be active")
 }
+
+type zeroDimEmbedder struct{}
+
+func (m *zeroDimEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	result := make([][]float32, len(texts))
+	for i := range texts {
+		result[i] = make([]float32, 0)
+	}
+	return result, nil
+}
+
+func TestMemoryConsolidationWorker_ZeroDimension(t *testing.T) {
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set")
+	}
+
+	ctx := context.Background()
+	database, err := db.Connect(ctx, dbURL)
+	require.NoError(t, err)
+
+	user, err := database.Queries.CreateUser(ctx)
+	require.NoError(t, err)
+
+	llmMock := &mockLLMClient{
+		responses: []string{
+			`[{"fact_key": "location", "value": "Sofia", "statement": "Живея в София", "is_explicit_change": false}]`,
+		},
+	}
+	embedderMock := &zeroDimEmbedder{}
+
+	worker := NewMemoryConsolidationWorker(database, llmMock, embedderMock)
+
+	sessionID := "sess-zerodim"
+	_, err = database.Queries.CreateMessage(ctx, db.CreateMessageParams{
+		UserID:    user.ID,
+		SessionID: sessionID,
+		Role:      "user",
+		Content:   "Живея в София",
+	})
+	require.NoError(t, err)
+
+	err = worker.Work(ctx, &river.Job[MemoryConsolidationArgs]{
+		Args: MemoryConsolidationArgs{UserID: user.ID},
+	})
+	require.NoError(t, err)
+}

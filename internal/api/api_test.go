@@ -48,6 +48,20 @@ func setupTestDB(t *testing.T) *db.Database {
 	return database
 }
 
+type zeroDimEmbedder struct{}
+
+func (m *zeroDimEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	result := make([][]float32, len(texts))
+	for i := range texts {
+		result[i] = make([]float32, 0)
+	}
+	return result, nil
+}
+
+
 func setupAPI(t *testing.T) (*api.API, *db.Database, uuid.UUID) {
 	database := setupTestDB(t)
 	// We use a mock embedder for tests to avoid hitting the actual embedding API
@@ -60,6 +74,7 @@ func setupAPI(t *testing.T) (*api.API, *db.Database, uuid.UUID) {
 
 	return apiService, database, user.ID
 }
+
 
 func TestMessagesAPI(t *testing.T) {
 	apiService, _, userID := setupAPI(t)
@@ -196,4 +211,25 @@ func TestMemoriesAPI(t *testing.T) {
 	apiService.MemoryByIDHandler(w, req)
 	res = w.Result()
 	assert.Equal(t, http.StatusNoContent, res.StatusCode)
+}
+
+func TestMemoriesAPI_ZeroDimension(t *testing.T) {
+	database := setupTestDB(t)
+	apiService := api.New(database, &zeroDimEmbedder{})
+
+	user, err := database.Queries.CreateUser(context.Background())
+	require.NoError(t, err)
+
+	reqBody, _ := json.Marshal(map[string]interface{}{
+		"content":    "Test Memory Zero Dim",
+		"importance": 5,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/memories", bytes.NewBuffer(reqBody))
+	req.Header.Set("X-User-ID", user.ID.String())
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	apiService.CreateMemoryHandler(w, req)
+	res := w.Result()
+	assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
 }

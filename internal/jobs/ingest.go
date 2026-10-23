@@ -147,9 +147,9 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			chunkIndices = append(chunkIndices, int32(i+j))
 			texts = append(texts, chunk)
 
-			if len(vectors[j]) != 384 {
+			if len(vectors[j]) == 0 {
 				w.markFileFailed(file.ID, file.UserID)
-				return fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
+				return fmt.Errorf("invalid zero-dimension vector at chunk %d", i+j)
 			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
 		}

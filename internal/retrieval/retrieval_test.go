@@ -68,3 +68,55 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	assert.Len(t, memories, 1)
 	assert.Equal(t, "This is a test fact.", memories[0].Content)
 }
+
+type zeroDimEmbedder struct{}
+
+func (m *zeroDimEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+	result := make([][]float32, len(texts))
+	for i := range texts {
+		result[i] = make([]float32, 0)
+	}
+	return result, nil
+}
+
+func TestRetrieval_CreateMemory_ZeroDimension_Mock(t *testing.T) {
+	mockDB, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	q := db.New(mockDB)
+	d := &db.Database{Queries: q}
+
+	embedder := &zeroDimEmbedder{}
+	svc := retrieval.NewRetrievalService(d, embedder, nil)
+
+	userID := uuid.New()
+	content := "Test memory content"
+
+	_, err = svc.CreateMemory(context.Background(), userID, content, 5, "active", pqtype.NullRawMessage{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no embedding returned")
+}
+
+func TestRetrieval_SearchMemories_ZeroDimension_Mock(t *testing.T) {
+	mockDB, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	q := db.New(mockDB)
+	d := &db.Database{Queries: q}
+
+	embedder := &zeroDimEmbedder{}
+	svc := retrieval.NewRetrievalService(d, embedder, nil)
+
+	userID := uuid.New()
+	query := "Find test fact"
+
+	memories, err := svc.SearchMemories(context.Background(), userID, query, 10)
+	require.Error(t, err)
+	assert.Nil(t, memories)
+    assert.Contains(t, err.Error(), "embedder returned zero-dimension vectors")
+}

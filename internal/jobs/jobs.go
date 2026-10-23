@@ -294,12 +294,11 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 	if err != nil {
 		return err
 	}
-	var vec pgvector.Vector
-	if len(vectors) > 0 && len(vectors[0]) == 384 {
-		vec = pgvector.NewVector(vectors[0])
-	} else {
-		vec = pgvector.NewVector(make([]float32, 384))
+
+	if len(vectors) == 0 || len(vectors[0]) == 0 {
+		return fmt.Errorf("embedder returned no vectors or zero-dimension vectors")
 	}
+	vec := pgvector.NewVector(vectors[0])
 
 	metaBytes, _ := json.Marshal(map[string]interface{}{
 		"fact_key":           fact.FactKey,

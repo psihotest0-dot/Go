@@ -105,8 +105,8 @@ func (cm *CategoryManager) initializeCentroids(ctx context.Context) error {
 	if len(vectors) != len(allSentences) {
 		return fmt.Errorf("expected %d vectors, got %d", len(allSentences), len(vectors))
 	}
-	if len(vectors) > 0 && len(vectors[0]) != 384 {
-		return fmt.Errorf("expected vector dimension 384, got %d", len(vectors[0]))
+	if len(vectors) > 0 && len(vectors[0]) == 0 {
+		return fmt.Errorf("embedder returned zero-dimension vectors")
 	}
 
 	offset := 0
