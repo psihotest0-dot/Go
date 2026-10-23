@@ -124,7 +124,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, unlockErr := conn.ExecContext(unlockCtx, "SELECT pg_advisory_unlock($1)", lockKey)
-			if unlockErr != nil {
+		if unlockErr != nil {
 			slog.Error("failed to release advisory lock", "error", unlockErr)
 		}
 	}()
