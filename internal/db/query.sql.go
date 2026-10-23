@@ -320,16 +320,16 @@ func (q *Queries) DeleteOldEmbeddingCache(ctx context.Context) (int64, error) {
 }
 
 const getAllMemoriesForReembedding = `-- name: GetAllMemoriesForReembedding :many
-SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories ORDER BY created_at ASC LIMIT $1 OFFSET $2
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE embedding_model != $1 LIMIT $2
 `
 
 type GetAllMemoriesForReembeddingParams struct {
-	Limit  int32 `json:"limit"`
-	Offset int32 `json:"offset"`
+	EmbeddingModel string `json:"embedding_model"`
+	Limit          int32  `json:"limit"`
 }
 
 func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMemoriesForReembeddingParams) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, getAllMemoriesForReembedding, arg.Limit, arg.Offset)
+	rows, err := q.db.QueryContext(ctx, getAllMemoriesForReembedding, arg.EmbeddingModel, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -366,11 +366,16 @@ func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMe
 }
 
 const getDocumentChunksByFile = `-- name: GetDocumentChunksByFile :many
-SELECT id, file_id, user_id, chunk_index, text, embedding, created_at FROM document_chunks WHERE file_id = $1 ORDER BY chunk_index ASC
+SELECT id, file_id, user_id, chunk_index, text, embedding, created_at FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC
 `
 
-func (q *Queries) GetDocumentChunksByFile(ctx context.Context, fileID uuid.UUID) ([]DocumentChunk, error) {
-	rows, err := q.db.QueryContext(ctx, getDocumentChunksByFile, fileID)
+type GetDocumentChunksByFileParams struct {
+	FileID uuid.UUID `json:"file_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetDocumentChunksByFile(ctx context.Context, arg GetDocumentChunksByFileParams) ([]DocumentChunk, error) {
+	rows, err := q.db.QueryContext(ctx, getDocumentChunksByFile, arg.FileID, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -404,8 +409,13 @@ const getDocumentChunksWithFile = `-- name: GetDocumentChunksWithFile :many
 SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, f.file_name
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
-WHERE c.id = ANY($1::uuid[])
+WHERE c.id = ANY($1::uuid[]) AND c.user_id = $2
 `
+
+type GetDocumentChunksWithFileParams struct {
+	ChunkIds []uuid.UUID `json:"chunk_ids"`
+	UserID   uuid.UUID   `json:"user_id"`
+}
 
 type GetDocumentChunksWithFileRow struct {
 	ID         uuid.UUID       `json:"id"`
@@ -418,8 +428,8 @@ type GetDocumentChunksWithFileRow struct {
 	FileName   string          `json:"file_name"`
 }
 
-func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, chunkIds []uuid.UUID) ([]GetDocumentChunksWithFileRow, error) {
-	rows, err := q.db.QueryContext(ctx, getDocumentChunksWithFile, pq.Array(chunkIds))
+func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, arg GetDocumentChunksWithFileParams) ([]GetDocumentChunksWithFileRow, error) {
+	rows, err := q.db.QueryContext(ctx, getDocumentChunksWithFile, pq.Array(arg.ChunkIds), arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -751,7 +761,7 @@ func (q *Queries) GetTelegramUser(ctx context.Context, telegramChatID int64) (uu
 const getTopMemories = `-- name: GetTopMemories :many
 SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
 WHERE user_id = $1 AND status IN ('active', 'candidate')
-ORDER BY importance DESC, last_used_at DESC
+ORDER BY importance DESC, last_used_at DESC NULLS LAST
 LIMIT $2
 `
 
@@ -802,6 +812,7 @@ SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_
 FROM messages
 WHERE is_analyzed = FALSE AND user_id = $1
 ORDER BY created_at ASC
+LIMIT 100
 `
 
 func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) ([]Message, error) {
@@ -882,11 +893,16 @@ func (q *Queries) LinkTelegramUser(ctx context.Context, arg LinkTelegramUserPara
 }
 
 const markMessageAnalyzed = `-- name: MarkMessageAnalyzed :exec
-UPDATE messages SET is_analyzed = TRUE WHERE id = $1
+UPDATE messages SET is_analyzed = TRUE WHERE id = $1 AND user_id = $2
 `
 
-func (q *Queries) MarkMessageAnalyzed(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.ExecContext(ctx, markMessageAnalyzed, id)
+type MarkMessageAnalyzedParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) MarkMessageAnalyzed(ctx context.Context, arg MarkMessageAnalyzedParams) error {
+	_, err := q.db.ExecContext(ctx, markMessageAnalyzed, arg.ID, arg.UserID)
 	return err
 }
 
@@ -1190,16 +1206,17 @@ func (q *Queries) SupercedeMemory(ctx context.Context, arg SupercedeMemoryParams
 }
 
 const updateIngestedFileCategory = `-- name: UpdateIngestedFileCategory :exec
-UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1
+UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1 AND user_id = $3
 `
 
 type UpdateIngestedFileCategoryParams struct {
 	ID       uuid.UUID `json:"id"`
 	Category string    `json:"category"`
+	UserID   uuid.UUID `json:"user_id"`
 }
 
 func (q *Queries) UpdateIngestedFileCategory(ctx context.Context, arg UpdateIngestedFileCategoryParams) error {
-	_, err := q.db.ExecContext(ctx, updateIngestedFileCategory, arg.ID, arg.Category)
+	_, err := q.db.ExecContext(ctx, updateIngestedFileCategory, arg.ID, arg.Category, arg.UserID)
 	return err
 }
 
@@ -1218,16 +1235,17 @@ func (q *Queries) UpdateIngestedFileCategoryAuto(ctx context.Context, arg Update
 }
 
 const updateIngestedFileStatus = `-- name: UpdateIngestedFileStatus :exec
-UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3
 `
 
 type UpdateIngestedFileStatusParams struct {
 	ID     uuid.UUID `json:"id"`
 	Status string    `json:"status"`
+	UserID uuid.UUID `json:"user_id"`
 }
 
 func (q *Queries) UpdateIngestedFileStatus(ctx context.Context, arg UpdateIngestedFileStatusParams) error {
-	_, err := q.db.ExecContext(ctx, updateIngestedFileStatus, arg.ID, arg.Status)
+	_, err := q.db.ExecContext(ctx, updateIngestedFileStatus, arg.ID, arg.Status, arg.UserID)
 	return err
 }
 
@@ -1289,16 +1307,22 @@ func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (Mem
 }
 
 const updateMemoryEmbedding = `-- name: UpdateMemoryEmbedding :exec
-UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3
+UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3 AND user_id = $4
 `
 
 type UpdateMemoryEmbeddingParams struct {
 	Embedding      pgvector.Vector `json:"embedding"`
 	EmbeddingModel string          `json:"embedding_model"`
 	ID             uuid.UUID       `json:"id"`
+	UserID         uuid.UUID       `json:"user_id"`
 }
 
 func (q *Queries) UpdateMemoryEmbedding(ctx context.Context, arg UpdateMemoryEmbeddingParams) error {
-	_, err := q.db.ExecContext(ctx, updateMemoryEmbedding, arg.Embedding, arg.EmbeddingModel, arg.ID)
+	_, err := q.db.ExecContext(ctx, updateMemoryEmbedding,
+		arg.Embedding,
+		arg.EmbeddingModel,
+		arg.ID,
+		arg.UserID,
+	)
 	return err
 }
