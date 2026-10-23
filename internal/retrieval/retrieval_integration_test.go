@@ -105,8 +105,8 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	}
 
 	for _, f := range facts {
-		_, err := svc.CreateMemory(ctx, user.ID, f, 5, "active", pqtype.NullRawMessage{})
-		require.NoError(t, err)
+		_, createErr := svc.CreateMemory(ctx, user.ID, f, 5, "active", pqtype.NullRawMessage{})
+		require.NoError(t, createErr)
 	}
 
 	// 1. Orthographic mistake + grammar + semantic query
