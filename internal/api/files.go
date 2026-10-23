@@ -39,9 +39,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		// Enforce size limit (e.g. 50MB)
-		r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-		if err := r.ParseMultipartForm(50 << 20); err != nil {
+		// Enforce size limit (e.g. 100MB)
+		r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+		if err := r.ParseMultipartForm(100 << 20); err != nil {
 			slog.Warn("file too large or invalid multipart form", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
 			return
@@ -54,8 +54,8 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		// Read into memory for hash and mimetype (for files under 50MB this is ok, else temp file is better)
-		// Since MaxBytesReader is used, reading all is safe up to 50MB.
+		// Read into memory for hash and mimetype (for files under 100MB this is ok, else temp file is better)
+		// Since MaxBytesReader is used, reading all is safe up to 100MB.
 		fileBytes, err := io.ReadAll(file)
 		file.Close() // explicitly close file after reading to avoid sharing violation on Windows before rename/remove
 		if err != nil {
@@ -129,7 +129,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 				_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
 					ID:     ingestedFile.ID,
 					Status: "failed",
-				UserID: userID,
+					UserID: userID,
 				})
 			}
 		}
