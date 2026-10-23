@@ -227,10 +227,10 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	var newEmbeddingModel string
 
 	if strings.TrimSpace(req.Content) != "" {
-		vectors, err := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
-		if err != nil {
-			slog.Error("failed to generate embedding", slog.Any("error", err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+		if embedErr != nil {
+			slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
+			http.Error(w, embedErr.Error(), http.StatusInternalServerError)
 			return
 		}
 		if len(vectors) == 0 {
@@ -375,10 +375,10 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		var newEmbeddingModel sql.NullString
 
 		if newContentHash != existingMem.ContentHash {
-			vectors, err := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
-			if err != nil {
-				slog.Error("failed to generate embedding", slog.Any("error", err))
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+			if embedErr != nil {
+				slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
+				http.Error(w, embedErr.Error(), http.StatusInternalServerError)
 				return
 			}
 			if len(vectors) == 0 {
