@@ -103,8 +103,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 
-		if err := b.upsertUser(ctx, uid); err != nil {
-			slog.Error("Failed to upsert user", slog.Any("error", err))
+		if upsertErr := b.upsertUser(ctx, uid); upsertErr != nil {
+			slog.Error("Failed to upsert user", slog.Any("error", upsertErr))
 			b.sendReply(msg.Chat.ID, "Грешка при запазване на потребителя.")
 			return
 		}
@@ -124,8 +124,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	err := b.dbPool.QueryRow(ctx, "SELECT user_id FROM telegram_users WHERE telegram_chat_id = $1;", msg.Chat.ID).Scan(&userID)
 	if err != nil {
 		userID = b.generateDeterministicUUID(msg.Chat.ID)
-		if err := b.upsertUser(ctx, userID); err != nil {
-			slog.Error("Failed to upsert telegram user", slog.Any("error", err), slog.Int64("chat_id", msg.Chat.ID))
+		if upsertErr := b.upsertUser(ctx, userID); upsertErr != nil {
+			slog.Error("Failed to upsert telegram user", slog.Any("error", upsertErr), slog.Int64("chat_id", msg.Chat.ID))
 			b.sendReply(msg.Chat.ID, "Възникна грешка при обработка на потребителя.")
 			return
 		}
