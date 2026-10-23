@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"context"
 	"strings"
+	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
@@ -111,7 +113,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		ioErr := os.WriteFile(localPath, fileBytes, 0644)
 		if ioErr != nil {
 			slog.Error("failed to save file locally", slog.Any("error", ioErr))
-			_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
 				ID:     ingestedFile.ID,
 				Status: "failed",
 				UserID: userID,
@@ -126,7 +130,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			}, nil)
 			if jobErr != nil {
 				slog.Error("failed to enqueue ingest job", slog.Any("error", jobErr))
-				_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
 					ID:     ingestedFile.ID,
 					Status: "failed",
 					UserID: userID,
