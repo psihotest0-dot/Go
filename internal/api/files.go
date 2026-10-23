@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"context"
 	"strings"
+	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
@@ -108,10 +110,12 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		err = os.WriteFile(localPath, fileBytes, 0644)
-		if err != nil {
-			slog.Error("failed to save file locally", slog.Any("error", err))
-			_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
+		ioErr := os.WriteFile(localPath, fileBytes, 0644)
+		if ioErr != nil {
+			slog.Error("failed to save file locally", slog.Any("error", ioErr))
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
 				ID:     ingestedFile.ID,
 				Status: "failed",
 				UserID: userID,
@@ -121,12 +125,14 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		}
 
 		if riverClient != nil {
-			_, err = riverClient.Insert(r.Context(), jobs.IngestFileArgs{
+			_, jobErr := riverClient.Insert(r.Context(), jobs.IngestFileArgs{
 				FileID: ingestedFile.ID,
 			}, nil)
-			if err != nil {
-				slog.Error("failed to enqueue ingest job", slog.Any("error", err))
-				_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
+			if jobErr != nil {
+				slog.Error("failed to enqueue ingest job", slog.Any("error", jobErr))
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
 					ID:     ingestedFile.ID,
 					Status: "failed",
 					UserID: userID,
@@ -265,9 +271,9 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Category string `json:"category"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+		slog.Warn("invalid request body", slog.Any("error", decErr), slog.String("path", r.URL.Path))
+		http.Error(w, decErr.Error(), http.StatusBadRequest)
 		return
 	}
 
