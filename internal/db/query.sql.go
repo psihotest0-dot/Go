@@ -696,16 +696,17 @@ func (q *Queries) GetMemoryByID(ctx context.Context, arg GetMemoryByIDParams) (M
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3
 `
 
 type GetMessagesBySessionParams struct {
 	UserID    uuid.UUID `json:"user_id"`
 	SessionID string    `json:"session_id"`
+	Limit     int32     `json:"limit"`
 }
 
 func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySessionParams) ([]Message, error) {
-	rows, err := q.db.QueryContext(ctx, getMessagesBySession, arg.UserID, arg.SessionID)
+	rows, err := q.db.QueryContext(ctx, getMessagesBySession, arg.UserID, arg.SessionID, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
