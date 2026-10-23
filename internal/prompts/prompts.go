@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"text/template"
 	"path/filepath"
+	"strings"
 	"sync"
+	"text/template"
 	"time"
 )
 
@@ -40,6 +41,16 @@ func NewTemplateManager(basePath string) *TemplateManager {
 	}
 }
 
+// Preload loads the specified templates, returning an error if any fail to load.
+func (tm *TemplateManager) Preload(names ...string) error {
+	for _, name := range names {
+		if _, err := tm.getTemplate(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Render executes the given template by name.
 func (tm *TemplateManager) Render(name string, data interface{}) (string, error) {
 	tmpl, err := tm.getTemplate(name)
@@ -59,9 +70,9 @@ func (tm *TemplateManager) getTemplate(name string) (*template.Template, error) 
 	filename := filepath.Join(tm.basePath, name)
 
 	// Check if file has been modified on disk
-	info, err := os.Stat(filename)
+	info, statErr := os.Stat(filename)
 	var modTime time.Time
-	if err == nil {
+	if statErr == nil {
 		modTime = info.ModTime()
 	}
 
@@ -71,7 +82,7 @@ func (tm *TemplateManager) getTemplate(name string) (*template.Template, error) 
 	tm.mu.RUnlock()
 
 	// If template exists and file on disk hasn't changed (or doesn't exist on disk), return cached
-	if exists && (!modExists || modTime.IsZero() || modTime.Equal(lastMod)) {
+	if exists && modExists && modTime.Equal(lastMod) {
 		return tmpl, nil
 	}
 
@@ -82,26 +93,30 @@ func (tm *TemplateManager) getTemplate(name string) (*template.Template, error) 
 	// Double-check after acquiring write lock
 	tmpl, exists = tm.templates[name]
 	lastMod, modExists = tm.lastModified[name]
-	if exists && (!modExists || modTime.IsZero() || modTime.Equal(lastMod)) {
+	if exists && modExists && modTime.Equal(lastMod) {
 		return tmpl, nil
 	}
 
+	normalizedName := strings.ReplaceAll(name, "\\", "/")
 	var content []byte
-	if err == nil {
+	var loadErr error
+
+	if statErr == nil {
 		// Read from disk
-		content, err = os.ReadFile(filename)
-		if err != nil {
-			slog.Warn("Failed to read template from disk, falling back to embedded", "file", filename, "err", err)
-			content, err = defaultTemplates.ReadFile(name)
+		var readErr error
+		content, readErr = os.ReadFile(filename)
+		if readErr != nil {
+			slog.Warn("Failed to read template from disk, falling back to embedded", "file", filename, "err", readErr)
+			content, loadErr = defaultTemplates.ReadFile(normalizedName)
 		}
 	} else {
 		// Fallback to embedded
 		slog.Debug("Template not found on disk, using embedded fallback", "file", filename)
-		content, err = defaultTemplates.ReadFile(name)
+		content, loadErr = defaultTemplates.ReadFile(normalizedName)
 	}
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to load template %s: %w", name, err)
+	if loadErr != nil {
+		return nil, fmt.Errorf("failed to load template %s: %w", name, loadErr)
 	}
 
 	newTmpl, err := template.New(name).Parse(string(content))
