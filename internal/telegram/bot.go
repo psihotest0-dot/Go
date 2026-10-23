@@ -142,7 +142,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	action := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
 	b.api.Send(action)
 
-	msgCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	msgCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	answer, reasoning, err := b.orchestrator.ProcessChat(msgCtx, userID, req)
 	if err != nil {
