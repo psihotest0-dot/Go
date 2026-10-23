@@ -10,7 +10,7 @@ INSERT INTO users DEFAULT VALUES RETURNING *;
 INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING *;
 
 -- name: GetMessagesBySession :many
-SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at ASC;
+SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3;
 
 -- name: CreateMemory :one
 INSERT INTO memories (user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash)
