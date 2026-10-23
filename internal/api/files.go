@@ -2,8 +2,10 @@ package api
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,6 +77,11 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			UserID:   userID,
 			FileHash: hashStr,
 		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			slog.Error("failed to check existing file by hash", slog.Any("error", err))
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
 		if err == nil && existingFile.ID != uuid.Nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict) // 409
@@ -85,13 +92,6 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		// Ensure storage dir
 		os.MkdirAll("storage", 0755)
 		localPath := filepath.Join("storage", fmt.Sprintf("%s_%s", uuid.New().String(), filepath.Base(handler.Filename)))
-
-		err = os.WriteFile(localPath, fileBytes, 0644)
-		if err != nil {
-			slog.Error("failed to save file locally", slog.Any("error", err))
-			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
-			return
-		}
 
 		ingestedFile, err := a.db.Queries.CreateIngestedFile(r.Context(), db.CreateIngestedFileParams{
 			UserID:    userID,
@@ -108,13 +108,27 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
+		err = os.WriteFile(localPath, fileBytes, 0644)
+		if err != nil {
+			slog.Error("failed to save file locally", slog.Any("error", err))
+			_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
+				ID:     ingestedFile.ID,
+				Status: "failed",
+			})
+			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
+			return
+		}
+
 		if riverClient != nil {
 			_, err = riverClient.Insert(r.Context(), jobs.IngestFileArgs{
 				FileID: ingestedFile.ID,
 			}, nil)
 			if err != nil {
-				// Log error, but file is saved
-				fmt.Printf("failed to enqueue ingest job: %v\n", err)
+				slog.Error("failed to enqueue ingest job", slog.Any("error", err))
+				_ = a.db.Queries.UpdateIngestedFileStatus(r.Context(), db.UpdateIngestedFileStatusParams{
+					ID:     ingestedFile.ID,
+					Status: "failed",
+				})
 			}
 		}
 
