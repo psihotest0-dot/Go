@@ -265,9 +265,9 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Category string `json:"category"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+		slog.Warn("invalid request body", slog.Any("error", decErr), slog.String("path", r.URL.Path))
+		http.Error(w, decErr.Error(), http.StatusBadRequest)
 		return
 	}
 
