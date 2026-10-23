@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"strings"
 )
@@ -46,7 +47,7 @@ func (e *DOCXExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 	}
 
 	if documentXML == nil {
-		return "", nil // Or error "not a valid docx"
+		return "", errors.New("not a valid docx")
 	}
 
 	rc, err := documentXML.Open()
@@ -57,6 +58,10 @@ func (e *DOCXExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 
 	decoder := xml.NewDecoder(rc)
 	var buf strings.Builder
+
+	skipTag := false
+	skipTagName := ""
+
 	for {
 		t, err := decoder.Token()
 		if err == io.EOF {
@@ -67,10 +72,21 @@ func (e *DOCXExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 		}
 
 		switch v := t.(type) {
+		case xml.StartElement:
+			if v.Name.Local == "instrText" || v.Name.Local == "delText" || v.Name.Local == "commentReference" {
+				skipTag = true
+				skipTagName = v.Name.Local
+			}
+		case xml.EndElement:
+			if skipTag && v.Name.Local == skipTagName {
+				skipTag = false
+			}
 		case xml.CharData:
-			text := strings.TrimSpace(string(v))
-			if text != "" {
-				buf.WriteString(text + " ")
+			if !skipTag {
+				text := strings.TrimSpace(string(v))
+				if text != "" {
+					buf.WriteString(text + " ")
+				}
 			}
 		}
 	}
