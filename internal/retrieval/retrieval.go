@@ -15,6 +15,7 @@ import (
 	"github.com/sqlc-dev/pqtype"
 	"golang.org/x/sync/errgroup"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 	"go-monolith/metrics"
@@ -51,7 +52,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		slog.Error("no embedding returned")
 		return db.Memory{}, fmt.Errorf("no embedding returned")
 	}
-	if len(vectors[0]) != 384 {
+	if len(vectors[0]) != config.VectorDimension {
 		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
 		return db.Memory{}, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
 	}
@@ -105,7 +106,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	} else if len(vectors) == 0 {
 		slog.Error("embedder returned empty result")
 		fallback = true
-	} else if len(vectors[0]) != 384 {
+	} else if len(vectors[0]) != config.VectorDimension {
 		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
 		return nil, nil, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
 	}
@@ -283,11 +284,11 @@ func cosineSimilarity(a, b []float32) float32 {
 }
 
 func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
-    memories, _, err := s.SearchAll(ctx, userID, query, limit)
-    return memories, err
+	memories, _, err := s.SearchAll(ctx, userID, query, limit)
+	return memories, err
 }
 
 func (s *RetrievalService) SearchChunks(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
-    _, chunks, err := s.SearchAll(ctx, userID, query, limit)
-    return chunks, err
+	_, chunks, err := s.SearchAll(ctx, userID, query, limit)
+	return chunks, err
 }
