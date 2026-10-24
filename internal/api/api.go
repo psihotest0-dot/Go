@@ -28,6 +28,11 @@ func New(db *db.Database, embedder llm.Embedder) *API {
 }
 
 func (a *API) HealthzHandler(w http.ResponseWriter, r *http.Request) {
+	if err := a.db.Pool.Ping(r.Context()); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("Service Unavailable"))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
