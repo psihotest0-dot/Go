@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"go-monolith/internal/llm"
+"go-monolith/internal/config"
 )
 
 type CategoryManager struct {
@@ -105,8 +106,8 @@ func (cm *CategoryManager) initializeCentroids(ctx context.Context) error {
 	if len(vectors) != len(allSentences) {
 		return fmt.Errorf("expected %d vectors, got %d", len(allSentences), len(vectors))
 	}
-	if len(vectors) > 0 && len(vectors[0]) != 384 {
-		return fmt.Errorf("expected vector dimension 384, got %d", len(vectors[0]))
+	if len(vectors) > 0 && len(vectors[0]) != config.VectorDimension {
+		return fmt.Errorf("expected vector dimension %d, got %d", config.VectorDimension, len(vectors[0]))
 	}
 
 	offset := 0

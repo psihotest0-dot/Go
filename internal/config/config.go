@@ -4,6 +4,8 @@ import (
 	"os"
 )
 
+const VectorDimension = 384
+
 type Config struct {
 	LLMBaseURL       string
 	EmbedderURL      string
