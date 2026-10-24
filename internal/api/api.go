@@ -28,6 +28,11 @@ func New(db *db.Database, embedder llm.Embedder) *API {
 }
 
 func (a *API) HealthzHandler(w http.ResponseWriter, r *http.Request) {
+	if err := a.db.Pool.Ping(r.Context()); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte("Service Unavailable"))
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
@@ -123,13 +128,16 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	chunksMap := make(map[uuid.UUID]db.GetDocumentChunksWithFileRow)
 	if len(allChunkIDs) > 0 {
-		chunks, err := a.db.Queries.GetDocumentChunksWithFile(r.Context(), allChunkIDs)
-		if err == nil {
+		chunks, chunkErr := a.db.Queries.GetDocumentChunksWithFile(r.Context(), db.GetDocumentChunksWithFileParams{
+			ChunkIds: allChunkIDs,
+			UserID:   userID,
+		})
+		if chunkErr == nil {
 			for _, chunk := range chunks {
 				chunksMap[chunk.ID] = chunk
 			}
 		} else {
-			slog.Error("failed to get document chunks with file", slog.Any("error", err))
+			slog.Error("failed to get document chunks with file", slog.Any("error", chunkErr))
 		}
 	}
 
@@ -203,14 +211,31 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		req.Status = "candidate"
 	}
 
+	contentHash := db.GenerateHash(req.Content)
+	existingMem, err := a.db.Queries.GetMemoryByHash(r.Context(), db.GetMemoryByHashParams{
+		UserID:      userID,
+		ContentHash: contentHash,
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		slog.Error("failed to get memory by hash", slog.Any("error", err))
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if err == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict) // 409 Conflict
+		json.NewEncoder(w).Encode(toMemoryDTO(existingMem))
+		return
+	}
+
 	var newEmbedding pgvector.Vector
 	var newEmbeddingModel string
 
 	if strings.TrimSpace(req.Content) != "" {
-		vectors, err := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
-		if err != nil {
-			slog.Error("failed to generate embedding", slog.Any("error", err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+		if embedErr != nil {
+			slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
+			http.Error(w, embedErr.Error(), http.StatusInternalServerError)
 			return
 		}
 		if len(vectors) == 0 {
@@ -325,9 +350,9 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Importance int32                 `json:"importance"`
 			Metadata   pqtype.NullRawMessage `json:"metadata"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+			slog.Warn("invalid request body", slog.Any("error", decErr), slog.String("path", r.URL.Path))
+			http.Error(w, decErr.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -336,16 +361,16 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		existingMem, err := a.db.Queries.GetMemoryByID(r.Context(), db.GetMemoryByIDParams{
+		existingMem, dbErr := a.db.Queries.GetMemoryByID(r.Context(), db.GetMemoryByIDParams{
 			ID:     memoryID,
 			UserID: userID,
 		})
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+		if dbErr != nil {
+			if errors.Is(dbErr, sql.ErrNoRows) {
 				http.Error(w, "memory not found", http.StatusNotFound)
 			} else {
-				slog.Error("failed to get existing memory", slog.Any("error", err))
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+				slog.Error("failed to get existing memory", slog.Any("error", dbErr))
+				http.Error(w, dbErr.Error(), http.StatusInternalServerError)
 			}
 			return
 		}
@@ -355,10 +380,10 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		var newEmbeddingModel sql.NullString
 
 		if newContentHash != existingMem.ContentHash {
-			vectors, err := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
-			if err != nil {
-				slog.Error("failed to generate embedding", slog.Any("error", err))
-				http.Error(w, err.Error(), http.StatusInternalServerError)
+			vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+			if embedErr != nil {
+				slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
+				http.Error(w, embedErr.Error(), http.StatusInternalServerError)
 				return
 			}
 			if len(vectors) == 0 {
@@ -376,7 +401,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			newEmbeddingModel = sql.NullString{String: "paraphrase-multilingual-MiniLM-L12-v2", Valid: true}
 		}
 
-		mem, err := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
+		mem, dbErr := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
 			ID:             memoryID,
 			UserID:         userID,
 			Content:        sql.NullString{String: req.Content, Valid: true},
@@ -386,16 +411,19 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Embedding:      newEmbedding,
 			EmbeddingModel: newEmbeddingModel,
 		})
-		if err != nil {
-			slog.Error("failed to update memory", slog.Any("error", err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		if errors.Is(dbErr, db.ErrMemoryExists) {
+			http.Error(w, "Memory already exists", http.StatusConflict)
+			return
+		} else if dbErr != nil {
+			slog.Error("failed to update memory", slog.Any("error", dbErr))
+			http.Error(w, dbErr.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 
 	case http.MethodDelete:
-		err := a.db.Queries.DeleteMemory(r.Context(), db.DeleteMemoryParams{
+		err = a.db.Queries.DeleteMemory(r.Context(), db.DeleteMemoryParams{
 			ID:     memoryID,
 			UserID: userID,
 		})

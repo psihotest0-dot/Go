@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"go-monolith/internal/agent"
 )
@@ -70,6 +72,18 @@ func (b *Bot) Start(ctx context.Context) {
 }
 
 func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
+	if !msg.Chat.IsPrivate() {
+		b.sendReply(msg.Chat.ID, "Мога да комуникирам само в лични чатове.")
+		return
+	}
+	if msg.Voice != nil || msg.Audio != nil || len(msg.Photo) > 0 || msg.Document != nil {
+		b.sendReply(msg.Chat.ID, "Засега разбирам само текст. Моля, качвай файлове през уеб приложението.")
+		return
+	}
+	if msg.Sticker != nil {
+		return
+	}
+
 	if msg.Text == "" {
 		return
 	}
@@ -82,8 +96,15 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 			return
 		}
 
-		if err := b.upsertUser(ctx, uid); err != nil {
-			slog.Error("Failed to upsert user", slog.Any("error", err))
+		var existingUserID uuid.UUID
+		err = b.dbPool.QueryRow(ctx, "SELECT user_id FROM telegram_users WHERE telegram_chat_id = $1;", msg.Chat.ID).Scan(&existingUserID)
+		if err == nil {
+			b.sendReply(msg.Chat.ID, "Вече си свързан.")
+			return
+		}
+
+		if upsertErr := b.upsertUser(ctx, uid); upsertErr != nil {
+			slog.Error("Failed to upsert user", slog.Any("error", upsertErr))
 			b.sendReply(msg.Chat.ID, "Грешка при запазване на потребителя.")
 			return
 		}
@@ -103,8 +124,8 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	err := b.dbPool.QueryRow(ctx, "SELECT user_id FROM telegram_users WHERE telegram_chat_id = $1;", msg.Chat.ID).Scan(&userID)
 	if err != nil {
 		userID = b.generateDeterministicUUID(msg.Chat.ID)
-		if err := b.upsertUser(ctx, userID); err != nil {
-			slog.Error("Failed to upsert telegram user", slog.Any("error", err), slog.Int64("chat_id", msg.Chat.ID))
+		if upsertErr := b.upsertUser(ctx, userID); upsertErr != nil {
+			slog.Error("Failed to upsert telegram user", slog.Any("error", upsertErr), slog.Int64("chat_id", msg.Chat.ID))
 			b.sendReply(msg.Chat.ID, "Възникна грешка при обработка на потребителя.")
 			return
 		}
@@ -121,7 +142,9 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	action := tgbotapi.NewChatAction(msg.Chat.ID, tgbotapi.ChatTyping)
 	b.api.Send(action)
 
-	answer, reasoning, err := b.orchestrator.ProcessChat(ctx, userID, req)
+	msgCtx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	answer, reasoning, err := b.orchestrator.ProcessChat(msgCtx, userID, req)
 	if err != nil {
 		slog.Error("Failed to process telegram chat", slog.Any("error", err), slog.Int64("chat_id", msg.Chat.ID))
 		b.sendReply(msg.Chat.ID, "Възникна грешка при генерирането на отговор.")
@@ -137,8 +160,40 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 }
 
 func (b *Bot) sendReply(chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	if _, err := b.api.Send(msg); err != nil {
-		slog.Error("Failed to send telegram reply", slog.Any("error", err), slog.Int64("chat_id", chatID))
+	if utf8.RuneCountInString(text) <= 4000 {
+		msg := tgbotapi.NewMessage(chatID, text)
+		if _, err := b.api.Send(msg); err != nil {
+			slog.Error("Failed to send telegram reply", slog.Any("error", err), slog.Int64("chat_id", chatID))
+		}
+		return
+	}
+
+	runes := []rune(text)
+	for len(runes) > 0 {
+		if len(runes) <= 4000 {
+			msg := tgbotapi.NewMessage(chatID, string(runes))
+			if _, err := b.api.Send(msg); err != nil {
+				slog.Error("Failed to send telegram reply", slog.Any("error", err), slog.Int64("chat_id", chatID))
+			}
+			break
+		}
+
+		splitIndex := 4000
+		for i := 4000; i > 0; i-- {
+			if runes[i] == ' ' || runes[i] == '\n' || runes[i] == '\t' {
+				splitIndex = i
+				break
+			}
+		}
+
+		msg := tgbotapi.NewMessage(chatID, string(runes[:splitIndex]))
+		if _, err := b.api.Send(msg); err != nil {
+			slog.Error("Failed to send telegram reply", slog.Any("error", err), slog.Int64("chat_id", chatID))
+		}
+
+		runes = runes[splitIndex:]
+		if len(runes) > 0 && (runes[0] == ' ' || runes[0] == '\n' || runes[0] == '\t') {
+			runes = runes[1:]
+		}
 	}
 }

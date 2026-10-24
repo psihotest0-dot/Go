@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -46,10 +47,22 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 		_ = os.Remove(tmpFile.Name())
 	}()
 
-	if _, err := tmpFile.Write(b); err != nil {
-		return "", fmt.Errorf("failed to write to temp file: %w", err)
+	if _, wErr := tmpFile.Write(b); wErr != nil {
+		return "", fmt.Errorf("failed to write to temp file: %w", wErr)
 	}
-	tmpFile.Close()
+
+	// 1. Try to extract text using pdftotext for the entire file
+	txtCmd := exec.CommandContext(ctx, "pdftotext", "-layout", tmpFile.Name(), "-")
+	txtOut, err := txtCmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		slog.Warn("pdftotext failed for entire file, proceeding to fallback/OCR", slog.Any("error", err))
+	}
+
+	// Split extracted text by page using form feed \f
+	pages := strings.Split(string(txtOut), "\f")
 
 	// Determine the number of pages using pdfcpu.
 	rs := bytes.NewReader(b)
@@ -65,22 +78,13 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 	// Process page by page
 	for i := 1; i <= pageCount; i++ {
 		pageStr := fmt.Sprintf("%d", i)
-
-		// 1. Try to extract text using pdftotext for the specific page
-		txtCmd := exec.CommandContext(ctx, "pdftotext", "-f", pageStr, "-l", pageStr, tmpFile.Name(), "-")
-		txtOut, err := txtCmd.Output()
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			// fallback or skip
-			continue
+		var pageText string
+		if i-1 < len(pages) {
+			pageText = strings.TrimSpace(pages[i-1])
 		}
 
-		pageText := strings.TrimSpace(string(txtOut))
-
-		// 2. If text is less than 20 characters, assume it's a scanned page and fallback to OCR
-		if len(pageText) < 20 {
+		// 2. If text is less than 50 characters, assume it's a scanned page and fallback to OCR
+		if len(pageText) < 50 {
 			// Rasterize the page to PNG
 			ppmCmd := exec.CommandContext(ctx, "pdftoppm", "-r", "300", "-f", pageStr, "-l", pageStr, "-png", tmpFile.Name())
 			pngOut, err := ppmCmd.Output()
@@ -88,13 +92,17 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 				if ctx.Err() != nil {
 					return "", ctx.Err()
 				}
-				// Failed to rasterize, continue to next page
+				slog.Warn("pdftoppm failed for page", slog.String("page", pageStr), slog.Any("error", err))
 				continue
 			}
 
 			// Run OCR on the rasterized PNG
 			ocrText, err := imgExtractor.Extract(ctx, bytes.NewReader(pngOut))
-			if err == nil && len(strings.TrimSpace(ocrText)) > 0 {
+			if err != nil {
+				slog.Warn("OCR failed for page", slog.String("page", pageStr), slog.Any("error", err))
+				continue
+			}
+			if len(strings.TrimSpace(ocrText)) > 0 {
 				finalBuf.WriteString(strings.TrimSpace(ocrText))
 				finalBuf.WriteString("\n[source: \"ocr\"]\n")
 			}
