@@ -2,13 +2,16 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"os"
+	"strings"
 	"time"
 	"unicode"
 
+	"github.com/jackc/pgx/v5"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
@@ -118,8 +121,8 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		batchChunks := chunks[i:end]
 
 		var enrichedBatch []string
-		for _, chunk := range batchChunks {
-			enrichedBatch = append(enrichedBatch, fmt.Sprintf("Файл: %s. Съдържание: %s", file.FileName, chunk))
+		for k, chunk := range batchChunks {
+			enrichedBatch = append(enrichedBatch, fmt.Sprintf("[Файл: %s - Chunk %d] %s", file.FileName, i+k, chunk))
 		}
 
 		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch)
@@ -141,12 +144,16 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		var chunkIndices []int32
 		var texts []string
 		var embeddings []pgvector.Vector
+		var chunkTypes []string
+		var metadatas []json.RawMessage
 
 		for j, chunk := range batchChunks {
 			fileIDs = append(fileIDs, file.ID)
 			userIDs = append(userIDs, file.UserID)
 			chunkIndices = append(chunkIndices, int32(i+j))
 			texts = append(texts, chunk)
+			chunkTypes = append(chunkTypes, "raw_text")
+			metadatas = append(metadatas, json.RawMessage([]byte("{}")))
 
 			if len(vectors[j]) != config.VectorDimension {
 				w.markFileFailed(file.ID, file.UserID)
@@ -161,6 +168,8 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			ChunkIndices: chunkIndices,
 			Texts:        texts,
 			Embeddings:   embeddings,
+			ChunkTypes:   chunkTypes,
+			Metadatas:    metadatas,
 		})
 		if err != nil {
 			w.markFileFailed(file.ID, file.UserID)
@@ -234,6 +243,19 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		}
 	}
 
+	// Enqueue distillation worker
+	if config.Load().EnableDistillation {
+		pgxClient := river.ClientFromContext[pgx.Tx](ctx)
+		if pgxClient != nil {
+			_, err = pgxClient.Insert(ctx, DistillationWorkerArgs{FileID: file.ID}, nil)
+			if err != nil {
+				slog.Error("Failed to enqueue DistillationWorkerArgs", "file_id", file.ID, "error", err)
+			}
+		} else {
+			slog.Warn("Could not enqueue DistillationWorkerArgs: no river pgx client in context")
+		}
+	}
+
 	slog.Info("IngestFileWorker finished successfully", "file_id", job.Args.FileID, "chunks", len(chunks))
 	return nil
 }
@@ -250,12 +272,36 @@ func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []stri
 		chunkSize = overlap + 1 // Prevent infinite loop
 	}
 
+	// Pre-process runes to strip pure noise
 	for i := 0; i < len(runes); i += (chunkSize - overlap) {
 		end := i + chunkSize
 		if end > len(runes) {
 			end = len(runes)
 		}
-		chunks = append(chunks, string(runes[i:end]))
+
+		chunkStr := string(runes[i:end])
+
+		// Soft filter: if chunk is predominantly dots/noise and lacks alpha chars, it's likely a ToC or filler.
+		dotCount := strings.Count(chunkStr, ".")
+		alphaCount := 0
+		for _, c := range chunkStr {
+			if unicode.IsLetter(c) {
+				alphaCount++
+			}
+		}
+
+		// If more than half the chunk is dots and there are very few letters, we drop it (noise)
+		isNoise := false
+		if len(chunkStr) > 0 {
+			if float64(dotCount)/float64(len(chunkStr)) > 0.5 && alphaCount < 10 {
+				isNoise = true
+			}
+		}
+
+		if !isNoise {
+			chunks = append(chunks, chunkStr)
+		}
+
 		if end == len(runes) {
 			break
 		}
