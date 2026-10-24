@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -180,6 +181,43 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	queryVec := vectors[0]
 	pgVec := pgvector.NewVector(queryVec)
 
+	// --- Phase 2: Associative Search ---
+	// Fetch top concepts to augment the text search query.
+	conceptRows, conceptErr := s.db.Queries.SearchConceptChunks(ctx, db.SearchConceptChunksParams{
+		UserID:    userID,
+		Embedding: pgVec,
+	})
+
+	augmentedQuery := query
+	if conceptErr == nil && len(conceptRows) > 0 {
+		var themes []string
+		for _, row := range conceptRows {
+			var meta struct {
+				Themes []string `json:"themes"`
+			}
+			if err := json.Unmarshal(row.Metadata, &meta); err == nil {
+				themes = append(themes, meta.Themes...)
+			}
+
+			// Also add the concept_summary itself to the chunks results
+			mu.Lock()
+			chunks = append(chunks, SearchResult{
+				ID:         row.ID,
+				Content:    row.Content,
+				SourceType: "concept",
+				Score:      1.0 - row.Distance, // naive conversion
+				FileName:   row.FileName,
+			})
+			mu.Unlock()
+		}
+
+		if len(themes) > 0 {
+			augmentedQuery += " " + strings.Join(themes, " ")
+		}
+	} else if conceptErr != nil {
+		slog.Warn("failed to search concept chunks", "error", conceptErr)
+	}
+
 	boostCategory := ""
 	boostAmount := 0.0
 
@@ -238,7 +276,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 			UserID:        userID,
 			MatchCount:    int32(limit),
 			Embedding:     pgVec,
-			QueryText:     query,
+			QueryText:     augmentedQuery,
 			BoostCategory: boostCategory,
 			BoostAmount:   boostAmount,
 		}

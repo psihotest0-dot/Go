@@ -21,6 +21,7 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 	river.AddWorker(workers, NewMemoryConsolidationWorker(database, llmClient, embedder))
 	river.AddWorker(workers, NewEmbeddingCacheGCWorker(database))
 	river.AddWorker(workers, NewIngestFileWorker(database, embedder, catMgr))
+	river.AddWorker(workers, NewDistillationWorker(database, llmClient, embedder))
 
 	driver := riverpgxv5.New(pool)
 	riverClient, err := river.NewClient(driver, &river.Config{
