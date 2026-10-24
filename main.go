@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/riverqueue/river/rivermigrate"
+	"github.com/rs/cors"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"go-monolith/internal/agent"
@@ -61,7 +63,9 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 }
 
 func main() {
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+		fmt.Printf("warning: failed to load .env file: %v\n", err)
+	}
 
 	logFile := &lumberjack.Logger{
 		Filename:   "backend.log",
@@ -104,12 +108,22 @@ func main() {
 	}
 	logger.Info("migrations ran successfully")
 
-	database, err := db.Connect(ctx, cfg.DatabaseURL)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+
+	database, err := db.Connect(startupCtx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to connect to database", slog.Any("error", err))
 		os.Exit(1)
 	}
-	defer database.Pool.Close()
+	defer func() {
+		if database.SqlDB != nil {
+			database.SqlDB.Close()
+		}
+		if database.Pool != nil {
+			database.Pool.Close()
+		}
+	}()
 
 	llmClient := llm.NewLemonadeClient()
 	embedder := llm.NewHTTPEmbedder(database)
@@ -120,7 +134,7 @@ func main() {
 		// don't exit, just continue without it if it fails
 	}
 
-	riverClient, err := jobs.NewRiverClient(ctx, database.Pool, database, llmClient, embedder, catMgr)
+	riverClient, err := jobs.NewRiverClient(startupCtx, database.Pool, database, llmClient, embedder, catMgr)
 	if err != nil {
 		logger.Error("failed to create river client", slog.Any("error", err))
 		os.Exit(1)
@@ -141,7 +155,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := riverClient.Stop(ctx); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := riverClient.Stop(stopCtx); err != nil {
 			logger.Error("failed to stop river client safely", slog.Any("error", err))
 		}
 	}()
@@ -223,7 +239,13 @@ func main() {
 
 	mux.Handle("/", userMiddleware(protectedMux))
 
-	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(mux))
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:*"},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowCredentials: true,
+	})
+
+	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(c.Handler(mux)))
 
 	srv := &http.Server{
 		Addr:              ":8080",
