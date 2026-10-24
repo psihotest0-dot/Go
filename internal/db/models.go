@@ -6,6 +6,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -29,6 +30,8 @@ type DocumentChunk struct {
 	Text       string          `json:"text"`
 	Embedding  pgvector.Vector `json:"embedding"`
 	CreatedAt  sql.NullTime    `json:"created_at"`
+	ChunkType  string          `json:"chunk_type"`
+	Metadata   json.RawMessage `json:"metadata"`
 }
 
 type EmbeddingCache struct {
