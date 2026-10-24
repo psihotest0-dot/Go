@@ -33,19 +33,33 @@ RETURNING *;
 SELECT * FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC;
 
 -- name: CreateDocumentChunksBatch :exec
-INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
 SELECT
     unnest(@file_ids::uuid[]),
     unnest(@user_ids::uuid[]),
     unnest(@chunk_indices::int[]),
     unnest(@texts::text[]),
-    unnest(@embeddings::vector[]);
+    unnest(@embeddings::vector[]),
+    unnest(@chunk_types::text[]),
+    unnest(@metadatas::jsonb[]);
 
 -- name: GetDocumentChunksWithFile :many
 SELECT c.*, f.file_name
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.id = ANY(sqlc.arg('chunk_ids')::uuid[]) AND c.user_id = sqlc.arg('user_id');
+
+-- name: SearchConceptChunks :many
+SELECT c.id, c.text as content, f.file_name, c.metadata,
+       CAST(c.embedding <=> sqlc.arg('embedding') AS FLOAT8) as distance
+FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.user_id = sqlc.arg('user_id')
+  AND f.status = 'completed'
+  AND c.chunk_type = 'concept_summary'
+  AND (c.embedding <=> sqlc.arg('embedding')) < 0.40
+ORDER BY distance ASC
+LIMIT 3;
 
 -- name: SearchHybridChunks :many
 WITH chunk_vector_search AS (
@@ -57,6 +71,7 @@ WITH chunk_vector_search AS (
         JOIN ingested_files f ON c.file_id = f.id
         WHERE c.user_id = sqlc.arg('user_id')
           AND f.status = 'completed'
+          AND c.chunk_type = 'raw_text'
           AND (c.embedding <=> sqlc.arg('embedding')) < 0.45
     ) sub
     WHERE file_rank <= 2
