@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -20,15 +21,17 @@ import (
 
 // DefaultToolRegistry is the concrete implementation of ToolRegistry.
 type DefaultToolRegistry struct {
-	retrieval *retrieval.RetrievalService
-	db        *db.Database
+	retrieval  *retrieval.RetrievalService
+	db         *db.Database
+	httpClient *http.Client
 }
 
 // NewDefaultToolRegistry creates a new DefaultToolRegistry.
 func NewDefaultToolRegistry(r *retrieval.RetrievalService, d *db.Database) *DefaultToolRegistry {
 	return &DefaultToolRegistry{
-		retrieval: r,
-		db:        d,
+		retrieval:  r,
+		db:         d,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -76,8 +79,7 @@ func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[str
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform search request: %w", err)
 	}
@@ -114,8 +116,7 @@ func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[stri
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := r.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to perform fetch request: %w", err)
 	}

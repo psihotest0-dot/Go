@@ -123,9 +123,9 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 	defer func() {
 		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, err := conn.ExecContext(unlockCtx, "SELECT pg_advisory_unlock($1)", lockKey)
-		if err != nil {
-			slog.Error("failed to release advisory lock", "error", err)
+		_, unlockErr := conn.ExecContext(unlockCtx, "SELECT pg_advisory_unlock($1)", lockKey)
+		if unlockErr != nil {
+			slog.Error("failed to release advisory lock", "error", unlockErr)
 		}
 	}()
 
@@ -146,37 +146,51 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
-			err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), msg.ID)
+			err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), db.MarkMessageAnalyzedParams{
+				ID:     msg.ID,
+				UserID: msg.UserID,
+			})
 			if err != nil {
 				slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
 			}
 			continue
 		}
 
-		msgCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		analyzeCtx, analyzeCancel := context.WithTimeout(ctx, 120*time.Second)
 
-		facts, err := w.analyzeMessage(msgCtx, msg.Content)
+		facts, err := w.analyzeMessage(analyzeCtx, msg.Content)
 		if err != nil {
 			slog.Error("failed to analyze message", "msg_id", msg.ID, "error", err)
-			cancel()
+			analyzeCancel()
 			continue
 		}
+		analyzeCancel()
 
+		hasErrors := false
 		if len(facts) > 0 {
 			for _, fact := range facts {
-				err = w.processFact(msgCtx, msg, fact)
+				processCtx, processCancel := context.WithTimeout(ctx, 30*time.Second)
+				err = w.processFact(processCtx, msg, fact)
 				if err != nil {
 					slog.Error("failed to process fact", "fact", fact, "error", err)
+					hasErrors = true
 				}
+				processCancel()
 			}
 		}
 
-		err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), msg.ID)
+		if hasErrors {
+			continue
+		}
+
+		err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), db.MarkMessageAnalyzedParams{
+			ID:     msg.ID,
+			UserID: msg.UserID,
+		})
 		if err != nil {
 			slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
 		}
 
-		cancel()
 		processedCount++
 		if processedCount >= 5 {
 			break
@@ -263,12 +277,16 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 
 	status := "active"
 	if conflict != nil {
-		err = q.SupercedeMemory(ctx, db.SupercedeMemoryParams{
-			ID:     conflict.ID,
-			UserID: msg.UserID,
-		})
-		if err != nil {
-			return err
+		if fact.IsExplicitChange {
+			err = q.SupercedeMemory(ctx, db.SupercedeMemoryParams{
+				ID:     conflict.ID,
+				UserID: msg.UserID,
+			})
+			if err != nil {
+				return err
+			}
+		} else {
+			status = "candidate"
 		}
 	}
 

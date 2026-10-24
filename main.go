@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,6 +14,8 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/riverqueue/river/rivermigrate"
+	"github.com/rs/cors"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"go-monolith/internal/agent"
@@ -59,7 +63,9 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 }
 
 func main() {
-	_ = godotenv.Load()
+	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+		fmt.Printf("warning: failed to load .env file: %v\n", err)
+	}
 
 	logFile := &lumberjack.Logger{
 		Filename:   "backend.log",
@@ -81,9 +87,18 @@ func main() {
 	fmt.Println("Starting server...")
 
 	cfg := config.Load()
-	logger.Info("loaded config", slog.String("db_url", cfg.DatabaseURL))
+
+	dbURLForLog := cfg.DatabaseURL
+	if u, err := url.Parse(cfg.DatabaseURL); err == nil {
+		dbURLForLog = u.Redacted()
+	}
+	logger.Info("loaded config", slog.String("db_url", dbURLForLog))
 
 	prompts.Init("prompts")
+	if err := prompts.GlobalManager.Preload("chat_system.tmpl"); err != nil {
+		logger.Error("failed to preload critical templates", slog.Any("error", err))
+		os.Exit(1)
+	}
 
 	ctx := context.Background()
 
@@ -93,12 +108,22 @@ func main() {
 	}
 	logger.Info("migrations ran successfully")
 
-	database, err := db.Connect(ctx, cfg.DatabaseURL)
+	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer startupCancel()
+
+	database, err := db.Connect(startupCtx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to connect to database", slog.Any("error", err))
 		os.Exit(1)
 	}
-	defer database.Pool.Close()
+	defer func() {
+		if database.SqlDB != nil {
+			database.SqlDB.Close()
+		}
+		if database.Pool != nil {
+			database.Pool.Close()
+		}
+	}()
 
 	llmClient := llm.NewLemonadeClient()
 	embedder := llm.NewHTTPEmbedder(database)
@@ -109,9 +134,19 @@ func main() {
 		// don't exit, just continue without it if it fails
 	}
 
-	riverClient, err := jobs.NewRiverClient(ctx, database.Pool, database, llmClient, embedder, catMgr)
+	riverClient, err := jobs.NewRiverClient(startupCtx, database.Pool, database, llmClient, embedder, catMgr)
 	if err != nil {
 		logger.Error("failed to create river client", slog.Any("error", err))
+		os.Exit(1)
+	}
+
+	migrator, err := rivermigrate.New(riverClient.Driver(), nil)
+	if err != nil {
+		logger.Error("failed to create river migrator", slog.Any("error", err))
+		os.Exit(1)
+	}
+	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
+		logger.Error("failed to migrate river", slog.Any("error", err))
 		os.Exit(1)
 	}
 
@@ -120,7 +155,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		if err := riverClient.Stop(ctx); err != nil {
+		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := riverClient.Stop(stopCtx); err != nil {
 			logger.Error("failed to stop river client safely", slog.Any("error", err))
 		}
 	}()
@@ -136,7 +173,14 @@ func main() {
 		if err != nil {
 			logger.Error("failed to initialize telegram bot", slog.Any("error", err))
 		} else {
-			go tgBot.Start(ctx)
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("telegram bot panicked", slog.Any("error", r))
+					}
+				}()
+				tgBot.Start(ctx)
+			}()
 		}
 	}
 
@@ -195,26 +239,40 @@ func main() {
 
 	mux.Handle("/", userMiddleware(protectedMux))
 
-	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(mux))
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:*"},
+		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowCredentials: true,
+	})
+
+	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(c.Handler(mux)))
 
 	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: handler,
+		Addr:              ":8080",
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	srvErr := make(chan error, 1)
+
 	go func() {
 		logger.Info("server listening on :8080")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("server failed", slog.Any("error", err))
-			os.Exit(1)
+			srvErr <- err
 		}
 	}()
 
-	<-shutdownCtx.Done()
-	logger.Info("shutting down server gracefully...")
+	select {
+	case err := <-srvErr:
+		logger.Error("server failed", slog.Any("error", err))
+	case <-shutdownCtx.Done():
+		logger.Info("shutting down server gracefully...")
+	}
 
 	shutdownTimeoutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

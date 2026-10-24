@@ -134,3 +134,36 @@ func (m *MockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]floa
 
 	return resultVectors, nil
 }
+
+// Add simple config struct wrapper
+type MockEmbedderWithConfig struct {
+	EmptyVectors bool
+	Dim          int
+	Err          error
+}
+
+func (m *MockEmbedderWithConfig) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+	if m.Err != nil {
+		return nil, m.Err
+	}
+	if m.EmptyVectors || len(texts) == 0 {
+		return nil, nil
+	}
+
+	dim := m.Dim
+	if dim == 0 {
+		dim = 384
+	}
+
+	resultVectors := make([][]float32, len(texts))
+	for i := range texts {
+		vec := make([]float32, dim)
+		// fill something
+		for j := 0; j < dim; j++ {
+			vec[j] = float32(j) / float32(dim)
+		}
+		resultVectors[i] = vec
+	}
+
+	return resultVectors, nil
+}
