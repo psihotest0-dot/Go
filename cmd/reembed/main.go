@@ -88,8 +88,8 @@ func run() error {
 
 		pgVectors := make([]pgvector.Vector, len(vectors))
 		for i, v := range vectors {
-			if len(v) != 384 {
-				return fmt.Errorf("vector for memory %s has incorrect dimensions: expected 384, got %d", ids[i], len(v))
+			if len(v) != config.VectorDimension {
+				return fmt.Errorf("vector for memory %s has incorrect dimensions: expected %d, got %d", ids[i], config.VectorDimension, len(v))
 			}
 			pgVectors[i] = pgvector.NewVector(v)
 		}

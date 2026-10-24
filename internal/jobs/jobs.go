@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/prompts"
@@ -295,11 +296,13 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		return err
 	}
 	var vec pgvector.Vector
-	if len(vectors) > 0 && len(vectors[0]) == 384 {
-		vec = pgvector.NewVector(vectors[0])
-	} else {
-		vec = pgvector.NewVector(make([]float32, 384))
+	if len(vectors) == 0 {
+		return fmt.Errorf("embedder returned empty result")
 	}
+	if len(vectors[0]) != config.VectorDimension {
+		return fmt.Errorf("embedder returned invalid vector dimension: expected %d, got %d", config.VectorDimension, len(vectors[0]))
+	}
+	vec = pgvector.NewVector(vectors[0])
 
 	metaBytes, _ := json.Marshal(map[string]interface{}{
 		"fact_key":           fact.FactKey,

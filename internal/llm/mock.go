@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"go-monolith/internal/config"
 	"io"
 	"net/http"
 
@@ -116,7 +117,7 @@ func (m *MockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]floa
 
 	resultVectors := make([][]float32, len(texts))
 	for i, text := range texts {
-		vec := make([]float32, 384)
+		vec := make([]float32, config.VectorDimension)
 		h := sha256.Sum256([]byte(text))
 
 		// Fill first 32 dimensions with hash values
@@ -125,8 +126,8 @@ func (m *MockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]floa
 		}
 
 		// Fill rest to simulate something
-		for j := 32; j < 384; j++ {
-			vec[j] = float32(j) / 384.0
+		for j := 32; j < config.VectorDimension; j++ {
+			vec[j] = float32(j) / float32(config.VectorDimension)
 		}
 
 		resultVectors[i] = vec
@@ -152,7 +153,7 @@ func (m *MockEmbedderWithConfig) EmbedTexts(ctx context.Context, texts []string)
 
 	dim := m.Dim
 	if dim == 0 {
-		dim = 384
+		dim = config.VectorDimension
 	}
 
 	resultVectors := make([][]float32, len(texts))
