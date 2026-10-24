@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -17,7 +18,7 @@ import (
 const createDocumentChunk = `-- name: CreateDocumentChunk :one
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at
+RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at, chunk_type, metadata
 `
 
 type CreateDocumentChunkParams struct {
@@ -45,18 +46,22 @@ func (q *Queries) CreateDocumentChunk(ctx context.Context, arg CreateDocumentChu
 		&i.Text,
 		&i.Embedding,
 		&i.CreatedAt,
+		&i.ChunkType,
+		&i.Metadata,
 	)
 	return i, err
 }
 
 const createDocumentChunksBatch = `-- name: CreateDocumentChunksBatch :exec
-INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
 SELECT
     unnest($1::uuid[]),
     unnest($2::uuid[]),
     unnest($3::int[]),
     unnest($4::text[]),
-    unnest($5::vector[])
+    unnest($5::vector[]),
+    unnest($6::text[]),
+    unnest($7::jsonb[])
 `
 
 type CreateDocumentChunksBatchParams struct {
@@ -65,6 +70,8 @@ type CreateDocumentChunksBatchParams struct {
 	ChunkIndices []int32           `json:"chunk_indices"`
 	Texts        []string          `json:"texts"`
 	Embeddings   []pgvector.Vector `json:"embeddings"`
+	ChunkTypes   []string          `json:"chunk_types"`
+	Metadatas    []json.RawMessage `json:"metadatas"`
 }
 
 func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocumentChunksBatchParams) error {
@@ -74,6 +81,8 @@ func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocum
 		pq.Array(arg.ChunkIndices),
 		pq.Array(arg.Texts),
 		pq.Array(arg.Embeddings),
+		pq.Array(arg.ChunkTypes),
+		pq.Array(arg.Metadatas),
 	)
 	return err
 }
@@ -137,7 +146,7 @@ func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFile
 }
 
 const getDocumentChunksByFile = `-- name: GetDocumentChunksByFile :many
-SELECT id, file_id, user_id, chunk_index, text, embedding, created_at FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC
+SELECT id, file_id, user_id, chunk_index, text, embedding, created_at, chunk_type, metadata FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC
 `
 
 type GetDocumentChunksByFileParams struct {
@@ -162,6 +171,8 @@ func (q *Queries) GetDocumentChunksByFile(ctx context.Context, arg GetDocumentCh
 			&i.Text,
 			&i.Embedding,
 			&i.CreatedAt,
+			&i.ChunkType,
+			&i.Metadata,
 		); err != nil {
 			return nil, err
 		}
@@ -177,7 +188,7 @@ func (q *Queries) GetDocumentChunksByFile(ctx context.Context, arg GetDocumentCh
 }
 
 const getDocumentChunksWithFile = `-- name: GetDocumentChunksWithFile :many
-SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, f.file_name
+SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, c.chunk_type, c.metadata, f.file_name
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.id = ANY($1::uuid[]) AND c.user_id = $2
@@ -196,6 +207,8 @@ type GetDocumentChunksWithFileRow struct {
 	Text       string          `json:"text"`
 	Embedding  pgvector.Vector `json:"embedding"`
 	CreatedAt  sql.NullTime    `json:"created_at"`
+	ChunkType  string          `json:"chunk_type"`
+	Metadata   json.RawMessage `json:"metadata"`
 	FileName   string          `json:"file_name"`
 }
 
@@ -216,6 +229,8 @@ func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, arg GetDocument
 			&i.Text,
 			&i.Embedding,
 			&i.CreatedAt,
+			&i.ChunkType,
+			&i.Metadata,
 			&i.FileName,
 		); err != nil {
 			return nil, err
@@ -324,6 +339,61 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 	return items, nil
 }
 
+const searchConceptChunks = `-- name: SearchConceptChunks :many
+SELECT c.id, c.text as content, f.file_name, c.metadata,
+       CAST(c.embedding <=> $1 AS FLOAT8) as distance
+FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.user_id = $2
+  AND f.status = 'completed'
+  AND c.chunk_type = 'concept_summary'
+  AND (c.embedding <=> $1) < 0.40
+ORDER BY distance ASC
+LIMIT 3
+`
+
+type SearchConceptChunksParams struct {
+	Embedding pgvector.Vector `json:"embedding"`
+	UserID    uuid.UUID       `json:"user_id"`
+}
+
+type SearchConceptChunksRow struct {
+	ID       uuid.UUID       `json:"id"`
+	Content  string          `json:"content"`
+	FileName string          `json:"file_name"`
+	Metadata json.RawMessage `json:"metadata"`
+	Distance float64         `json:"distance"`
+}
+
+func (q *Queries) SearchConceptChunks(ctx context.Context, arg SearchConceptChunksParams) ([]SearchConceptChunksRow, error) {
+	rows, err := q.db.QueryContext(ctx, searchConceptChunks, arg.Embedding, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchConceptChunksRow{}
+	for rows.Next() {
+		var i SearchConceptChunksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.FileName,
+			&i.Metadata,
+			&i.Distance,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchHybridChunks = `-- name: SearchHybridChunks :many
 WITH chunk_vector_search AS (
     SELECT source_type, id, content, rank, category FROM (
@@ -334,6 +404,7 @@ WITH chunk_vector_search AS (
         JOIN ingested_files f ON c.file_id = f.id
         WHERE c.user_id = $3
           AND f.status = 'completed'
+          AND c.chunk_type = 'raw_text'
           AND (c.embedding <=> $5) < 0.45
     ) sub
     WHERE file_rank <= 2
