@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 
@@ -243,7 +244,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 			return
 		}
-		if len(vectors[0]) != 384 {
+		if len(vectors[0]) != config.VectorDimension {
 			slog.Error("embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
 			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 			return
@@ -391,7 +392,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 				return
 			}
-			if len(vectors[0]) != 384 {
+			if len(vectors[0]) != config.VectorDimension {
 				slog.Error("embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
 				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 				return
