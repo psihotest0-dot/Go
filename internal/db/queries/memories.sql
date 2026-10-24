@@ -36,7 +36,8 @@ RETURNING *;
 
 -- name: SearchHybridMemories :many
 WITH vector_search AS (
-    SELECT id, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank
+    SELECT id, RANK() OVER (ORDER BY memories.embedding <=> sqlc.arg('embedding')) as rank,
+           (memories.embedding <=> sqlc.arg('embedding')) as distance
     FROM memories
     WHERE memories.user_id = sqlc.arg('user_id')
       AND memories.status IN ('active', 'candidate')
@@ -45,7 +46,8 @@ WITH vector_search AS (
     LIMIT 100
 ),
 text_search AS (
-    SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank
+    SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank,
+           similarity(content, sqlc.arg('query_text')) as sim_score
     FROM memories
     WHERE memories.user_id = sqlc.arg('user_id')
       AND memories.status IN ('active', 'candidate')
@@ -53,13 +55,19 @@ text_search AS (
     ORDER BY rank
     LIMIT 100
 )
-SELECT m.id, m.content, CAST(COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0) + 0.01 * (COALESCE(m.importance, 5)::FLOAT8 / 10.0) AS FLOAT8) as score
+SELECT m.id, m.content,
+    CAST(
+        GREATEST(
+            COALESCE(1.0 - vs.distance, 0.0),
+            COALESCE(ts.sim_score, 0.0)
+        ) + 0.01 * (COALESCE(m.importance, 5)::FLOAT8 / 10.0)
+    AS FLOAT8) as score
 FROM memories m
 LEFT JOIN vector_search vs ON m.id = vs.id
 LEFT JOIN text_search ts ON m.id = ts.id
 WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
   AND m.user_id = sqlc.arg('user_id') AND m.status != 'superseded'
-ORDER BY score DESC
+ORDER BY (COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0)) DESC
 LIMIT sqlc.arg('match_count');
 
 -- name: SearchTextMemories :many
