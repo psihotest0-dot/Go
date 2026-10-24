@@ -45,6 +45,7 @@ require (
 	github.com/riverqueue/river/riverdriver v0.49.0 // indirect
 	github.com/riverqueue/river/rivershared v0.49.0 // indirect
 	github.com/riverqueue/river/rivertype v0.49.0 // indirect
+	github.com/rs/cors v1.11.1 // indirect
 	github.com/sethvargo/go-retry v0.5.0 // indirect
 	github.com/tidwall/gjson v1.20.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
