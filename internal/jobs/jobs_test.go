@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"go-monolith/internal/config"
 	"testing"
 
 	"go-monolith/internal/db"
@@ -42,7 +43,7 @@ func (m *mockLLMClient) ChatWithJSONSchema(ctx context.Context, req openai.ChatC
 type mockEmbedder struct{}
 
 func (m *mockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
-	return [][]float32{make([]float32, 384)}, nil
+	return [][]float32{make([]float32, config.VectorDimension)}, nil
 }
 
 func TestMemoryConsolidationWorker(t *testing.T) {
