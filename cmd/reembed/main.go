@@ -3,48 +3,64 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
+	"time"
 
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 
+	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-func main() {
+func run() error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
 
 	batchSize := flag.Int("batch", 64, "batch size for re-embedding")
 	modelName := flag.String("model", "paraphrase-multilingual-MiniLM-L12-v2", "embedding model name")
+	filterModel := flag.String("filter-model", "", "model to filter out (only embed if current model != filter-model)")
 	flag.Parse()
+
+	if *filterModel == "" {
+		*filterModel = *modelName
+	}
 
 	cfg := config.Load()
 	ctx := context.Background()
 
 	database, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
-		logger.Error("failed to connect to database", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
-	defer database.Pool.Close()
+	defer func() {
+		database.Pool.Close()
+		database.SqlDB.Close()
+	}()
 
 	embedder := llm.NewHTTPEmbedder(database)
 
 	limit := int32(*batchSize)
 
-	logger.Info("Starting re-embedding process", slog.Int("batch_size", *batchSize))
+	logger.Info("Starting re-embedding process", slog.Int("batch_size", *batchSize), slog.String("model", *modelName), slog.String("filter_model", *filterModel))
+
+	lastCreatedAt := time.Time{}
+	lastID := uuid.Nil
+
+	totalProcessed := 0
 
 	for {
 		memories, err := database.Queries.GetAllMemoriesForReembedding(ctx, db.GetAllMemoriesForReembeddingParams{
-			EmbeddingModel: *modelName,
+			LastCreatedAt:  lastCreatedAt,
+			LastID:         lastID,
+			EmbeddingModel: *filterModel,
 			Limit:          limit,
 		})
 		if err != nil {
-			logger.Error("failed to get memories", slog.Any("error", err))
-			os.Exit(1)
+			return fmt.Errorf("failed to get memories: %w", err)
 		}
 
 		if len(memories) == 0 {
@@ -52,33 +68,58 @@ func main() {
 		}
 
 		texts := make([]string, len(memories))
+		ids := make([]uuid.UUID, len(memories))
 		for i, mem := range memories {
 			texts[i] = mem.Content
+			ids[i] = mem.ID
 		}
 
-		vectors, err := embedder.EmbedTexts(ctx, texts)
+		batchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		vectors, err := embedder.EmbedTexts(batchCtx, texts)
+		cancel()
+
 		if err != nil {
-			logger.Error("failed to embed texts", slog.Any("error", err))
-			os.Exit(1)
+			return fmt.Errorf("failed to embed texts: %w", err)
 		}
 
-		for i, mem := range memories {
-			if i < len(vectors) {
-				pgVec := pgvector.NewVector(vectors[i])
-				err := database.Queries.UpdateMemoryEmbedding(ctx, db.UpdateMemoryEmbeddingParams{
-					Embedding:      pgVec,
-					EmbeddingModel: *modelName,
-					ID:             mem.ID,
-					UserID:         mem.UserID,
-				})
-				if err != nil {
-					logger.Error("failed to update memory embedding", slog.Any("error", err), slog.Any("id", mem.ID))
-				}
+		if len(vectors) != len(memories) {
+			return fmt.Errorf("embedder returned %d vectors for %d memories, expected exact match", len(vectors), len(memories))
+		}
+
+		pgVectors := make([]pgvector.Vector, len(vectors))
+		for i, v := range vectors {
+			if len(v) != 384 {
+				return fmt.Errorf("vector for memory %s has incorrect dimensions: expected 384, got %d", ids[i], len(v))
 			}
+			pgVectors[i] = pgvector.NewVector(v)
 		}
 
-		logger.Info("processed batch")
+		err = database.Queries.UpdateMemoryEmbeddingsBatch(ctx, db.UpdateMemoryEmbeddingsBatchParams{
+			EmbeddingModel: *modelName,
+			Ids:            ids,
+			Embeddings:     pgVectors,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to update memory embeddings batch: %w", err)
+		}
+
+		lastMemory := memories[len(memories)-1]
+		if lastMemory.CreatedAt.Valid {
+			lastCreatedAt = lastMemory.CreatedAt.Time
+		}
+		lastID = lastMemory.ID
+
+		totalProcessed += len(memories)
+		logger.Info("processed batch", slog.Int("batch_size", len(memories)), slog.Int("total", totalProcessed))
 	}
 
-	logger.Info("re-embedding process complete")
+	logger.Info("re-embedding process complete", slog.Int("total", totalProcessed))
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal error", slog.Any("error", err))
+		os.Exit(1)
+	}
 }

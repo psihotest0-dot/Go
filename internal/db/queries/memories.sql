@@ -78,7 +78,23 @@ SET status = 'superseded', updated_at = NOW()
 WHERE id = $1 AND user_id = $2;
 
 -- name: GetAllMemoriesForReembedding :many
-SELECT * FROM memories WHERE embedding_model != $1 LIMIT $2;
+SELECT * FROM memories
+WHERE (created_at, id) > (sqlc.arg('last_created_at')::TIMESTAMP WITH TIME ZONE, sqlc.arg('last_id')::UUID)
+  AND content != ''
+  AND (embedding_model != sqlc.arg('embedding_model') OR embedding_model IS NULL)
+ORDER BY created_at ASC, id ASC
+LIMIT sqlc.arg('limit');
 
 -- name: UpdateMemoryEmbedding :exec
 UPDATE memories SET embedding = $1, embedding_model = $2 WHERE id = $3 AND user_id = $4;
+
+-- name: UpdateMemoryEmbeddingsBatch :exec
+UPDATE memories
+SET embedding = v.embedding,
+    embedding_model = sqlc.arg('embedding_model'),
+    updated_at = NOW()
+FROM (
+    SELECT unnest(sqlc.arg('ids')::uuid[]) AS id,
+           unnest(sqlc.arg('embeddings')::vector[]) AS embedding
+) v
+WHERE memories.id = v.id;
