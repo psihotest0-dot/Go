@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -10,17 +11,55 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
+	"go-monolith/internal/retrieval"
 )
+
+var (
+	adaptiveRegex = regexp.MustCompile(`^(?i)(здрасти|здравей|ок|мерси|благодаря|разбрах|добре|супер|ясно|да|не|ok|okay|thanks|thank you|yes|no|got it|hello|hi|hey)$`)
+)
+
+func shouldSkipRetrieval(query string) bool {
+	q := strings.TrimSpace(query)
+	// Fast regex pre-filter
+	if adaptiveRegex.MatchString(q) {
+		return true
+	}
+
+	// Fast length heuristic
+	if len([]rune(q)) < 5 {
+		return true
+	}
+
+	return false
+}
 
 func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req ChatRequest) (chatContext, []string, error) {
 	var chatCtx chatContext
 	var memoryIDs []string
 
-	// Call new SearchAll method
-	memories, chunks, errM := o.retrieval.SearchAll(ctx, userID, req.Content, 5)
-	if errM != nil {
-		slog.Warn("Failed to search all", "error", errM)
+	skip := false
+	if config.Load().EnableAdaptiveSkip {
+		skip = shouldSkipRetrieval(req.Content)
+		if skip {
+			_ = o.writeTrace(ctx, userID, req.SessionID, "adaptive_skip", map[string]interface{}{
+				"query": req.Content,
+			})
+			slog.Info("Adaptive skip triggered for query", "query", req.Content)
+		}
+	}
+
+	var memories []retrieval.SearchResult
+	var chunks []retrieval.SearchResult
+	var errM error
+
+	if !skip {
+		// Call new SearchAll method
+		memories, chunks, errM = o.retrieval.SearchAll(ctx, userID, req.Content, 5)
+		if errM != nil {
+			slog.Warn("Failed to search all", "error", errM)
+		}
 	}
 
 	for _, m := range memories {
@@ -85,7 +124,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	// Fetch Top Memories
 	topMemoriesDb, err := o.db.Queries.GetTopMemories(ctx, db.GetTopMemoriesParams{
 		UserID: userID,
-		Limit:  5,
+		Limit:  15,
 	})
 	if err != nil {
 		slog.Error("failed to get top memories", "err", err)
