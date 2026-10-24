@@ -6,9 +6,10 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"unicode"
 	"time"
+	"unicode"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
 	"go-monolith/internal/llm"
@@ -147,7 +148,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			chunkIndices = append(chunkIndices, int32(i+j))
 			texts = append(texts, chunk)
 
-			if len(vectors[j]) != 384 {
+			if len(vectors[j]) != config.VectorDimension {
 				w.markFileFailed(file.ID, file.UserID)
 				return fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
 			}
