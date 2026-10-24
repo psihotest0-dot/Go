@@ -8,8 +8,10 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 )
@@ -78,16 +80,28 @@ func (q *Queries) DeleteMemory(ctx context.Context, arg DeleteMemoryParams) erro
 }
 
 const getAllMemoriesForReembedding = `-- name: GetAllMemoriesForReembedding :many
-SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories WHERE embedding_model != $1 LIMIT $2
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
+WHERE (created_at, id) > ($1::TIMESTAMP WITH TIME ZONE, $2::UUID)
+  AND content != ''
+  AND (embedding_model != $3 OR embedding_model IS NULL)
+ORDER BY created_at ASC, id ASC
+LIMIT $4
 `
 
 type GetAllMemoriesForReembeddingParams struct {
-	EmbeddingModel string `json:"embedding_model"`
-	Limit          int32  `json:"limit"`
+	LastCreatedAt  time.Time `json:"last_created_at"`
+	LastID         uuid.UUID `json:"last_id"`
+	EmbeddingModel string    `json:"embedding_model"`
+	Limit          int32     `json:"limit"`
 }
 
 func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMemoriesForReembeddingParams) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, getAllMemoriesForReembedding, arg.EmbeddingModel, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, getAllMemoriesForReembedding,
+		arg.LastCreatedAt,
+		arg.LastID,
+		arg.EmbeddingModel,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -485,5 +499,28 @@ func (q *Queries) UpdateMemoryEmbedding(ctx context.Context, arg UpdateMemoryEmb
 		arg.ID,
 		arg.UserID,
 	)
+	return err
+}
+
+const updateMemoryEmbeddingsBatch = `-- name: UpdateMemoryEmbeddingsBatch :exec
+UPDATE memories
+SET embedding = v.embedding,
+    embedding_model = $1,
+    updated_at = NOW()
+FROM (
+    SELECT unnest($2::uuid[]) AS id,
+           unnest($3::vector[]) AS embedding
+) v
+WHERE memories.id = v.id
+`
+
+type UpdateMemoryEmbeddingsBatchParams struct {
+	EmbeddingModel string            `json:"embedding_model"`
+	Ids            []uuid.UUID       `json:"ids"`
+	Embeddings     []pgvector.Vector `json:"embeddings"`
+}
+
+func (q *Queries) UpdateMemoryEmbeddingsBatch(ctx context.Context, arg UpdateMemoryEmbeddingsBatchParams) error {
+	_, err := q.db.ExecContext(ctx, updateMemoryEmbeddingsBatch, arg.EmbeddingModel, pq.Array(arg.Ids), pq.Array(arg.Embeddings))
 	return err
 }
