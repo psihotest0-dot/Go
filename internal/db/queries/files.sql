@@ -63,8 +63,9 @@ LIMIT 3;
 
 -- name: SearchHybridChunks :many
 WITH chunk_vector_search AS (
-    SELECT source_type, id, content, rank, category FROM (
+    SELECT source_type, id, content, rank, category, distance FROM (
         SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
+               (c.embedding <=> sqlc.arg('embedding')) as distance,
                RANK() OVER (ORDER BY c.embedding <=> sqlc.arg('embedding')) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> sqlc.arg('embedding')) as file_rank
         FROM document_chunks c
@@ -79,8 +80,9 @@ WITH chunk_vector_search AS (
     LIMIT 100
 ),
 chunk_text_search AS (
-    SELECT source_type, id, content, rank, category FROM (
+    SELECT source_type, id, content, rank, category, sim_score FROM (
         SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
+               similarity(c.text, sqlc.arg('query_text')) as sim_score,
                RANK() OVER (ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, sqlc.arg('query_text')) DESC) as file_rank
         FROM document_chunks c
@@ -98,8 +100,10 @@ SELECT
     c.text as content,
     f.file_name,
     CAST(
-        COALESCE(1.0 / (60 + cvs.rank), 0.0) +
-        COALESCE(1.0 / (60 + cts.rank), 0.0) +
+        GREATEST(
+            COALESCE(1.0 - cvs.distance, 0.0),
+            COALESCE(cts.sim_score, 0.0)
+        ) +
         (CASE WHEN COALESCE(cvs.category, cts.category) = sqlc.arg('boost_category')::text THEN sqlc.arg('boost_amount')::FLOAT8 ELSE 0.0 END)
     AS FLOAT8) as score
 FROM document_chunks c
@@ -108,7 +112,7 @@ LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
 LEFT JOIN chunk_text_search cts ON c.id = cts.id
 WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
   AND c.user_id = sqlc.arg('user_id')
-ORDER BY score DESC
+ORDER BY (COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0)) DESC
 LIMIT sqlc.arg('match_count');
 
 -- name: SearchTextChunks :many
