@@ -143,5 +143,12 @@ func (cm *CategoryManager) GetCentroid(category string) ([]float32, bool) {
 }
 
 func (cm *CategoryManager) GetAllCentroids() map[string][]float32 {
-	return cm.centroids
+	copied := make(map[string][]float32, len(cm.centroids))
+	for k, v := range cm.centroids {
+		newSlice := make([]float32, len(v))
+		copy(newSlice, v)
+		copied[k] = newSlice
+	}
+	return copied
+
 }

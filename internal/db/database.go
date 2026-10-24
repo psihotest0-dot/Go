@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"crypto/sha256"
+	"github.com/lib/pq"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -89,7 +90,8 @@ func (db *Database) CreateMemoryWithCheck(ctx context.Context, params CreateMemo
 	mem, err := db.Queries.CreateMemory(ctx, params)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		var pqErr *pq.Error
+		if (errors.As(err, &pgErr) && pgErr.Code == "23505") || (errors.As(err, &pqErr) && pqErr.Code == "23505") {
 			// Memory exists, unique constraint violated
 			existing, getErr := db.Queries.GetMemoryByHash(ctx, GetMemoryByHashParams{
 				UserID:      params.UserID,
@@ -118,5 +120,14 @@ func (db *Database) UpdateMemoryWithCheck(ctx context.Context, params UpdateMemo
 		}
 	}
 
-	return db.Queries.UpdateMemory(ctx, params)
+	mem, err := db.Queries.UpdateMemory(ctx, params)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		var pqErr *pq.Error
+		if (errors.As(err, &pgErr) && pgErr.Code == "23505") || (errors.As(err, &pqErr) && pqErr.Code == "23505") {
+			return Memory{}, ErrMemoryExists
+		}
+		return Memory{}, err
+	}
+	return mem, nil
 }

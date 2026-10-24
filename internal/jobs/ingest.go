@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"unicode"
+	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
@@ -43,8 +44,23 @@ func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *r
 	}
 }
 
+func (w *IngestFileWorker) markFileFailed(fileID uuid.UUID, userID uuid.UUID) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = w.dbClient.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
+		ID:     fileID,
+		Status: "failed",
+		UserID: userID,
+	})
+}
+
 func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileArgs]) error {
 	slog.Info("IngestFileWorker started", "file_id", job.Args.FileID)
+
+	_, err := w.dbClient.SqlDB.ExecContext(ctx, "DELETE FROM document_chunks WHERE file_id = $1", job.Args.FileID)
+	if err != nil {
+		return fmt.Errorf("failed to clean up old document chunks: %w", err)
+	}
 
 	file, err := w.dbClient.Queries.GetIngestedFileByID(ctx, job.Args.FileID)
 	if err != nil {
@@ -54,6 +70,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	err = w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{
 		ID:     file.ID,
 		Status: "processing",
+		UserID: file.UserID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update status to processing: %w", err)
@@ -61,14 +78,14 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	f, err := os.Open(file.LocalPath)
 	if err != nil {
-		w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+		w.markFileFailed(file.ID, file.UserID)
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 
 	text, err := w.manager.Extract(ctx, file.FileName, f)
 	f.Close()
 	if err != nil {
-		w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+		w.markFileFailed(file.ID, file.UserID)
 		return fmt.Errorf("failed to extract text: %w", err)
 	}
 
@@ -104,17 +121,15 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			enrichedBatch = append(enrichedBatch, fmt.Sprintf("Файл: %s. Съдържание: %s", file.FileName, chunk))
 		}
 
-		vectors, err := w.embedder.EmbedTexts(ctx, enrichedBatch)
-		if err != nil {
-			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
-			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, err)
+		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch)
+		if embedErr != nil {
+			w.markFileFailed(file.ID, file.UserID)
+			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, embedErr)
 		}
 
 		// Check if vectors match the number of chunks. If not, return an error.
 		if len(vectors) != len(enrichedBatch) {
-			if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"}); updateErr != nil {
-				slog.Error("Failed to update status to failed", "file_id", file.ID, "error", updateErr)
-			}
+			w.markFileFailed(file.ID, file.UserID)
 			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors))
 		}
 
@@ -133,7 +148,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			texts = append(texts, chunk)
 
 			if len(vectors[j]) != 384 {
-				w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+				w.markFileFailed(file.ID, file.UserID)
 				return fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
 			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
@@ -147,7 +162,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			Embeddings:   embeddings,
 		})
 		if err != nil {
-			w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{ID: file.ID, Status: "failed"})
+			w.markFileFailed(file.ID, file.UserID)
 			return fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err)
 		}
 	}
@@ -206,6 +221,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	err = w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{
 		ID:     file.ID,
 		Status: "completed",
+		UserID: file.UserID,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to update status to completed: %w", err)

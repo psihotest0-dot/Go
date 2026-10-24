@@ -18,7 +18,13 @@ import (
 
 // generateResponse handles the LLM generation and tool calling logic, but unlike streamResponse, it
 // does not write SSE events to an HTTP ResponseWriter. Instead, it accumulates the result and returns it.
-func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (string, string, []openai.ToolCall, error) {
+func (o *Orchestrator) generateResponse(
+	ctx context.Context,
+	finalMessages []openai.ChatCompletionMessage,
+	tools []openai.Tool,
+	sources []api.SourceInfo,
+	onDelta func(content, reasoning string) error,
+) (string, string, []openai.ToolCall, error) {
 	chatReq := openai.ChatCompletionRequest{
 		Messages: finalMessages,
 		Stream:   true,
@@ -81,6 +87,13 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 			chunk := delta.Content
 			if chunk != "" {
 				fullAssistantMessage.WriteString(chunk)
+			}
+
+			if onDelta != nil && (chunk != "" || reasoningChunk != "") {
+				if err := onDelta(chunk, reasoningChunk); err != nil {
+					slog.Error("onDelta callback failed", "err", err)
+					return "", "", nil, err
+				}
 			}
 		}
 	}
@@ -159,6 +172,12 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 						secondCallText.WriteString(chunk)
 						fullAssistantMessage.WriteString(chunk)
 					}
+
+					if onDelta != nil && (chunk != "" || reasoningChunk != "") {
+						if err := onDelta(chunk, reasoningChunk); err != nil {
+							break // error in callback, stop processing
+						}
+					}
 				}
 			}
 		}()
@@ -206,6 +225,12 @@ func (o *Orchestrator) generateResponse(ctx context.Context, finalMessages []ope
 					chunk := resp3.Choices[0].Delta.Content
 					if chunk != "" {
 						fullAssistantMessage.WriteString(chunk)
+					}
+
+					if onDelta != nil && (chunk != "" || reasoningChunk != "") {
+						if err := onDelta(chunk, reasoningChunk); err != nil {
+							break // error in callback, stop processing
+						}
 					}
 				}
 			}

@@ -2,8 +2,10 @@ package api
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"context"
 	"strings"
+	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
@@ -37,9 +41,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		// Enforce size limit (e.g. 50MB)
-		r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-		if err := r.ParseMultipartForm(50 << 20); err != nil {
+		// Enforce size limit (e.g. 100MB)
+		r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
+		if err := r.ParseMultipartForm(100 << 20); err != nil {
 			slog.Warn("file too large or invalid multipart form", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
 			return
@@ -52,8 +56,8 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		// Read into memory for hash and mimetype (for files under 50MB this is ok, else temp file is better)
-		// Since MaxBytesReader is used, reading all is safe up to 50MB.
+		// Read into memory for hash and mimetype (for files under 100MB this is ok, else temp file is better)
+		// Since MaxBytesReader is used, reading all is safe up to 100MB.
 		fileBytes, err := io.ReadAll(file)
 		file.Close() // explicitly close file after reading to avoid sharing violation on Windows before rename/remove
 		if err != nil {
@@ -75,6 +79,11 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			UserID:   userID,
 			FileHash: hashStr,
 		})
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			slog.Error("failed to check existing file by hash", slog.Any("error", err))
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
 		if err == nil && existingFile.ID != uuid.Nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict) // 409
@@ -85,13 +94,6 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		// Ensure storage dir
 		os.MkdirAll("storage", 0755)
 		localPath := filepath.Join("storage", fmt.Sprintf("%s_%s", uuid.New().String(), filepath.Base(handler.Filename)))
-
-		err = os.WriteFile(localPath, fileBytes, 0644)
-		if err != nil {
-			slog.Error("failed to save file locally", slog.Any("error", err))
-			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
-			return
-		}
 
 		ingestedFile, err := a.db.Queries.CreateIngestedFile(r.Context(), db.CreateIngestedFileParams{
 			UserID:    userID,
@@ -108,13 +110,33 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
+		ioErr := os.WriteFile(localPath, fileBytes, 0644)
+		if ioErr != nil {
+			slog.Error("failed to save file locally", slog.Any("error", ioErr))
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
+				ID:     ingestedFile.ID,
+				Status: "failed",
+				UserID: userID,
+			})
+			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
+			return
+		}
+
 		if riverClient != nil {
-			_, err = riverClient.Insert(r.Context(), jobs.IngestFileArgs{
+			_, jobErr := riverClient.Insert(r.Context(), jobs.IngestFileArgs{
 				FileID: ingestedFile.ID,
 			}, nil)
-			if err != nil {
-				// Log error, but file is saved
-				fmt.Printf("failed to enqueue ingest job: %v\n", err)
+			if jobErr != nil {
+				slog.Error("failed to enqueue ingest job", slog.Any("error", jobErr))
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
+					ID:     ingestedFile.ID,
+					Status: "failed",
+					UserID: userID,
+				})
 			}
 		}
 
@@ -249,9 +271,9 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Category string `json:"category"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
+		slog.Warn("invalid request body", slog.Any("error", decErr), slog.String("path", r.URL.Path))
+		http.Error(w, decErr.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -272,6 +294,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	err = a.db.Queries.UpdateIngestedFileCategory(r.Context(), db.UpdateIngestedFileCategoryParams{
 		ID:       fileID,
 		Category: req.Category,
+		UserID:   userID,
 	})
 	if err != nil {
 		slog.Error("failed to update file category", slog.Any("error", err))
