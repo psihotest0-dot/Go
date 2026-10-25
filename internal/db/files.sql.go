@@ -61,7 +61,7 @@ SELECT
     unnest($4::text[]),
     unnest($5::vector[]),
     unnest($6::text[]),
-    unnest($7::jsonb[])
+    CAST(unnest($7::text[]) AS jsonb)
 `
 
 type CreateDocumentChunksBatchParams struct {
@@ -71,7 +71,7 @@ type CreateDocumentChunksBatchParams struct {
 	Texts        []string          `json:"texts"`
 	Embeddings   []pgvector.Vector `json:"embeddings"`
 	ChunkTypes   []string          `json:"chunk_types"`
-	Metadatas    []json.RawMessage `json:"metadatas"`
+	Metadatas    []string          `json:"metadatas"`
 }
 
 func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocumentChunksBatchParams) error {
