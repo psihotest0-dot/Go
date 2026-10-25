@@ -46,7 +46,7 @@ type DistillationSchema struct {
 }
 
 func (w *DistillationWorker) Timeout(job *river.Job[DistillationWorkerArgs]) time.Duration {
-	return 30 * time.Minute // Large documents may take time
+	return 90 * time.Minute // Large documents may take time
 }
 
 func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[DistillationWorkerArgs]) error {
@@ -72,30 +72,57 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 		return fmt.Errorf("failed to get document chunks: %w", err)
 	}
 
-	// Check if we already have concept_summary chunks for this file
-	hasConceptSummary := false
 	var rawChunks []db.DocumentChunk
+	var conceptChunks []db.DocumentChunk
 	for _, c := range chunks {
-		if c.ChunkType == "concept_summary" {
-			hasConceptSummary = true
-			break
-		}
-		if c.ChunkType == "raw_text" {
+		switch c.ChunkType {
+		case "raw_text":
 			rawChunks = append(rawChunks, c)
+		case "concept_summary":
+			conceptChunks = append(conceptChunks, c)
 		}
-	}
-
-	if hasConceptSummary {
-		slog.Info("DistillationWorker skipped (already has concept_summary chunks)", "file_id", job.Args.FileID)
-		return nil
 	}
 
 	if len(rawChunks) == 0 {
 		return nil
 	}
 
-	// Process in batches (sliding windows of 5 chunks)
 	batchSize := 5
+	expectedConcepts := (len(rawChunks) + batchSize - 1) / batchSize
+
+	if float64(len(conceptChunks)) >= float64(expectedConcepts)*0.8 {
+		slog.Info("Distillation skipped (sufficient coverage)",
+			"file_id", job.Args.FileID,
+			"have", len(conceptChunks),
+			"expected", expectedConcepts)
+		return nil
+	}
+
+	if len(conceptChunks) > 0 {
+		slog.Info("Re-distilling (partial coverage)",
+			"file_id", job.Args.FileID,
+			"have", len(conceptChunks),
+			"expected", expectedConcepts)
+		_, err = w.dbClient.SqlDB.ExecContext(ctx,
+			`DELETE FROM document_chunks WHERE file_id = $1 AND chunk_type = 'concept_summary'`,
+			file.ID)
+		if err != nil {
+			return fmt.Errorf("failed to clear old concept chunks: %w", err)
+		}
+	}
+
+	// Process in batches (sliding windows of 5 chunks)
+	var maxChunkIndex int
+	err = w.dbClient.SqlDB.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(chunk_index), -1) FROM document_chunks WHERE file_id = $1`,
+		file.ID).Scan(&maxChunkIndex)
+	if err != nil {
+		return fmt.Errorf("failed to get max chunk index: %w", err)
+	}
+	nextConceptIndex := maxChunkIndex + 1
+	successCount := 0
+	failCount := 0
+
 	for i := 0; i < len(rawChunks); i += batchSize {
 		end := i + batchSize
 		if end > len(rawChunks) {
@@ -121,7 +148,8 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 
 		resp, err := w.llmClient.ChatWithJSONSchema(ctx, req, DistillationSchema{})
 		if err != nil {
-			slog.Error("failed to distill batch", "error", err)
+			slog.Error("failed to distill batch", "batch_start", i, "error", err)
+			failCount++
 			continue
 		}
 
@@ -138,14 +166,16 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 
 			err = json.Unmarshal([]byte(content), &result)
 			if err != nil {
-				slog.Error("failed to parse distillation response", "error", err, "content", content)
+				slog.Error("failed to parse distillation response", "batch_start", i, "error", err, "content", content)
+				failCount++
 				continue
 			}
 
 			// Embed the summary
 			vectors, err := w.embedder.EmbedTexts(ctx, []string{result.Summary})
 			if err != nil || len(vectors) == 0 || len(vectors[0]) != config.VectorDimension {
-				slog.Error("failed to embed distillation summary", "error", err)
+				slog.Error("failed to embed distillation summary", "batch_start", i, "error", err)
+				failCount++
 				continue
 			}
 			embedding := pgvector.NewVector(vectors[0])
@@ -157,7 +187,8 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 			}
 			metaBytes, err := json.Marshal(metaMap)
 			if err != nil {
-				slog.Error("failed to marshal metadata", "error", err)
+				slog.Error("failed to marshal metadata", "batch_start", i, "error", err)
+				failCount++
 				continue
 			}
 
@@ -165,14 +196,33 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 			_, err = w.dbClient.SqlDB.ExecContext(ctx,
 				`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
 				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				file.ID, file.UserID, i, result.Summary, embedding, "concept_summary", metaBytes,
+				file.ID, file.UserID, nextConceptIndex, result.Summary, embedding, "concept_summary", metaBytes,
 			)
 			if err != nil {
-				slog.Error("failed to insert concept_summary", "error", err)
+				slog.Error("failed to insert concept_summary",
+					"chunk_index", nextConceptIndex, "error", err)
+				return fmt.Errorf("failed to insert concept_summary at index %d: %w", nextConceptIndex, err)
 			}
+			nextConceptIndex++
+			successCount++
 		}
 	}
 
-	slog.Info("DistillationWorker finished", "file_id", job.Args.FileID)
+	slog.Info("DistillationWorker finished",
+		"file_id", job.Args.FileID,
+		"success", successCount,
+		"failed", failCount,
+		"concepts_created", successCount)
+
+	if successCount == 0 && failCount > 0 {
+		return fmt.Errorf("all %d distillation batches failed for file %s", failCount, file.ID)
+	}
+
+	if failCount > 0 {
+		slog.Warn("Distillation completed with partial failures",
+			"file_id", job.Args.FileID,
+			"success", successCount, "failed", failCount)
+	}
+
 	return nil
 }
