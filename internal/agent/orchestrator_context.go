@@ -65,10 +65,10 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	var errM error
 
 	if !skip {
-		// Call new SearchAll method
-		memories, chunks, errM = o.retrieval.SearchAll(ctx, userID, req.Content, 5)
+		// Call new SearchForContext method
+		memories, chunks, errM = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
 		if errM != nil {
-			slog.Warn("Failed to search all", "error", errM)
+			slog.Warn("Failed to search for context", "error", errM)
 		}
 	}
 
