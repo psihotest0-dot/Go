@@ -10,6 +10,7 @@ import (
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai/jsonschema"
 
 	"go-monolith/metrics"
 )
@@ -146,7 +147,11 @@ type schemaWrapper struct {
 }
 
 func (w schemaWrapper) MarshalJSON() ([]byte, error) {
-	return json.Marshal(w.v)
+	schema, err := jsonschema.GenerateSchemaForType(w.v)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(schema)
 }
 
 func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.ChatCompletionRequest, schema interface{}) (resp openai.ChatCompletionResponse, err error) {
