@@ -41,7 +41,7 @@ SELECT
     unnest(@texts::text[]),
     unnest(@embeddings::vector[]),
     unnest(@chunk_types::text[]),
-    unnest(@metadatas::jsonb[]);
+    CAST(unnest(@metadatas::text[]) AS jsonb);
 
 -- name: GetDocumentChunksWithFile :many
 SELECT c.*, f.file_name
