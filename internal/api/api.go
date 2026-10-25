@@ -246,7 +246,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	var newEmbeddingModel string
 
 	if strings.TrimSpace(req.Content) != "" {
-		vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+		vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content}, false)
 		if embedErr != nil {
 			slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
 			http.Error(w, embedErr.Error(), http.StatusInternalServerError)
@@ -263,7 +263,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newEmbedding = pgvector.NewVector(vectors[0])
-		newEmbeddingModel = "paraphrase-multilingual-MiniLM-L12-v2"
+		newEmbeddingModel = "intfloat/multilingual-e5-small"
 	}
 
 	mem, err := a.db.CreateMemoryWithCheck(r.Context(), db.CreateMemoryParams{
@@ -394,7 +394,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		var newEmbeddingModel sql.NullString
 
 		if newContentHash != existingMem.ContentHash {
-			vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content})
+			vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content}, false)
 			if embedErr != nil {
 				slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
 				http.Error(w, embedErr.Error(), http.StatusInternalServerError)
@@ -412,7 +412,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			vec := pgvector.NewVector(vectors[0])
 			newEmbedding = &vec
-			newEmbeddingModel = sql.NullString{String: "paraphrase-multilingual-MiniLM-L12-v2", Valid: true}
+			newEmbeddingModel = sql.NullString{String: "intfloat/multilingual-e5-small", Valid: true}
 		}
 
 		mem, dbErr := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
