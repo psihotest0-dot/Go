@@ -55,7 +55,8 @@ type SourceInfo struct {
 	PageNumber     *int      `json:"page_number,omitempty"`
 	ContentSnippet string    `json:"content_snippet"`
 	Score          float64   `json:"score"`
-	SourceType     string    `json:"source_type"` // "ocr" | "text"
+	ScoreType      string    `json:"score_type,omitempty"`
+	SourceType     string    `json:"source_type"` // "ocr" | "text" | "concept" | "memory"
 }
 
 type DBChunkInfo struct {
