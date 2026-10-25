@@ -39,6 +39,10 @@ type IngestFileWorker struct {
 	catMgr   *retrieval.CategoryManager
 }
 
+func (w *IngestFileWorker) Timeout(job *river.Job[IngestFileArgs]) time.Duration {
+	return 1 * time.Hour // Large documents and OCR can take a significant amount of time
+}
+
 func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *retrieval.CategoryManager) *IngestFileWorker {
 	return &IngestFileWorker{
 		dbClient: dbClient,
