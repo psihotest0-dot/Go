@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"go-monolith/internal/config"
@@ -292,8 +293,8 @@ func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []stri
 
 		// If more than half the chunk is dots and there are very few letters, we drop it (noise)
 		isNoise := false
-		if len(chunkStr) > 0 {
-			if float64(dotCount)/float64(len(chunkStr)) > 0.5 && alphaCount < 10 {
+		if utf8.RuneCountInString(chunkStr) > 0 {
+			if float64(dotCount)/float64(utf8.RuneCountInString(chunkStr)) > 0.5 && alphaCount < 10 {
 				isNoise = true
 			}
 		}
