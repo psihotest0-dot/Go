@@ -153,7 +153,9 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 					if chunk, ok := chunksMap[c.ChunkID]; ok {
 						snippet := chunk.Text
 						sourceType := "text"
-						if strings.Contains(snippet, "[source: \"ocr\"]") {
+						if chunk.ChunkType == "concept_summary" {
+							sourceType = "concept"
+						} else if strings.Contains(snippet, "[source: \"ocr\"]") {
 							sourceType = "ocr"
 							snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
 						}
@@ -162,11 +164,22 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 							snippet = snippet[:600] + "..."
 						}
 
+						normalizedScore := c.Score
+						scoreType := ""
+						if sourceType == "text" || sourceType == "ocr" {
+							normalizedScore = (c.Score / 0.033) * 100
+							scoreType = "rrf"
+						} else {
+							normalizedScore = c.Score * 100
+							scoreType = "cosine"
+						}
+
 						sources = append(sources, SourceInfo{
 							ChunkID:        chunk.ID,
 							FileName:       chunk.FileName,
 							ContentSnippet: snippet,
-							Score:          c.Score,
+							Score:          normalizedScore,
+							ScoreType:      scoreType,
 							SourceType:     sourceType,
 						})
 					}
