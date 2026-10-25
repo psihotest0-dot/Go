@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
@@ -84,7 +85,7 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 		}
 
 		// 2. If text is less than 50 characters, assume it's a scanned page and fallback to OCR
-		if len(pageText) < 50 {
+		if utf8.RuneCountInString(pageText) < 50 {
 			// Rasterize the page to PNG
 			ppmCmd := exec.CommandContext(ctx, "pdftoppm", "-r", "300", "-f", pageStr, "-l", pageStr, "-png", tmpFile.Name())
 			pngOut, err := ppmCmd.Output()
