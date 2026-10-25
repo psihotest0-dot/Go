@@ -269,7 +269,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		limit = 5
 	}
 
-	results, err := r.retrieval.SearchChunks(ctx, userID, query, limit)
+	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search documents: %w", err)
 	}
