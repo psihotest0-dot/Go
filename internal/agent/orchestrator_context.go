@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -61,12 +62,12 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	}
 
 	var memories []retrieval.SearchResult
-	var chunks []retrieval.SearchResult
+	var conceptChunks []retrieval.SearchResult
 	var errM error
 
 	if !skip {
 		// Call new SearchForContext method
-		memories, chunks, errM = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
+		memories, conceptChunks, errM = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
 		if errM != nil {
 			slog.Warn("Failed to search for context", "error", errM)
 		}
@@ -84,18 +85,16 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		})
 	}
 
-	for _, c := range chunks {
+	for _, c := range conceptChunks {
 		chatCtx.Chunks = append(chatCtx.Chunks, c.Content)
 
 		snippet := c.Content
-		sourceType := "text"
-		if strings.Contains(snippet, "[source: \"ocr\"]") {
-			sourceType = "ocr"
-			snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
-		}
+		sourceType := "concept"
+
 		snippet = strings.TrimSpace(snippet)
-		if len(snippet) > 600 {
-			snippet = snippet[:600] + "..."
+		if utf8.RuneCountInString(snippet) > 1500 {
+			runes := []rune(snippet)
+			snippet = string(runes[:1500]) + "..."
 		}
 
 		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
