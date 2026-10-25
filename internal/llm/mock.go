@@ -91,6 +91,7 @@ func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionReque
 			StreamChunks: m.StreamChunks,
 		},
 	}
+	config.EmptyMessagesLimit = 4294967295 // math.MaxUint32
 	client := openai.NewClientWithConfig(config)
 
 	// Since we mock the round tripper, we can just call the client normally
