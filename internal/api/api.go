@@ -263,7 +263,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		newEmbedding = pgvector.NewVector(vectors[0])
-		newEmbeddingModel = "paraphrase-multilingual-MiniLM-L12-v2"
+		newEmbeddingModel = "intfloat/multilingual-e5-small"
 	}
 
 	mem, err := a.db.CreateMemoryWithCheck(r.Context(), db.CreateMemoryParams{
@@ -412,7 +412,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			vec := pgvector.NewVector(vectors[0])
 			newEmbedding = &vec
-			newEmbeddingModel = sql.NullString{String: "paraphrase-multilingual-MiniLM-L12-v2", Valid: true}
+			newEmbeddingModel = sql.NullString{String: "intfloat/multilingual-e5-small", Valid: true}
 		}
 
 		mem, dbErr := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
