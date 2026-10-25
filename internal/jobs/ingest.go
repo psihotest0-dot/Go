@@ -2,7 +2,6 @@ package jobs
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -148,7 +147,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		var texts []string
 		var embeddings []pgvector.Vector
 		var chunkTypes []string
-		var metadatas []json.RawMessage
+		var metadatas []string
 
 		for j, chunk := range batchChunks {
 			fileIDs = append(fileIDs, file.ID)
@@ -156,7 +155,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			chunkIndices = append(chunkIndices, int32(i+j))
 			texts = append(texts, chunk)
 			chunkTypes = append(chunkTypes, "raw_text")
-			metadatas = append(metadatas, json.RawMessage([]byte("{}")))
+			metadatas = append(metadatas, "{}")
 
 			if len(vectors[j]) != config.VectorDimension {
 				err = fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
