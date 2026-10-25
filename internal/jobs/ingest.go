@@ -130,7 +130,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			enrichedBatch = append(enrichedBatch, fmt.Sprintf("[Файл: %s - Chunk %d] %s", file.FileName, i+k, chunk))
 		}
 
-		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch)
+		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch, false)
 		if embedErr != nil {
 			w.markFileFailed(file.ID, file.UserID, embedErr)
 			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, embedErr)

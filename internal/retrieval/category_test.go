@@ -57,6 +57,6 @@ func TestCategoryManager_Initialize_MismatchVectorsCount(t *testing.T) {
 
 type CustomEmbedder struct{}
 
-func (c *CustomEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+func (c *CustomEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error) {
 	return [][]float32{make([]float32, config.VectorDimension)}, nil
 }
