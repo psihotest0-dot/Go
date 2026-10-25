@@ -17,21 +17,31 @@ import (
 )
 
 var (
-	adaptiveRegex = regexp.MustCompile(`^(?i)(здрасти|здравей|ок|мерси|благодаря|разбрах|добре|супер|ясно|да|не|ok|okay|thanks|thank you|yes|no|got it|hello|hi|hey)$`)
+	adaptiveFullRegex = regexp.MustCompile(
+		`(?i)^\s*(здрасти|здравей|здравейте|ок|окей|мерси|благодаря|добре\s*благодаря|разбрах|добре|супер|ясно|да|не|` +
+			`ok|okay|thanks|thank you|yes|no|got it|hello|hi|hey|nice|cool)\s*[.!?,…]*\s*$`,
+	)
+	questionWords = []string{"как", "какво", "защо", "кой", "коя", "кое", "кои", "къде",
+		"кога", "колко", "може ли", "what", "how", "why", "who", "where", "when", "which", "?"}
 )
 
 func shouldSkipRetrieval(query string) bool {
 	q := strings.TrimSpace(query)
-	// Fast regex pre-filter
-	if adaptiveRegex.MatchString(q) {
+	if q == "" {
 		return true
 	}
-
-	// Fast length heuristic
-	if len([]rune(q)) < 5 {
+	if adaptiveFullRegex.MatchString(q) {
 		return true
 	}
-
+	if len([]rune(q)) < 7 {
+		lower := strings.ToLower(q)
+		for _, w := range questionWords {
+			if strings.Contains(lower, w) {
+				return false
+			}
+		}
+		return true
+	}
 	return false
 }
 
