@@ -291,7 +291,7 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		}
 	}
 
-	vectors, err := w.embedder.EmbedTexts(ctx, []string{fact.Statement})
+	vectors, err := w.embedder.EmbedTexts(ctx, []string{fact.Statement}, false)
 	if err != nil {
 		return err
 	}

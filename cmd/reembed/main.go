@@ -75,7 +75,7 @@ func run() error {
 		}
 
 		batchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		vectors, err := embedder.EmbedTexts(batchCtx, texts)
+		vectors, err := embedder.EmbedTexts(batchCtx, texts, false)
 		cancel()
 
 		if err != nil {
