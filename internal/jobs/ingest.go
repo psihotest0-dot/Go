@@ -49,7 +49,8 @@ func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *r
 	}
 }
 
-func (w *IngestFileWorker) markFileFailed(fileID uuid.UUID, userID uuid.UUID) {
+func (w *IngestFileWorker) markFileFailed(fileID uuid.UUID, userID uuid.UUID, err error) {
+	slog.Error("IngestFileWorker failed", "file_id", fileID, "error", err)
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = w.dbClient.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
@@ -83,14 +84,14 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	f, err := os.Open(file.LocalPath)
 	if err != nil {
-		w.markFileFailed(file.ID, file.UserID)
+		w.markFileFailed(file.ID, file.UserID, err)
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 
 	text, err := w.manager.Extract(ctx, file.FileName, f)
 	f.Close()
 	if err != nil {
-		w.markFileFailed(file.ID, file.UserID)
+		w.markFileFailed(file.ID, file.UserID, err)
 		return fmt.Errorf("failed to extract text: %w", err)
 	}
 
@@ -128,14 +129,15 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch)
 		if embedErr != nil {
-			w.markFileFailed(file.ID, file.UserID)
+			w.markFileFailed(file.ID, file.UserID, embedErr)
 			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, embedErr)
 		}
 
 		// Check if vectors match the number of chunks. If not, return an error.
 		if len(vectors) != len(enrichedBatch) {
-			w.markFileFailed(file.ID, file.UserID)
-			return fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors))
+			err = fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors))
+			w.markFileFailed(file.ID, file.UserID, err)
+			return err
 		}
 
 		allVectors = append(allVectors, vectors...)
@@ -157,8 +159,9 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			metadatas = append(metadatas, json.RawMessage([]byte("{}")))
 
 			if len(vectors[j]) != config.VectorDimension {
-				w.markFileFailed(file.ID, file.UserID)
-				return fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
+				err = fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
+				w.markFileFailed(file.ID, file.UserID, err)
+				return err
 			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
 		}
@@ -173,7 +176,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			Metadatas:    metadatas,
 		})
 		if err != nil {
-			w.markFileFailed(file.ID, file.UserID)
+			w.markFileFailed(file.ID, file.UserID, err)
 			return fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err)
 		}
 	}
