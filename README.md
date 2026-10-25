@@ -9,7 +9,7 @@ A high-performance Go monolith backing an AI Agent service, providing vector sim
 * **Migrations**: `goose`
 * **Job Queue / Background Tasks**: River (PostgreSQL-backed, replacing Redis)
 * **LLM Integration**: Standard OpenAI Go SDK pointing to a custom "Lemonade" provider
-* **Embedding Model**: `paraphrase-multilingual-MiniLM-L12-v2` via FastAPI Python sidecar (CPU only)
+* **Embedding Model**: `intfloat/multilingual-e5-small` via FastAPI Python sidecar (CPU only)
 * **Observability**: Prometheus & Grafana (JSON logging via standard `slog`)
 
 ## Architecture & Features

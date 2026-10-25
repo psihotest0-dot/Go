@@ -7,7 +7,7 @@ from typing import List
 from sentence_transformers import SentenceTransformer
 
 # Model configuration
-MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+MODEL_NAME = "intfloat/multilingual-e5-small"
 MAX_BATCH_SIZE = 64
 
 # Force CPU only

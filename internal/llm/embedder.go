@@ -22,7 +22,7 @@ import (
 
 // Embedder defines the interface for embedding texts
 type Embedder interface {
-	EmbedTexts(ctx context.Context, texts []string) ([][]float32, error)
+	EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error)
 }
 
 type HTTPEmbedder struct {
@@ -81,7 +81,7 @@ func hashContent(content string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -94,12 +94,21 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]floa
 		return nil, nil
 	}
 
+	prefixedTexts := make([]string, len(texts))
+	prefix := "passage: "
+	if isQuery {
+		prefix = "query: "
+	}
+	for i, text := range texts {
+		prefixedTexts[i] = prefix + text
+	}
+
 	resultVectors := make([][]float32, len(texts))
 	textsToEmbed := []string{}
 	indicesToEmbed := []int{}
 
-	// 1. Check cache for each text
-	for i, text := range texts {
+	// 1. Check cache for each prefixed text
+	for i, text := range prefixedTexts {
 		h := hashContent(text)
 		cached, err := c.db.Queries.GetEmbeddingCacheByHash(ctx, h)
 		if err == nil {

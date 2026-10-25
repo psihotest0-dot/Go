@@ -43,7 +43,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 	}
 
 	// Generate embeddings
-	vectors, err := s.embedder.EmbedTexts(ctx, []string{content})
+	vectors, err := s.embedder.EmbedTexts(ctx, []string{content}, false)
 	if err != nil {
 		slog.Error("failed to generate embedding", slog.Any("error", err))
 		return db.Memory{}, fmt.Errorf("failed to generate embedding: %w", err)
@@ -67,7 +67,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		Importance:     int32(importance),
 		Metadata:       metadata,
 		Embedding:      pgVec,
-		EmbeddingModel: "paraphrase-multilingual-MiniLM-L12-v2", // Example model name based on context
+		EmbeddingModel: "intfloat/multilingual-e5-small", // Example model name based on context
 	}
 
 	// Create memory in database with check
@@ -98,7 +98,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 		metrics.StageLatency.WithLabelValues("search_all").Observe(time.Since(start).Seconds())
 	}()
 
-	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
+	vectors, err := s.embedder.EmbedTexts(ctx, []string{query}, true)
 
 	fallback := false
 	if err != nil {
@@ -327,7 +327,7 @@ func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUI
 		metrics.StageLatency.WithLabelValues("search_for_context").Observe(time.Since(start).Seconds())
 	}()
 
-	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query})
+	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query}, true)
 	fallback := false
 	if embedErr != nil {
 		slog.Warn("embedder failed, falling back to text-only search", "error", embedErr)
@@ -433,7 +433,7 @@ func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID
 		metrics.StageLatency.WithLabelValues("search_raw_chunks").Observe(time.Since(start).Seconds())
 	}()
 
-	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query})
+	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query}, true)
 	fallback := false
 	if embedErr != nil {
 		slog.Warn("embedder failed, falling back to text-only search", "error", embedErr)
@@ -533,7 +533,7 @@ func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID,
 		metrics.StageLatency.WithLabelValues("search_memories").Observe(time.Since(start).Seconds())
 	}()
 
-	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query})
+	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query}, true)
 	fallback := false
 	if embedErr != nil {
 		slog.Warn("embedder failed, falling back to text-only search", "error", embedErr)
