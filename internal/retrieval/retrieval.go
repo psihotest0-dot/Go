@@ -67,7 +67,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		Importance:     int32(importance),
 		Metadata:       metadata,
 		Embedding:      pgVec,
-		EmbeddingModel: "paraphrase-multilingual-MiniLM-L12-v2", // Example model name based on context
+		EmbeddingModel: "intfloat/multilingual-e5-small", // Example model name based on context
 	}
 
 	// Create memory in database with check
