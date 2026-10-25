@@ -208,6 +208,14 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 		return nil, fmt.Errorf("invalid or missing 'query' argument")
 	}
 
+	if shouldSkipRetrieval(query) {
+		return map[string]interface{}{
+			"status":  "skipped",
+			"reason":  "query is conversational filler",
+			"results": []interface{}{},
+		}, nil
+	}
+
 	limit := 5
 	if lim, ok := args["limit"].(float64); ok {
 		limit = int(lim)
@@ -242,6 +250,14 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
 		return nil, fmt.Errorf("invalid or missing 'query' argument")
+	}
+
+	if shouldSkipRetrieval(query) {
+		return map[string]interface{}{
+			"status":  "skipped",
+			"reason":  "query is conversational filler",
+			"results": []interface{}{},
+		}, nil
 	}
 
 	limit := 5

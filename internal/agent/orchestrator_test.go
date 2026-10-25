@@ -116,3 +116,26 @@ func TestOrchestratorIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 3, count) // search, prune, stream_end
 }
+
+func TestShouldSkipRetrieval(t *testing.T) {
+	tests := []struct {
+		name     string
+		query    string
+		expected bool
+	}{
+		{"Hello!", "Здравей!", true},
+		{"Fine thanks", "добре благодаря", true},
+		{"How are you?", "как си?", false}, // contains 'как'
+		{"What do you think about investments", "какво мислиш за инвестициите", false},
+		{"ok", "ok", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := shouldSkipRetrieval(tt.query)
+			if result != tt.expected {
+				t.Errorf("shouldSkipRetrieval(%q) = %v; want %v", tt.query, result, tt.expected)
+			}
+		})
+	}
+}
