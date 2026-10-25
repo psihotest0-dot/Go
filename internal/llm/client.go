@@ -64,6 +64,7 @@ func NewLemonadeClient() *LemonadeClient {
 		Timeout: 0,
 	}
 	config.HTTPClient = httpClient
+	config.EmptyMessagesLimit = 4294967295 // math.MaxUint32
 
 	client := openai.NewClientWithConfig(config)
 	return &LemonadeClient{client: client}
