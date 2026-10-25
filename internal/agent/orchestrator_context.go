@@ -80,7 +80,8 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			ChunkID:        m.ID,
 			FileName:       "Памет (Memory)",
 			ContentSnippet: m.Content,
-			Score:          m.Score,
+			Score:          m.Score * 100,
+			ScoreType:      "cosine",
 			SourceType:     "memory",
 		})
 	}
@@ -101,7 +102,8 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			ChunkID:        c.ID,
 			FileName:       c.FileName,
 			ContentSnippet: snippet,
-			Score:          c.Score,
+			Score:          c.Score * 100,
+			ScoreType:      "cosine",
 			SourceType:     sourceType,
 		})
 	}
