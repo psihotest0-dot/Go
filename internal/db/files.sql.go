@@ -396,8 +396,9 @@ func (q *Queries) SearchConceptChunks(ctx context.Context, arg SearchConceptChun
 
 const searchHybridChunks = `-- name: SearchHybridChunks :many
 WITH chunk_vector_search AS (
-    SELECT source_type, id, content, rank, category FROM (
+    SELECT source_type, id, content, rank, category, distance FROM (
         SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
+               (c.embedding <=> $5) as distance,
                RANK() OVER (ORDER BY c.embedding <=> $5) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> $5) as file_rank
         FROM document_chunks c
@@ -412,8 +413,9 @@ WITH chunk_vector_search AS (
     LIMIT 100
 ),
 chunk_text_search AS (
-    SELECT source_type, id, content, rank, category FROM (
+    SELECT source_type, id, content, rank, category, sim_score FROM (
         SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
+               similarity(c.text, $6) as sim_score,
                RANK() OVER (ORDER BY similarity(c.text, $6) DESC) as rank,
                ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, $6) DESC) as file_rank
         FROM document_chunks c
@@ -431,8 +433,10 @@ SELECT
     c.text as content,
     f.file_name,
     CAST(
-        COALESCE(1.0 / (60 + cvs.rank), 0.0) +
-        COALESCE(1.0 / (60 + cts.rank), 0.0) +
+        GREATEST(
+            COALESCE(1.0 - cvs.distance, 0.0),
+            COALESCE(cts.sim_score, 0.0)
+        ) +
         (CASE WHEN COALESCE(cvs.category, cts.category) = $1::text THEN $2::FLOAT8 ELSE 0.0 END)
     AS FLOAT8) as score
 FROM document_chunks c
@@ -441,7 +445,7 @@ LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
 LEFT JOIN chunk_text_search cts ON c.id = cts.id
 WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
   AND c.user_id = $3
-ORDER BY score DESC
+ORDER BY (COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0)) DESC
 LIMIT $4
 `
 
