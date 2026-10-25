@@ -42,7 +42,7 @@ func (m *mockLLMClient) ChatWithJSONSchema(ctx context.Context, req openai.ChatC
 
 type mockEmbedder struct{}
 
-func (m *mockEmbedder) EmbedTexts(ctx context.Context, texts []string) ([][]float32, error) {
+func (m *mockEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error) {
 	return [][]float32{make([]float32, config.VectorDimension)}, nil
 }
 

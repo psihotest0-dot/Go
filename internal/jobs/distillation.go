@@ -172,7 +172,7 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 			}
 
 			// Embed the summary
-			vectors, err := w.embedder.EmbedTexts(ctx, []string{result.Summary})
+			vectors, err := w.embedder.EmbedTexts(ctx, []string{result.Summary}, false)
 			if err != nil || len(vectors) == 0 || len(vectors[0]) != config.VectorDimension {
 				slog.Error("failed to embed distillation summary", "batch_start", i, "error", err)
 				failCount++
