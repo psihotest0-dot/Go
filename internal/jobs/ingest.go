@@ -169,6 +169,21 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
 		}
 
+		if len(fileIDs) != len(texts) ||
+		   len(userIDs) != len(texts) ||
+		   len(chunkIndices) != len(texts) ||
+		   len(embeddings) != len(texts) ||
+		   len(chunkTypes) != len(texts) ||
+		   len(metadatas) != len(texts) {
+		    err = fmt.Errorf(
+		        "array length mismatch: fileIDs=%d userIDs=%d chunkIndices=%d texts=%d embeddings=%d chunkTypes=%d metadatas=%d",
+		        len(fileIDs), len(userIDs), len(chunkIndices), len(texts),
+		        len(embeddings), len(chunkTypes), len(metadatas),
+		    )
+		    w.markFileFailed(file.ID, file.UserID, err)
+		    return err
+		}
+
 		err = w.dbClient.Queries.CreateDocumentChunksBatch(ctx, db.CreateDocumentChunksBatchParams{
 			FileIds:      fileIDs,
 			UserIds:      userIDs,
