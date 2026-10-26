@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -96,7 +97,9 @@ func (o *Orchestrator) rollingSummary(ctx context.Context, sessionID string, old
 					MaxTokens:   300,
 					Temperature: 0.3,
 				}
-				summaryResp, sumErr := o.llmClient.Chat(context.Background(), summaryReq)
+				sumCtx, sumCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer sumCancel()
+				summaryResp, sumErr := o.llmClient.Chat(sumCtx, summaryReq)
 				if sumErr == nil && len(summaryResp.Choices) > 0 {
 					if v, ok := o.sessionSummaries.Load(sessID); ok {
 						state := v.(*sessionSummary)
