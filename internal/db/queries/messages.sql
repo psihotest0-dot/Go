@@ -27,3 +27,8 @@ WHERE id = (
     ORDER BY m.created_at DESC
     LIMIT 1
 );
+
+-- name: IncrementAnalysisAttempts :exec
+UPDATE messages
+SET analysis_attempts = analysis_attempts + 1
+WHERE id = $1;

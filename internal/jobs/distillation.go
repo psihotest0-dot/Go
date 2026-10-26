@@ -137,13 +137,21 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 			sourceChunkIDs = append(sourceChunkIDs, c.ID)
 		}
 
-		systemPrompt := "You are an expert at extracting core concepts, themes, and summaries from text. Extract the main thesis, themes, and write a high-level summary of the provided text."
+		systemPrompt := `You are an expert at extracting core concepts, themes, and summaries from text. Extract the main thesis, themes, and write a high-level summary of the provided text.
+
+Constraints:
+- Summary: maximum 500 words
+- Themes: 3-5 short phrases (max 5 words each)
+- Return ONLY valid JSON matching the provided schema
+- No explanations, no markdown, no preamble`
 
 		req := openai.ChatCompletionRequest{
 			Messages: []openai.ChatCompletionMessage{
 				{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
 				{Role: openai.ChatMessageRoleUser, Content: textContent},
 			},
+			MaxTokens:   800,
+			Temperature: 0.2,
 		}
 
 		resp, err := w.llmClient.ChatWithJSONSchema(ctx, req, DistillationSchema{})
