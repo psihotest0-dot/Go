@@ -26,21 +26,29 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 	driver := riverpgxv5.New(pool)
 	riverClient, err := river.NewClient(driver, &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 2},
+			"default":      {MaxWorkers: 1},
+			"ingest":       {MaxWorkers: 1},
+			"distillation": {MaxWorkers: 2},
+			"memory":       {MaxWorkers: 1},
+			"maintenance":  {MaxWorkers: 1},
 		},
 		Workers: workers,
 		PeriodicJobs: []*river.PeriodicJob{
 			river.NewPeriodicJob(
 				river.PeriodicInterval(5*time.Minute),
 				func() (river.JobArgs, *river.InsertOpts) {
-					return MemoryConsolidationPeriodicArgs{}, nil
+					return MemoryConsolidationPeriodicArgs{}, &river.InsertOpts{
+						Queue: "maintenance",
+					}
 				},
 				&river.PeriodicJobOpts{RunOnStart: true},
 			),
 			river.NewPeriodicJob(
 				river.PeriodicInterval(24*time.Hour),
 				func() (river.JobArgs, *river.InsertOpts) {
-					return EmbeddingCacheGCArgs{}, nil
+					return EmbeddingCacheGCArgs{}, &river.InsertOpts{
+						Queue: "maintenance",
+					}
 				},
 				&river.PeriodicJobOpts{RunOnStart: true},
 			),

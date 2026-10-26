@@ -49,6 +49,7 @@ func (w *MemoryConsolidationPeriodicWorker) Work(ctx context.Context, job *river
 		_, err := river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, MemoryConsolidationArgs{
 			UserID: u,
 		}, &river.InsertOpts{
+			Queue: "memory",
 			UniqueOpts: river.UniqueOpts{
 				ByArgs: true,
 			},
