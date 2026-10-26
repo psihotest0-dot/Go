@@ -111,9 +111,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_ = o.persistAssistantMessage(context.Background(), userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBg()
+	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
 
-	_ = o.writeTrace(context.Background(), userID, req.SessionID, "stream_end", map[string]interface{}{
+	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
 }
@@ -230,9 +232,11 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	_ = o.persistAssistantMessage(context.Background(), userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBg()
+	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
 
-	_ = o.writeTrace(context.Background(), userID, req.SessionID, "stream_end", map[string]interface{}{
+	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
 }
@@ -286,9 +290,11 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 	}
 
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
-	_ = o.persistAssistantMessage(context.Background(), userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBg()
+	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
 
-	_ = o.writeTrace(context.Background(), userID, req.SessionID, "stream_end", map[string]interface{}{
+	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
 
