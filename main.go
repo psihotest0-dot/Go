@@ -191,6 +191,7 @@ func main() {
 
 	protectedMux := http.NewServeMux()
 	protectedMux.HandleFunc("/chat/stream", orchestrator.HandleStreamChat)
+	protectedMux.HandleFunc("/chat/regenerate", orchestrator.HandleRegenerate)
 
 	protectedMux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
