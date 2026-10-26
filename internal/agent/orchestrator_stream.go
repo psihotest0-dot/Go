@@ -12,13 +12,24 @@ import (
 	"go-monolith/internal/api"
 )
 
-func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (string, []openai.ToolCall, error) {
+func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (string, []openai.ToolCall, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return "", nil, errors.New("streaming unsupported")
 	}
+
+	defer func() {
+		if rcv := recover(); rcv != nil {
+			slog.Error("panic in streamResponse", "panic", rcv)
+			errorBytes, _ := json.Marshal(map[string]string{
+				"error": "Internal error occurred",
+			})
+			fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorBytes))
+			flusher.Flush()
+		}
+	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -47,6 +58,11 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, fi
 
 	assistantContent, _, toolCalls, err := o.generateResponse(r.Context(), finalMessages, tools, sources, onDelta)
 	if err != nil {
+		if ctxErr := r.Context().Err(); ctxErr != nil {
+			slog.Info("stream cancelled", "reason", ctxErr, "session_id", sessionID)
+			return assistantContent, toolCalls, err
+		}
+
 		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
 		flusher.Flush()
 		return assistantContent, toolCalls, err

@@ -106,7 +106,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	tools := toolDefinitions()
 
-	assistantContent, toolCalls, err := o.streamResponse(w, r, finalMessages, tools, chatCtx.Sources)
+	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, finalMessages, tools, chatCtx.Sources)
 	if err != nil {
 		return
 	}
