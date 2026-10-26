@@ -14,7 +14,7 @@ def test_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "ok"
-    assert data["model"] == "paraphrase-multilingual-MiniLM-L12-v2"
+    assert data["model"] == "intfloat/multilingual-e5-small"
     assert data["dim"] == 384
 
 def test_embed_endpoint():
@@ -23,7 +23,7 @@ def test_embed_endpoint():
     assert response.status_code == 200
     data = response.json()
 
-    assert data["model"] == "paraphrase-multilingual-MiniLM-L12-v2"
+    assert data["model"] == "intfloat/multilingual-e5-small"
     assert data["dim"] == 384
     assert len(data["vectors"]) == 2
     assert len(data["vectors"][0]) == 384
