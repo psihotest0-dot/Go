@@ -6,3 +6,5 @@
 - value (напр. София, Иван)
 - statement (точното изречение за факта)
 - is_explicit_change (boolean, указващ дали потребителят изрично променя предишен факт, напр. 'Преместих се в').
+
+IMPORTANT: If the message contains no extractable facts about the user (greetings, questions, casual filler, acknowledgments), return an empty array []. Do NOT invent facts. Do NOT return explanatory text. Do NOT return null. Return ONLY valid JSON matching the schema.
