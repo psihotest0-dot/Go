@@ -127,7 +127,9 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		if riverClient != nil {
 			_, jobErr := riverClient.Insert(r.Context(), jobs.IngestFileArgs{
 				FileID: ingestedFile.ID,
-			}, nil)
+			}, &river.InsertOpts{
+				Queue: "ingest",
+			})
 			if jobErr != nil {
 				slog.Error("failed to enqueue ingest job", slog.Any("error", jobErr))
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

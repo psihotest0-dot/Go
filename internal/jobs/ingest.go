@@ -269,7 +269,10 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	if config.Load().EnableDistillation {
 		pgxClient := river.ClientFromContext[pgx.Tx](ctx)
 		if pgxClient != nil {
-			_, err = pgxClient.Insert(ctx, DistillationWorkerArgs{FileID: file.ID}, nil)
+			_, err = pgxClient.Insert(ctx, DistillationWorkerArgs{FileID: file.ID},
+				&river.InsertOpts{
+					Queue: "distillation",
+				})
 			if err != nil {
 				slog.Error("Failed to enqueue DistillationWorkerArgs", "file_id", file.ID, "error", err)
 			}
