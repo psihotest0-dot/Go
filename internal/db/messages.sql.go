@@ -46,6 +46,26 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 	return i, err
 }
 
+const deleteLastAssistantMessage = `-- name: DeleteLastAssistantMessage :exec
+DELETE FROM messages
+WHERE id = (
+    SELECT m.id FROM messages m
+    WHERE m.session_id = $1 AND m.user_id = $2 AND m.role = 'assistant'
+    ORDER BY m.created_at DESC
+    LIMIT 1
+)
+`
+
+type DeleteLastAssistantMessageParams struct {
+	SessionID string    `json:"session_id"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteLastAssistantMessage(ctx context.Context, arg DeleteLastAssistantMessageParams) error {
+	_, err := q.db.ExecContext(ctx, deleteLastAssistantMessage, arg.SessionID, arg.UserID)
+	return err
+}
+
 const getMessagesBySession = `-- name: GetMessagesBySession :many
 SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3
 `
