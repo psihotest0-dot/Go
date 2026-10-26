@@ -21,7 +21,7 @@ func run() error {
 	slog.SetDefault(logger)
 
 	batchSize := flag.Int("batch", 64, "batch size for re-embedding")
-	modelName := flag.String("model", "paraphrase-multilingual-MiniLM-L12-v2", "embedding model name")
+	modelName := flag.String("model", "intfloat/multilingual-e5-small", "embedding model name")
 	filterModel := flag.String("filter-model", "", "model to filter out (only embed if current model != filter-model)")
 	flag.Parse()
 
@@ -75,7 +75,7 @@ func run() error {
 		}
 
 		batchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		vectors, err := embedder.EmbedTexts(batchCtx, texts)
+		vectors, err := embedder.EmbedTexts(batchCtx, texts, false)
 		cancel()
 
 		if err != nil {

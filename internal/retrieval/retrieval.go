@@ -43,7 +43,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 	}
 
 	// Generate embeddings
-	vectors, err := s.embedder.EmbedTexts(ctx, []string{content})
+	vectors, err := s.embedder.EmbedTexts(ctx, []string{content}, false)
 	if err != nil {
 		slog.Error("failed to generate embedding", slog.Any("error", err))
 		return db.Memory{}, fmt.Errorf("failed to generate embedding: %w", err)
@@ -67,7 +67,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		Importance:     int32(importance),
 		Metadata:       metadata,
 		Embedding:      pgVec,
-		EmbeddingModel: "paraphrase-multilingual-MiniLM-L12-v2", // Example model name based on context
+		EmbeddingModel: "intfloat/multilingual-e5-small", // Example model name based on context
 	}
 
 	// Create memory in database with check
@@ -98,7 +98,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 		metrics.StageLatency.WithLabelValues("search_all").Observe(time.Since(start).Seconds())
 	}()
 
-	vectors, err := s.embedder.EmbedTexts(ctx, []string{query})
+	vectors, err := s.embedder.EmbedTexts(ctx, []string{query}, true)
 
 	fallback := false
 	if err != nil {
@@ -321,9 +321,280 @@ func cosineSimilarity(a, b []float32) float32 {
 	return dotProduct / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
 
+func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUID, query string, limit int) (memories []SearchResult, conceptChunks []SearchResult, err error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("search_for_context").Observe(time.Since(start).Seconds())
+	}()
+
+	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query}, true)
+	fallback := false
+	if embedErr != nil {
+		slog.Warn("embedder failed, falling back to text-only search", "error", embedErr)
+		fallback = true
+	} else if len(vectors) == 0 {
+		slog.Error("embedder returned empty result")
+		fallback = true
+	} else if len(vectors[0]) != config.VectorDimension {
+		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
+		return nil, nil, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
+	}
+
+	eg, childCtx := errgroup.WithContext(ctx)
+	var mu sync.Mutex
+
+	if fallback {
+		params := db.SearchTextMemoriesParams{
+			UserID:     userID,
+			QueryText:  query,
+			MatchCount: int32(limit),
+		}
+		rows, searchErr := s.db.Queries.SearchTextMemories(ctx, params)
+		if searchErr != nil {
+			slog.Error("failed to search text memories during fallback", slog.Any("error", searchErr))
+			return nil, nil, fmt.Errorf("failed to search text memories during fallback: %w", searchErr)
+		}
+		for _, m := range rows {
+			memories = append(memories, SearchResult{
+				ID:         m.ID,
+				Content:    m.Content,
+				SourceType: "memory",
+				Score:      m.Score,
+			})
+		}
+		return memories, nil, nil
+	}
+
+	queryVec := vectors[0]
+	pgVec := pgvector.NewVector(queryVec)
+
+	eg.Go(func() error {
+		params := db.SearchHybridMemoriesParams{
+			UserID:     userID,
+			MatchCount: int32(limit),
+			Embedding:  pgVec,
+			QueryText:  query,
+		}
+		rows, err := s.db.Queries.SearchHybridMemories(childCtx, params)
+		if err != nil {
+			slog.Error("failed to search hybrid memories", slog.Any("error", err))
+			return fmt.Errorf("failed to search hybrid memories: %w", err)
+		}
+		var res []SearchResult
+		for _, row := range rows {
+			res = append(res, SearchResult{
+				ID:         row.ID,
+				Content:    row.Content,
+				SourceType: "memory",
+				Score:      row.Score,
+			})
+		}
+		mu.Lock()
+		memories = res
+		mu.Unlock()
+		return nil
+	})
+
+	eg.Go(func() error {
+		conceptRows, conceptErr := s.db.Queries.SearchConceptChunks(childCtx, db.SearchConceptChunksParams{
+			UserID:    userID,
+			Embedding: pgVec,
+		})
+		if conceptErr != nil {
+			slog.Warn("failed to search concept chunks", "error", conceptErr)
+			return nil
+		}
+		var res []SearchResult
+		for _, row := range conceptRows {
+			res = append(res, SearchResult{
+				ID:         row.ID,
+				Content:    row.Content,
+				SourceType: "concept",
+				Score:      1.0 - row.Distance, // naive conversion
+				FileName:   row.FileName,
+			})
+		}
+		mu.Lock()
+		conceptChunks = res
+		mu.Unlock()
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		return nil, nil, err
+	}
+
+	return memories, conceptChunks, nil
+}
+
+func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("search_raw_chunks").Observe(time.Since(start).Seconds())
+	}()
+
+	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query}, true)
+	fallback := false
+	if embedErr != nil {
+		slog.Warn("embedder failed, falling back to text-only search", "error", embedErr)
+		fallback = true
+	} else if len(vectors) == 0 {
+		slog.Error("embedder returned empty result")
+		fallback = true
+	} else if len(vectors[0]) != config.VectorDimension {
+		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
+		return nil, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
+	}
+
+	if fallback {
+		params := db.SearchTextChunksParams{
+			UserID:     userID,
+			QueryText:  query,
+			MatchCount: int32(limit),
+		}
+		rows, searchErr := s.db.Queries.SearchTextChunks(ctx, params)
+		if searchErr != nil {
+			slog.Error("failed to search text chunks during fallback", slog.Any("error", searchErr))
+			return nil, fmt.Errorf("failed to search text chunks during fallback: %w", searchErr)
+		}
+		var chunks []SearchResult
+		for _, m := range rows {
+			chunks = append(chunks, SearchResult{
+				ID:         m.ID,
+				Content:    m.Content,
+				SourceType: "chunk",
+				Score:      m.Score,
+				FileName:   m.FileName,
+			})
+		}
+		return chunks, nil
+	}
+
+	queryVec := vectors[0]
+	pgVec := pgvector.NewVector(queryVec)
+
+	boostCategory := ""
+	boostAmount := 0.0
+
+	if s.catMgr != nil {
+		bestCat := ""
+		bestScore := float32(-1.0)
+		secondBestScore := float32(-1.0)
+
+		for cat, centroid := range s.catMgr.GetAllCentroids() {
+			score := cosineSimilarity(queryVec, centroid)
+			if score > bestScore {
+				secondBestScore = bestScore
+				bestScore = score
+				bestCat = cat
+			} else if score > secondBestScore {
+				secondBestScore = score
+			}
+		}
+
+		margin := bestScore - secondBestScore
+		if margin >= 0.08 {
+			boostCategory = bestCat
+			boostAmount = 0.08
+		}
+	}
+
+	params := db.SearchHybridChunksParams{
+		UserID:        userID,
+		MatchCount:    int32(limit),
+		Embedding:     pgVec,
+		QueryText:     query,
+		BoostCategory: boostCategory,
+		BoostAmount:   boostAmount,
+	}
+	rows, err := s.db.Queries.SearchHybridChunks(ctx, params)
+	if err != nil {
+		slog.Error("failed to search hybrid chunks", slog.Any("error", err))
+		return nil, fmt.Errorf("failed to search hybrid chunks: %w", err)
+	}
+
+	var chunks []SearchResult
+	for _, row := range rows {
+		chunks = append(chunks, SearchResult{
+			ID:         row.ID,
+			Content:    row.Content,
+			SourceType: "chunk",
+			Score:      row.Score,
+			FileName:   row.FileName,
+		})
+	}
+
+	return chunks, nil
+}
+
 func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
-	memories, _, err := s.SearchAll(ctx, userID, query, limit)
-	return memories, err
+	start := time.Now()
+	defer func() {
+		metrics.StageLatency.WithLabelValues("search_memories").Observe(time.Since(start).Seconds())
+	}()
+
+	vectors, embedErr := s.embedder.EmbedTexts(ctx, []string{query}, true)
+	fallback := false
+	if embedErr != nil {
+		slog.Warn("embedder failed, falling back to text-only search", "error", embedErr)
+		fallback = true
+	} else if len(vectors) == 0 {
+		slog.Error("embedder returned empty result")
+		fallback = true
+	} else if len(vectors[0]) != config.VectorDimension {
+		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
+		return nil, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
+	}
+
+	if fallback {
+		params := db.SearchTextMemoriesParams{
+			UserID:     userID,
+			QueryText:  query,
+			MatchCount: int32(limit),
+		}
+		rows, searchErr := s.db.Queries.SearchTextMemories(ctx, params)
+		if searchErr != nil {
+			slog.Error("failed to search text memories during fallback", slog.Any("error", searchErr))
+			return nil, fmt.Errorf("failed to search text memories during fallback: %w", searchErr)
+		}
+		var memories []SearchResult
+		for _, m := range rows {
+			memories = append(memories, SearchResult{
+				ID:         m.ID,
+				Content:    m.Content,
+				SourceType: "memory",
+				Score:      m.Score,
+			})
+		}
+		return memories, nil
+	}
+
+	queryVec := vectors[0]
+	pgVec := pgvector.NewVector(queryVec)
+
+	params := db.SearchHybridMemoriesParams{
+		UserID:     userID,
+		MatchCount: int32(limit),
+		Embedding:  pgVec,
+		QueryText:  query,
+	}
+	rows, err := s.db.Queries.SearchHybridMemories(ctx, params)
+	if err != nil {
+		slog.Error("failed to search hybrid memories", slog.Any("error", err))
+		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
+	}
+
+	var memories []SearchResult
+	for _, row := range rows {
+		memories = append(memories, SearchResult{
+			ID:         row.ID,
+			Content:    row.Content,
+			SourceType: "memory",
+			Score:      row.Score,
+		})
+	}
+
+	return memories, nil
 }
 
 func (s *RetrievalService) SearchChunks(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {

@@ -98,7 +98,7 @@ func (cm *CategoryManager) initializeCentroids(ctx context.Context) error {
 		allSentences = append(allSentences, sentences...)
 	}
 
-	vectors, err := cm.embedder.EmbedTexts(ctx, allSentences)
+	vectors, err := cm.embedder.EmbedTexts(ctx, allSentences, false)
 	if err != nil {
 		return fmt.Errorf("failed to embed sentences for categories: %w", err)
 	}
