@@ -13,7 +13,7 @@ import (
 )
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts
 `
 
 type CreateMessageParams struct {
@@ -42,6 +42,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.CreatedAt,
 		&i.SourceChunkIds,
 		&i.IsAnalyzed,
+		&i.AnalysisAttempts,
 	)
 	return i, err
 }
@@ -67,7 +68,7 @@ func (q *Queries) DeleteLastAssistantMessage(ctx context.Context, arg DeleteLast
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3
 `
 
 type GetMessagesBySessionParams struct {
@@ -94,6 +95,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 			&i.CreatedAt,
 			&i.SourceChunkIds,
 			&i.IsAnalyzed,
+			&i.AnalysisAttempts,
 		); err != nil {
 			return nil, err
 		}
@@ -109,7 +111,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 }
 
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts
 FROM messages
 WHERE is_analyzed = FALSE AND user_id = $1
 ORDER BY created_at ASC
@@ -134,6 +136,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 			&i.CreatedAt,
 			&i.SourceChunkIds,
 			&i.IsAnalyzed,
+			&i.AnalysisAttempts,
 		); err != nil {
 			return nil, err
 		}
@@ -175,6 +178,17 @@ func (q *Queries) GetUsersWithUnanalyzedMessages(ctx context.Context) ([]uuid.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const incrementAnalysisAttempts = `-- name: IncrementAnalysisAttempts :exec
+UPDATE messages
+SET analysis_attempts = analysis_attempts + 1
+WHERE id = $1
+`
+
+func (q *Queries) IncrementAnalysisAttempts(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.ExecContext(ctx, incrementAnalysisAttempts, id)
+	return err
 }
 
 const markMessageAnalyzed = `-- name: MarkMessageAnalyzed :exec

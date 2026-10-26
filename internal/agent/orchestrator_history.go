@@ -93,6 +93,8 @@ func (o *Orchestrator) rollingSummary(ctx context.Context, sessionID string, old
 							Content: summaryPrompt,
 						},
 					},
+					MaxTokens:   300,
+					Temperature: 0.3,
 				}
 				summaryResp, sumErr := o.llmClient.Chat(context.Background(), summaryReq)
 				if sumErr == nil && len(summaryResp.Choices) > 0 {
