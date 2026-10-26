@@ -88,30 +88,30 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 	}
 
 	batchSize := 5
-	expectedConcepts := (len(rawChunks) + batchSize - 1) / batchSize
+	totalBatches := (len(rawChunks) + batchSize - 1) / batchSize
 
-	if float64(len(conceptChunks)) >= float64(expectedConcepts)*0.8 {
+	if len(conceptChunks) >= totalBatches*8/10 {
 		slog.Info("Distillation skipped (sufficient coverage)",
 			"file_id", job.Args.FileID,
 			"have", len(conceptChunks),
-			"expected", expectedConcepts)
+			"expected", totalBatches)
 		return nil
 	}
 
-	if len(conceptChunks) > 0 {
-		slog.Info("Re-distilling (partial coverage)",
-			"file_id", job.Args.FileID,
-			"have", len(conceptChunks),
-			"expected", expectedConcepts)
-		_, err = w.dbClient.SqlDB.ExecContext(ctx,
-			`DELETE FROM document_chunks WHERE file_id = $1 AND chunk_type = 'concept_summary'`,
-			file.ID)
-		if err != nil {
-			return fmt.Errorf("failed to clear old concept chunks: %w", err)
+	// Build set of already-processed raw chunk IDs from existing concept metadata
+	processedChunkIDs := make(map[uuid.UUID]bool)
+	for _, cc := range conceptChunks {
+		var meta struct {
+			SourceChunkIDs []uuid.UUID `json:"source_chunk_ids"`
+		}
+		if err := json.Unmarshal(cc.Metadata, &meta); err == nil {
+			for _, id := range meta.SourceChunkIDs {
+				processedChunkIDs[id] = true
+			}
 		}
 	}
 
-	// Process in batches (sliding windows of 5 chunks)
+	// Compute max chunk_index for new concept chunks
 	var maxChunkIndex int
 	err = w.dbClient.SqlDB.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(chunk_index), -1) FROM document_chunks WHERE file_id = $1`,
@@ -120,7 +120,9 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 		return fmt.Errorf("failed to get max chunk index: %w", err)
 	}
 	nextConceptIndex := maxChunkIndex + 1
+
 	successCount := 0
+	skipCount := 0
 	failCount := 0
 
 	for i := 0; i < len(rawChunks); i += batchSize {
@@ -130,6 +132,20 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 		}
 
 		batch := rawChunks[i:end]
+
+		// Check if all chunks in this batch are already processed
+		allProcessed := true
+		for _, c := range batch {
+			if !processedChunkIDs[c.ID] {
+				allProcessed = false
+				break
+			}
+		}
+
+		if allProcessed {
+			skipCount++
+			continue
+		}
 		var textContent string
 		var sourceChunkIDs []uuid.UUID
 		for _, c := range batch {
@@ -219,6 +235,7 @@ Constraints:
 	slog.Info("DistillationWorker finished",
 		"file_id", job.Args.FileID,
 		"success", successCount,
+		"skipped", skipCount,
 		"failed", failCount,
 		"concepts_created", successCount)
 
