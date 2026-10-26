@@ -33,7 +33,7 @@ func TestRetrieval_CreateMemory_Mock(t *testing.T) {
 
 	mock.ExpectQuery(`(?i)INSERT INTO memories`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "content", "status", "embedding", "embedding_model", "source_message_id", "importance", "metadata", "content_hash", "created_at", "updated_at", "last_used_at"}).
-			AddRow(uuid.New(), userID, content, "active", "[0,0]", "paraphrase-multilingual-MiniLM-L12-v2", nil, 5, nil, "hash", nil, nil, nil))
+			AddRow(uuid.New(), userID, content, "active", "[0,0]", "intfloat/multilingual-e5-small", nil, 5, nil, "hash", nil, nil, nil))
 
 	mem, err := svc.CreateMemory(context.Background(), userID, content, 5, "active", pqtype.NullRawMessage{})
 	require.NoError(t, err)

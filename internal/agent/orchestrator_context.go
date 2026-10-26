@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -17,21 +18,31 @@ import (
 )
 
 var (
-	adaptiveRegex = regexp.MustCompile(`^(?i)(здрасти|здравей|ок|мерси|благодаря|разбрах|добре|супер|ясно|да|не|ok|okay|thanks|thank you|yes|no|got it|hello|hi|hey)$`)
+	adaptiveFullRegex = regexp.MustCompile(
+		`(?i)^\s*(здрасти|здравей|здравейте|ок|окей|мерси|благодаря|добре\s*благодаря|разбрах|добре|супер|ясно|да|не|` +
+			`ok|okay|thanks|thank you|yes|no|got it|hello|hi|hey|nice|cool)\s*[.!?,…]*\s*$`,
+	)
+	questionWords = []string{"как", "какво", "защо", "кой", "коя", "кое", "кои", "къде",
+		"кога", "колко", "може ли", "what", "how", "why", "who", "where", "when", "which", "?"}
 )
 
 func shouldSkipRetrieval(query string) bool {
 	q := strings.TrimSpace(query)
-	// Fast regex pre-filter
-	if adaptiveRegex.MatchString(q) {
+	if q == "" {
 		return true
 	}
-
-	// Fast length heuristic
-	if len([]rune(q)) < 5 {
+	if adaptiveFullRegex.MatchString(q) {
 		return true
 	}
-
+	if len([]rune(q)) < 7 {
+		lower := strings.ToLower(q)
+		for _, w := range questionWords {
+			if strings.Contains(lower, w) {
+				return false
+			}
+		}
+		return true
+	}
 	return false
 }
 
@@ -51,14 +62,14 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	}
 
 	var memories []retrieval.SearchResult
-	var chunks []retrieval.SearchResult
+	var conceptChunks []retrieval.SearchResult
 	var errM error
 
 	if !skip {
-		// Call new SearchAll method
-		memories, chunks, errM = o.retrieval.SearchAll(ctx, userID, req.Content, 5)
+		// Call new SearchForContext method
+		memories, conceptChunks, errM = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
 		if errM != nil {
-			slog.Warn("Failed to search all", "error", errM)
+			slog.Warn("Failed to search for context", "error", errM)
 		}
 	}
 
@@ -69,30 +80,30 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			ChunkID:        m.ID,
 			FileName:       "Памет (Memory)",
 			ContentSnippet: m.Content,
-			Score:          m.Score,
+			Score:          m.Score * 100,
+			ScoreType:      "cosine",
 			SourceType:     "memory",
 		})
 	}
 
-	for _, c := range chunks {
+	for _, c := range conceptChunks {
 		chatCtx.Chunks = append(chatCtx.Chunks, c.Content)
 
 		snippet := c.Content
-		sourceType := "text"
-		if strings.Contains(snippet, "[source: \"ocr\"]") {
-			sourceType = "ocr"
-			snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
-		}
+		sourceType := "concept"
+
 		snippet = strings.TrimSpace(snippet)
-		if len(snippet) > 600 {
-			snippet = snippet[:600] + "..."
+		if utf8.RuneCountInString(snippet) > 1500 {
+			runes := []rune(snippet)
+			snippet = string(runes[:1500]) + "..."
 		}
 
 		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
 			ChunkID:        c.ID,
 			FileName:       c.FileName,
 			ContentSnippet: snippet,
-			Score:          c.Score,
+			Score:          c.Score * 100,
+			ScoreType:      "cosine",
 			SourceType:     sourceType,
 		})
 	}

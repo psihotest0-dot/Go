@@ -130,7 +130,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			enrichedBatch = append(enrichedBatch, fmt.Sprintf("[Файл: %s - Chunk %d] %s", file.FileName, i+k, chunk))
 		}
 
-		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch)
+		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch, false)
 		if embedErr != nil {
 			w.markFileFailed(file.ID, file.UserID, embedErr)
 			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, embedErr)
@@ -167,6 +167,21 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 				return err
 			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
+		}
+
+		if len(fileIDs) != len(texts) ||
+		   len(userIDs) != len(texts) ||
+		   len(chunkIndices) != len(texts) ||
+		   len(embeddings) != len(texts) ||
+		   len(chunkTypes) != len(texts) ||
+		   len(metadatas) != len(texts) {
+		    err = fmt.Errorf(
+		        "array length mismatch: fileIDs=%d userIDs=%d chunkIndices=%d texts=%d embeddings=%d chunkTypes=%d metadatas=%d",
+		        len(fileIDs), len(userIDs), len(chunkIndices), len(texts),
+		        len(embeddings), len(chunkTypes), len(metadatas),
+		    )
+		    w.markFileFailed(file.ID, file.UserID, err)
+		    return err
 		}
 
 		err = w.dbClient.Queries.CreateDocumentChunksBatch(ctx, db.CreateDocumentChunksBatchParams{

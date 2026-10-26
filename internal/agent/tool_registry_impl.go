@@ -208,6 +208,14 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 		return nil, fmt.Errorf("invalid or missing 'query' argument")
 	}
 
+	if shouldSkipRetrieval(query) {
+		return map[string]interface{}{
+			"status":  "skipped",
+			"reason":  "query is conversational filler",
+			"results": []interface{}{},
+		}, nil
+	}
+
 	limit := 5
 	if lim, ok := args["limit"].(float64); ok {
 		limit = int(lim)
@@ -244,6 +252,14 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		return nil, fmt.Errorf("invalid or missing 'query' argument")
 	}
 
+	if shouldSkipRetrieval(query) {
+		return map[string]interface{}{
+			"status":  "skipped",
+			"reason":  "query is conversational filler",
+			"results": []interface{}{},
+		}, nil
+	}
+
 	limit := 5
 	if lim, ok := args["limit"].(float64); ok {
 		limit = int(lim)
@@ -253,7 +269,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		limit = 5
 	}
 
-	results, err := r.retrieval.SearchChunks(ctx, userID, query, limit)
+	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search documents: %w", err)
 	}

@@ -18,3 +18,12 @@ WHERE is_analyzed = FALSE;
 
 -- name: MarkMessageAnalyzed :exec
 UPDATE messages SET is_analyzed = TRUE WHERE id = $1 AND user_id = $2;
+
+-- name: DeleteLastAssistantMessage :exec
+DELETE FROM messages
+WHERE id = (
+    SELECT m.id FROM messages m
+    WHERE m.session_id = $1 AND m.user_id = $2 AND m.role = 'assistant'
+    ORDER BY m.created_at DESC
+    LIMIT 1
+);
