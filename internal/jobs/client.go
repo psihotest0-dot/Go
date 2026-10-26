@@ -26,7 +26,7 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 	driver := riverpgxv5.New(pool)
 	riverClient, err := river.NewClient(driver, &river.Config{
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 100},
+			river.QueueDefault: {MaxWorkers: 2},
 		},
 		Workers: workers,
 		PeriodicJobs: []*river.PeriodicJob{

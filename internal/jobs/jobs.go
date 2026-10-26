@@ -147,50 +147,56 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
-			err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), db.MarkMessageAnalyzedParams{
+			_ = w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
 				ID:     msg.ID,
 				UserID: msg.UserID,
 			})
-			if err != nil {
-				slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
-			}
+			continue
+		}
+
+		if msg.AnalysisAttempts >= 3 {
+			slog.Warn("skipping permanently failed message",
+				"msg_id", msg.ID,
+				"attempts", msg.AnalysisAttempts)
+			_ = w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
+				ID:     msg.ID,
+				UserID: msg.UserID,
+			})
 			continue
 		}
 
 		analyzeCtx, analyzeCancel := context.WithTimeout(ctx, 120*time.Second)
-
 		facts, err := w.analyzeMessage(analyzeCtx, msg.Content)
+		analyzeCancel()
+
 		if err != nil {
 			slog.Error("failed to analyze message", "msg_id", msg.ID, "error", err)
-			analyzeCancel()
+			_ = w.dbClient.Queries.IncrementAnalysisAttempts(ctx, msg.ID)
 			continue
 		}
-		analyzeCancel()
 
 		hasErrors := false
 		if len(facts) > 0 {
 			for _, fact := range facts {
 				processCtx, processCancel := context.WithTimeout(ctx, 30*time.Second)
 				err = w.processFact(processCtx, msg, fact)
+				processCancel()
 				if err != nil {
-					slog.Error("failed to process fact", "fact", fact, "error", err)
+					slog.Error("failed to process fact", "error", err)
 					hasErrors = true
 				}
-				processCancel()
 			}
 		}
 
 		if hasErrors {
+			_ = w.dbClient.Queries.IncrementAnalysisAttempts(ctx, msg.ID)
 			continue
 		}
 
-		err = w.dbClient.Queries.MarkMessageAnalyzed(context.Background(), db.MarkMessageAnalyzedParams{
+		_ = w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
 			ID:     msg.ID,
 			UserID: msg.UserID,
 		})
-		if err != nil {
-			slog.Error("failed to mark message as analyzed", "msg_id", msg.ID, "error", err)
-		}
 
 		processedCount++
 		if processedCount >= 5 {
@@ -218,6 +224,8 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 				Content: content,
 			},
 		},
+		MaxTokens:   500,
+		Temperature: 0.1,
 	}
 
 	resp, err := w.llmClient.ChatWithJSONSchema(ctx, req, []Fact{})

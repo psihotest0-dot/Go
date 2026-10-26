@@ -1,9 +1,11 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -168,22 +170,76 @@ func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.Chat
 
 	c.setModel(ctx, &req)
 
-	req.ResponseFormat = &openai.ChatCompletionResponseFormat{
-		Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
-		JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
-			Name:   "structured_output",
-			Schema: schemaWrapper{v: schema},
-			Strict: true,
+	bodyMap := map[string]interface{}{
+		"model":       req.Model,
+		"messages":    req.Messages,
+		"max_tokens":  req.MaxTokens,
+		"temperature": req.Temperature,
+		"chat_template_kwargs": map[string]interface{}{
+			"enable_thinking": false,
 		},
+		"response_format": map[string]interface{}{
+			"type": "json_schema",
+			"json_schema": map[string]interface{}{
+				"name":   "structured_output",
+				"schema": schemaWrapper{v: schema},
+				"strict": true,
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(bodyMap)
+	if err != nil {
+		return resp, err
 	}
 
 	maxRetries := 4
 	baseDelay := 100 * time.Millisecond
 
+	// go-openai Client doesn't export Config(), but NewLemonadeClient initializes it
+	// We can recreate it or access it via an environment variable or default
+	baseURL := os.Getenv("LLM_BASE_URL")
+	if baseURL == "" {
+		baseURL = "http://localhost:13305/v1"
+	}
+	url := baseURL + "/chat/completions"
+
+	httpClient := &http.Client{
+		Timeout: 0,
+	}
+
 	for i := 0; i < maxRetries; i++ {
-		resp, err = c.client.CreateChatCompletion(ctx, req)
-		if err == nil {
-			return resp, nil
+		httpReq, reqErr := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+		if reqErr != nil {
+			err = reqErr
+			break
+		}
+
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		// If auth is needed, you could optionally fetch from env here
+		// httpReq.Header.Set("Authorization", "Bearer ...")
+
+		httpResp, httpErr := httpClient.Do(httpReq)
+		if httpErr == nil {
+			defer httpResp.Body.Close()
+			if httpResp.StatusCode >= 200 && httpResp.StatusCode < 300 {
+				respBody, readErr := io.ReadAll(httpResp.Body)
+				if readErr == nil {
+					unmarshalErr := json.Unmarshal(respBody, &resp)
+					if unmarshalErr == nil {
+						return resp, nil
+					}
+					err = unmarshalErr
+				} else {
+					err = readErr
+				}
+			} else {
+				respBody, _ := io.ReadAll(httpResp.Body)
+				err = errors.New("API error: " + httpResp.Status + " " + string(respBody))
+			}
+		} else {
+			err = httpErr
 		}
 
 		if i == maxRetries-1 {
