@@ -222,9 +222,9 @@ func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.Chat
 
 		httpResp, httpErr := httpClient.Do(httpReq)
 		if httpErr == nil {
-			defer httpResp.Body.Close()
 			if httpResp.StatusCode >= 200 && httpResp.StatusCode < 300 {
 				respBody, readErr := io.ReadAll(httpResp.Body)
+				httpResp.Body.Close()
 				if readErr == nil {
 					unmarshalErr := json.Unmarshal(respBody, &resp)
 					if unmarshalErr == nil {
@@ -236,6 +236,7 @@ func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.Chat
 				}
 			} else {
 				respBody, _ := io.ReadAll(httpResp.Body)
+				httpResp.Body.Close()
 				err = errors.New("API error: " + httpResp.Status + " " + string(respBody))
 			}
 		} else {
