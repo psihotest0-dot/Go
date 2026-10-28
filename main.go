@@ -103,7 +103,7 @@ func enqueueIncompleteDistillations(ctx context.Context, client *river.Client[pg
 	slog.Info("Startup distillation scan complete", "enqueued", count)
 }
 
-func main() {
+func run() error {
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("warning: failed to load .env file: %v\n", err)
 	}
@@ -137,15 +137,13 @@ func main() {
 
 	prompts.Init("prompts")
 	if err := prompts.GlobalManager.Preload("chat_system.tmpl"); err != nil {
-		logger.Error("failed to preload critical templates", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to preload critical templates: %w", err)
 	}
 
 	ctx := context.Background()
 
 	if err := db.RunMigrations(cfg.DatabaseURL); err != nil {
-		logger.Error("failed to run migrations", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 	logger.Info("migrations ran successfully")
 
@@ -154,8 +152,7 @@ func main() {
 
 	database, err := db.Connect(startupCtx, cfg.DatabaseURL)
 	if err != nil {
-		logger.Error("failed to connect to database", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to connect to database: %w", err)
 	}
 	defer func() {
 		if database.SqlDB != nil {
@@ -177,25 +174,21 @@ func main() {
 
 	riverClient, err := jobs.NewRiverClient(startupCtx, database.Pool, database, llmClient, embedder, catMgr)
 	if err != nil {
-		logger.Error("failed to create river client", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to create river client: %w", err)
 	}
 
 	migrator, err := rivermigrate.New(riverClient.Driver(), nil)
 	if err != nil {
-		logger.Error("failed to create river migrator", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to create river migrator: %w", err)
 	}
 	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		logger.Error("failed to migrate river", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to migrate river: %w", err)
 	}
 
 	enqueueIncompleteDistillations(ctx, riverClient, database)
 
 	if err := riverClient.Start(ctx); err != nil {
-		logger.Error("failed to start river client", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("failed to start river client: %w", err)
 	}
 	defer func() {
 		stopCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -313,7 +306,7 @@ func main() {
 
 	select {
 	case err := <-srvErr:
-		logger.Error("server failed", slog.Any("error", err))
+		return fmt.Errorf("server failed: %w", err)
 	case <-shutdownCtx.Done():
 		logger.Info("shutting down server gracefully...")
 	}
@@ -325,5 +318,14 @@ func main() {
 		logger.Error("server shutdown failed", slog.Any("error", err))
 	} else {
 		logger.Info("server stopped gracefully")
+	}
+
+	return nil
+}
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("fatal error", slog.Any("error", err))
+		os.Exit(1)
 	}
 }
