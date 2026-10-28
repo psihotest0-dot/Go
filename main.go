@@ -13,7 +13,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
+	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/rs/cors"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -60,6 +63,44 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 		fileHandler:   h.fileHandler.WithGroup(name),
 		stdoutHandler: h.stdoutHandler.WithGroup(name),
 	}
+}
+
+func enqueueIncompleteDistillations(ctx context.Context, client *river.Client[pgx.Tx], database *db.Database) {
+	rows, err := database.SqlDB.QueryContext(ctx, `
+		SELECT f.id FROM ingested_files f
+		WHERE f.status = 'completed'
+		  AND EXISTS (SELECT 1 FROM document_chunks c1
+					  WHERE c1.file_id = f.id AND c1.chunk_type = 'raw_text')
+		  AND (
+			  SELECT COUNT(*) FROM document_chunks c2
+			  WHERE c2.file_id = f.id AND c2.chunk_type = 'concept_summary'
+		  ) < (
+			  SELECT COUNT(*) FROM document_chunks c3
+			  WHERE c3.file_id = f.id AND c3.chunk_type = 'raw_text'
+		  ) / 5 * 8 / 10
+	`)
+	if err != nil {
+		slog.Error("startup distillation scan failed", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		var fileID uuid.UUID
+		if err := rows.Scan(&fileID); err != nil {
+			continue
+		}
+		_, err := client.Insert(ctx, jobs.DistillationWorkerArgs{
+			FileID: fileID,
+		}, &river.InsertOpts{Queue: "distillation"})
+		if err != nil {
+			slog.Error("failed to enqueue", "file_id", fileID, "error", err)
+			continue
+		}
+		count++
+	}
+	slog.Info("Startup distillation scan complete", "enqueued", count)
 }
 
 func main() {
@@ -149,6 +190,8 @@ func main() {
 		logger.Error("failed to migrate river", slog.Any("error", err))
 		os.Exit(1)
 	}
+
+	enqueueIncompleteDistillations(ctx, riverClient, database)
 
 	if err := riverClient.Start(ctx); err != nil {
 		logger.Error("failed to start river client", slog.Any("error", err))
