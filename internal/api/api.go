@@ -107,6 +107,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	msgs, err := a.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: sessionID,
+        Limit:     50, // Limit is required for the query
 	})
 	if err != nil {
 		slog.Error("failed to get messages by session", slog.Any("error", err))
