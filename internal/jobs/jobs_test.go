@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +45,36 @@ type mockEmbedder struct{}
 
 func (m *mockEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error) {
 	return [][]float32{make([]float32, config.VectorDimension)}, nil
+}
+
+func TestMemoryConsolidationInsertOptsAllowsReenqueueAfterCompletion(t *testing.T) {
+	opts := memoryConsolidationInsertOpts()
+
+	require.NotNil(t, opts)
+	assert.Equal(t, "memory", opts.Queue)
+	assert.True(t, opts.UniqueOpts.ByArgs, "jobs for the same user must still be deduplicated by args")
+
+	// The regression: river's default state set includes JobStateCompleted, so a
+	// finished job keeps its unique key and every later insert for the same user
+	// is silently dropped. Consolidation then runs once per user, ever.
+	assert.NotContains(t, opts.UniqueOpts.ByState, rivertype.JobStateCompleted,
+		"a completed job must stop blocking new consolidation jobs")
+	assert.NotContains(t, opts.UniqueOpts.ByState, rivertype.JobStateCancelled)
+	assert.NotContains(t, opts.UniqueOpts.ByState, rivertype.JobStateDiscarded)
+
+	// Duplicates must still be suppressed while a previous run is in flight.
+	assert.Contains(t, opts.UniqueOpts.ByState, rivertype.JobStateAvailable)
+	assert.Contains(t, opts.UniqueOpts.ByState, rivertype.JobStateRetryable)
+
+	// River rejects a custom state set that omits a state every job must pass
+	// through, so a missing one would break enqueueing at runtime.
+	for _, state := range []rivertype.JobState{
+		rivertype.JobStatePending,
+		rivertype.JobStateRunning,
+		rivertype.JobStateScheduled,
+	} {
+		assert.Contains(t, opts.UniqueOpts.ByState, state)
+	}
 }
 
 func TestMemoryConsolidationWorker(t *testing.T) {

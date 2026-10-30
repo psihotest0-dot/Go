@@ -4,6 +4,9 @@ INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALU
 -- name: GetMessagesBySession :many
 SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3;
 
+-- name: GetRecentMessagesByUser :many
+SELECT * FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2;
+
 -- name: GetUnanalyzedMessages :many
 SELECT *
 FROM messages

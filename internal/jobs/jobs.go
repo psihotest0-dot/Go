@@ -20,6 +20,7 @@ import (
 	pgx "github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 )
@@ -45,21 +46,61 @@ func (w *MemoryConsolidationPeriodicWorker) Work(ctx context.Context, job *river
 		return fmt.Errorf("failed to get users with unanalyzed messages: %w", err)
 	}
 
+	client, err := river.ClientFromContextSafely[pgx.Tx](ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get river client from context: %w", err)
+	}
+
 	for _, u := range users {
-		_, err := river.ClientFromContext[pgx.Tx](ctx).Insert(ctx, MemoryConsolidationArgs{
+		res, err := client.Insert(ctx, MemoryConsolidationArgs{
 			UserID: u,
-		}, &river.InsertOpts{
-			Queue: "memory",
-			UniqueOpts: river.UniqueOpts{
-				ByArgs: true,
-			},
-		})
+		}, memoryConsolidationInsertOpts())
 		if err != nil {
 			slog.Error("failed to enqueue memory consolidation job for user", "user_id", u, "error", err)
+			continue
+		}
+		if res.UniqueSkippedAsDuplicate {
+			slog.Debug("memory consolidation job already queued for user", "user_id", u, "job_id", res.Job.ID)
 		}
 	}
 
 	return nil
+}
+
+// memoryConsolidationUniqueStates is the set of job states in which an already
+// existing memory_consolidation job suppresses a new one for the same user.
+//
+// JobStateCompleted is deliberately absent. River's default state set
+// (rivertype.UniqueOptsByStateDefault) includes it, and the partial unique
+// index only stops blocking once the stored job leaves every state in its
+// unique_states mask. A job that completes while `completed` is part of that
+// mask therefore keeps its unique key forever, so every later insert with the
+// same args is silently skipped as a duplicate. That turned consolidation into
+// a one-shot per user: the first run happened while there was nothing worth
+// remembering and no run ever followed it, leaving the memory table empty.
+// Dropping `completed` keeps the deduplication that actually matters (never
+// more than one queued/running job per user) without locking the user out of
+// all future runs.
+func memoryConsolidationUniqueStates() []rivertype.JobState {
+	return []rivertype.JobState{
+		rivertype.JobStateAvailable,
+		rivertype.JobStatePending,
+		rivertype.JobStateRunning,
+		rivertype.JobStateRetryable,
+		rivertype.JobStateScheduled,
+	}
+}
+
+// memoryConsolidationInsertOpts deduplicates consolidation jobs per user while
+// the previous one is still in flight.
+func memoryConsolidationInsertOpts() *river.InsertOpts {
+	return &river.InsertOpts{
+		Queue: "memory",
+		UniqueOpts: river.UniqueOpts{
+			ByArgs:  true,
+			ByState: memoryConsolidationUniqueStates(),
+		},
+	}
 }
 
 type MemoryConsolidationArgs struct {

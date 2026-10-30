@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -130,11 +131,6 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := r.URL.Query().Get("session_id")
-	if sessionID == "" {
-		slog.Warn("missing session_id parameter", slog.String("path", r.URL.Path))
-		http.Error(w, "missing session_id parameter", http.StatusBadRequest)
-		return
-	}
 
 	limit, err := parseMessagesLimit(r.URL.Query().Get("limit"))
 	if err != nil {
@@ -143,15 +139,34 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgs, err := a.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
-		UserID:    userID,
-		SessionID: sessionID,
-		Limit:     limit,
-	})
+	// A session id is optional because a client that starts a fresh session on
+	// every load has no way of naming the conversation it wants to restore,
+	// and refusing the request left users with what looked like lost history
+	// even though the rows were still there. Without an id the most recent
+	// messages the user owns are returned; each one still carries its
+	// session_id, so conversations remain distinguishable.
+	var msgs []db.Message
+	if sessionID == "" {
+		msgs, err = a.db.Queries.GetRecentMessagesByUser(r.Context(), db.GetRecentMessagesByUserParams{
+			UserID: userID,
+			Limit:  limit,
+		})
+	} else {
+		msgs, err = a.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
+			UserID:    userID,
+			SessionID: sessionID,
+			Limit:     limit,
+		})
+	}
 	if err != nil {
-		writeInternalError(w, "failed to get messages by session", err)
+		writeInternalError(w, "failed to get messages", err)
 		return
 	}
+
+	// Both queries return newest first because that is what a LIMIT page needs.
+	// A transcript is rendered oldest first, so reverse before building the
+	// response instead of relying on every client to sort it back.
+	slices.Reverse(msgs)
 
 	// Fetch all necessary chunks for sources
 	var allChunkIDs []uuid.UUID

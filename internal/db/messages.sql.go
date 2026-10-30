@@ -110,6 +110,48 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 	return items, nil
 }
 
+const getRecentMessagesByUser = `-- name: GetRecentMessagesByUser :many
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+`
+
+type GetRecentMessagesByUserParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Limit  int32     `json:"limit"`
+}
+
+func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMessagesByUserParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getRecentMessagesByUser, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Role,
+			&i.Content,
+			&i.CreatedAt,
+			&i.SourceChunkIds,
+			&i.IsAnalyzed,
+			&i.AnalysisAttempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
 SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts
 FROM messages

@@ -75,12 +75,30 @@ paths:
           format: uuid
       - name: session_id
         in: query
-        required: true
+        required: false
+        description: >-
+          Session whose messages should be returned. When it is omitted the most
+          recent messages the user owns are returned instead, across sessions,
+          so a client that lost the id of its last conversation can still
+          restore history. Every message carries its own session_id.
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        description: >-
+          Maximum number of messages to return, ordered by the newest first
+          before the response reverses them. Defaults to 50, capped at 200.
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
       responses:
         '200':
-          description: List of messages
+          description: >-
+            List of messages, oldest first, so the array can be rendered as a
+            transcript from top to bottom.
           content:
             application/json:
               schema:
