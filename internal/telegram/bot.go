@@ -71,7 +71,7 @@ func Run(ctx context.Context, token string, orch *agent.Orchestrator, pool *pgxp
 
 func (b *Bot) generateDeterministicUUID(chatID int64) uuid.UUID {
 	namespace := uuid.Must(uuid.Parse("00000000-0000-0000-0000-000000000000"))
-	data := []byte(fmt.Sprintf("telegram-chat-%d", chatID))
+	data := fmt.Appendf(nil, "telegram-chat-%d", chatID)
 	// Using NewSHA1 to generate version 5 UUID
 	return uuid.NewSHA1(namespace, data)
 }
