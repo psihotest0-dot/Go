@@ -269,6 +269,10 @@ paths:
         '500':
           description: Internal server error
   /v1/files:
+    description: >-
+      Files are served under /v1/files and, because the bundled chat UI calls
+      the unprefixed paths, under /files as well. Both prefixes behave
+      identically.
     post:
       summary: Upload a file
       parameters:
@@ -322,7 +326,9 @@ paths:
           format: uuid
       responses:
         '200':
-          description: List of files
+          description: >-
+            List of files with chunk_count, has_embeddings and embedding_status
+            so clients can show whether each file is usable for retrieval.
           content:
             application/json:
               schema:
@@ -336,6 +342,40 @@ paths:
         '500':
           description: Internal server error
   /v1/files/{id}:
+    get:
+      summary: Get a single file with its embedding status
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: File metadata including chunk_count and embedding_status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestedFile'
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+        '405':
+          description: Method not allowed
+        '500':
+          description: Internal server error
     delete:
       summary: Delete a file
       parameters:
@@ -354,6 +394,52 @@ paths:
       responses:
         '204':
           description: File deleted
+        '400':
+          description: Bad request
+        '401':
+          description: Unauthorized
+        '403':
+          description: Forbidden
+        '404':
+          description: Not found
+        '405':
+          description: Method not allowed
+        '500':
+          description: Internal server error
+  /v1/files/{id}/category:
+    patch:
+      summary: Override the category of a file
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-User-ID
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - category
+              properties:
+                category:
+                  type: string
+      responses:
+        '200':
+          description: Updated file metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestedFile'
         '400':
           description: Bad request
         '401':
@@ -498,3 +584,30 @@ components:
           type: string
           format: date-time
           nullable: true
+        category:
+          type: string
+        manual_override:
+          type: boolean
+        chunk_count:
+          type: integer
+          format: int64
+          description: >-
+            Number of embedded chunks stored for this file. Embeddings live in
+            the document_chunks table (pgvector), not in an external vector
+            store.
+        has_embeddings:
+          type: boolean
+          description: True when at least one embedded chunk exists for the file.
+        embedding_status:
+          type: string
+          description: >-
+            Ingest status extended with the embedding state. `completed` means
+            the file finished ingesting and has vectors, `empty` means it
+            finished ingesting but produced no chunks, and `pending`,
+            `processing` and `failed` mirror the ingest status.
+          enum:
+            - pending
+            - processing
+            - completed
+            - failed
+            - empty

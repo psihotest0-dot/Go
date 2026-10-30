@@ -12,6 +12,17 @@ SELECT * FROM ingested_files WHERE id = $1;
 -- name: GetIngestedFiles :many
 SELECT * FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC;
 
+-- name: GetUserChunkCountsByFile :many
+SELECT file_id, CAST(COUNT(*) AS BIGINT) AS chunk_count
+FROM document_chunks
+WHERE user_id = $1
+GROUP BY file_id;
+
+-- name: GetIngestedFileChunkCount :one
+SELECT CAST(COUNT(*) AS BIGINT) AS chunk_count
+FROM document_chunks
+WHERE file_id = $1 AND user_id = $2;
+
 -- name: UpdateIngestedFileStatus :exec
 UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3;
 

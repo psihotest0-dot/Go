@@ -252,33 +252,38 @@ func run() error {
 
 	protectedMux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
 
-	protectedMux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			apiService.CreateFileHandler(riverClient)(w, r)
-		case http.MethodGet:
-			apiService.GetFilesHandler(w, r)
-		default:
-			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
-
-	protectedMux.HandleFunc("/v1/files/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/category") {
-			apiService.FileCategoryHandler(w, r)
-		} else {
-			apiService.FileByIDHandler(w, r)
-		}
-	})
+	// File endpoints are served under both /v1/files and /files; see
+	// api.RegisterFileRoutes for why both prefixes exist.
+	apiService.RegisterFileRoutes(protectedMux, riverClient)
 
 	userMiddleware := api.UserMiddleware(database.Pool)
 
 	mux.Handle("/", userMiddleware(protectedMux))
 
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:*"},
-		AllowedMethods:   []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
+		AllowedOrigins: []string{"http://localhost:*", "http://127.0.0.1:*"},
+		// PATCH is required by the file category endpoint; without it the
+		// preflight for that call fails and the UI never sends the request.
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodOptions,
+		},
+		// X-User-ID is not a CORS-safelisted header, so the browser preflights
+		// every file/memory call. Omitting it here makes the preflight fail and
+		// the client reports the endpoint as unreachable even though the handler
+		// answers correctly.
+		AllowedHeaders: []string{
+			"Accept",
+			"Content-Type",
+			"Authorization",
+			"X-Request-ID",
+			"X-User-ID",
+		},
+		ExposedHeaders:   []string{"X-Request-ID"},
 		AllowCredentials: true,
 	})
 

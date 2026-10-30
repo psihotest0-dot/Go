@@ -299,6 +299,24 @@ func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (Ingest
 	return i, err
 }
 
+const getIngestedFileChunkCount = `-- name: GetIngestedFileChunkCount :one
+SELECT CAST(COUNT(*) AS BIGINT) AS chunk_count
+FROM document_chunks
+WHERE file_id = $1 AND user_id = $2
+`
+
+type GetIngestedFileChunkCountParams struct {
+	FileID uuid.UUID `json:"file_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) GetIngestedFileChunkCount(ctx context.Context, arg GetIngestedFileChunkCountParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, getIngestedFileChunkCount, arg.FileID, arg.UserID)
+	var chunk_count int64
+	err := row.Scan(&chunk_count)
+	return chunk_count, err
+}
+
 const getIngestedFiles = `-- name: GetIngestedFiles :many
 SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC
 `
@@ -326,6 +344,41 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 			&i.Category,
 			&i.ManualOverride,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getUserChunkCountsByFile = `-- name: GetUserChunkCountsByFile :many
+SELECT file_id, CAST(COUNT(*) AS BIGINT) AS chunk_count
+FROM document_chunks
+WHERE user_id = $1
+GROUP BY file_id
+`
+
+type GetUserChunkCountsByFileRow struct {
+	FileID     uuid.UUID `json:"file_id"`
+	ChunkCount int64     `json:"chunk_count"`
+}
+
+func (q *Queries) GetUserChunkCountsByFile(ctx context.Context, userID uuid.UUID) ([]GetUserChunkCountsByFileRow, error) {
+	rows, err := q.db.QueryContext(ctx, getUserChunkCountsByFile, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetUserChunkCountsByFileRow{}
+	for rows.Next() {
+		var i GetUserChunkCountsByFileRow
+		if err := rows.Scan(&i.FileID, &i.ChunkCount); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

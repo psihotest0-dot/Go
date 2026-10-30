@@ -19,6 +19,113 @@ import (
 	"github.com/riverqueue/river"
 )
 
+// FilePrefixes lists the path prefixes the file endpoints are registered under.
+// The documented API lives under /v1/files, while the chat UI calls /files next
+// to /messages and /memories. Serving both keeps existing clients working and
+// prevents the UI from hitting a 404 when it lists files.
+var FilePrefixes = []string{"/v1/files", "/files"}
+
+// categoryPathSuffix addresses the category sub-resource of a file.
+const categoryPathSuffix = "/category"
+
+var (
+	// errInvalidFilePath marks a path that is not /[v1/]files/{id}[/category].
+	errInvalidFilePath = errors.New("invalid file path")
+	// errInvalidFileID marks a path whose id segment is not a UUID.
+	errInvalidFileID = errors.New("invalid file id")
+)
+
+// RegisterFileRoutes wires the file collection and item endpoints onto mux
+// under every prefix in FilePrefixes.
+func (a *API) RegisterFileRoutes(mux *http.ServeMux, riverClient *river.Client[pgx.Tx]) {
+	collection := func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			a.CreateFileHandler(riverClient)(w, r)
+		case http.MethodGet:
+			a.GetFilesHandler(w, r)
+		default:
+			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+
+	item := func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, categoryPathSuffix) {
+			a.FileCategoryHandler(w, r)
+			return
+		}
+		a.FileByIDHandler(w, r)
+	}
+
+	for _, prefix := range FilePrefixes {
+		mux.HandleFunc(prefix, collection)
+		mux.HandleFunc(prefix+"/", item)
+	}
+}
+
+// parseFilePath extracts the file id from a files path and reports whether the
+// path addresses the category sub-resource. Both the /v1/files/{id} and the
+// /files/{id} forms are accepted.
+func parseFilePath(path string) (uuid.UUID, bool, error) {
+	var rest string
+	found := false
+	for _, prefix := range FilePrefixes {
+		if trimmed, ok := strings.CutPrefix(path, prefix+"/"); ok {
+			rest, found = trimmed, true
+			break
+		}
+	}
+	if !found {
+		return uuid.Nil, false, errInvalidFilePath
+	}
+
+	rest, category := strings.CutSuffix(rest, categoryPathSuffix)
+	if rest == "" || strings.Contains(rest, "/") {
+		return uuid.Nil, false, errInvalidFilePath
+	}
+
+	fileID, err := uuid.Parse(rest)
+	if err != nil {
+		return uuid.Nil, false, errInvalidFileID
+	}
+	return fileID, category, nil
+}
+
+// parseFileRequest resolves the file id addressed by r and answers the request
+// with 400 when the path is not a valid files path. The boolean result is false
+// once a response has been written.
+func parseFileRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool, bool) {
+	fileID, category, err := parseFilePath(r.URL.Path)
+	if err != nil {
+		msg := "invalid path"
+		if errors.Is(err, errInvalidFileID) {
+			msg = "invalid file id"
+		}
+		slog.Warn(msg, slog.String("path", r.URL.Path))
+		http.Error(w, msg, http.StatusBadRequest)
+		return uuid.Nil, false, false
+	}
+	return fileID, category, true
+}
+
+// fileChunkCount returns how many embedded chunks belong to the file. Counting
+// is best effort: a failure must not hide the file metadata the client asked
+// for, but it is logged because a silent zero looks like "not embedded".
+func (a *API) fileChunkCount(ctx context.Context, fileID, userID uuid.UUID) int64 {
+	count, err := a.db.Queries.GetIngestedFileChunkCount(ctx, db.GetIngestedFileChunkCountParams{
+		FileID: fileID,
+		UserID: userID,
+	})
+	if err != nil {
+		slog.Error("failed to count file chunks",
+			slog.Any("error", err),
+			slog.String("file_id", fileID.String()))
+		return 0
+	}
+	return count
+}
+
 func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -72,7 +179,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		if err == nil && existingFile.ID != uuid.Nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict) // 409
-			json.NewEncoder(w).Encode(toIngestedFileDTO(existingFile))
+			json.NewEncoder(w).Encode(toIngestedFileDTO(existingFile, a.fileChunkCount(r.Context(), existingFile.ID, userID)))
 			return
 		}
 
@@ -110,7 +217,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		committed = true
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(toIngestedFileDTO(ingestedFile))
+		json.NewEncoder(w).Encode(toIngestedFileDTO(ingestedFile, 0))
 	}
 }
 
@@ -151,10 +258,28 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Chunk counts are fetched in one aggregate query instead of one query per
+	// file, so a large library stays a constant number of round trips.
+	chunkCounts, err := a.db.Queries.GetUserChunkCountsByFile(r.Context(), userID)
+	if err != nil {
+		slog.Error("failed to get file chunk counts", slog.Any("error", err))
+		http.Error(w, "failed to get files", http.StatusInternalServerError)
+		return
+	}
+
+	countsByFile := make(map[uuid.UUID]int64, len(chunkCounts))
+	for _, row := range chunkCounts {
+		countsByFile[row.FileID] = row.ChunkCount
+	}
+
 	dtos := make([]IngestedFileDTO, 0, len(filesDB))
 	for _, f := range filesDB {
-		dtos = append(dtos, toIngestedFileDTO(f))
+		dtos = append(dtos, toIngestedFileDTO(f, countsByFile[f.ID]))
 	}
+
+	slog.Info("listed files",
+		slog.String("user_id", userID.String()),
+		slog.Int("count", len(dtos)))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(dtos)
@@ -168,29 +293,26 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 4 {
-		slog.Warn("invalid path", slog.String("path", r.URL.Path))
-		http.Error(w, "invalid path", http.StatusBadRequest)
+	fileID, category, ok := parseFileRequest(w, r)
+	if !ok {
 		return
 	}
-	idStr := parts[3] // /v1/files/{id}
-	fileID, err := uuid.Parse(idStr)
-	if err != nil {
-		slog.Warn("invalid file id", slog.String("id", idStr), slog.String("path", r.URL.Path))
-		http.Error(w, "invalid file id", http.StatusBadRequest)
+	if category {
+		// The category sub-resource is routed to its own handler.
+		slog.Warn("invalid path", slog.String("path", r.URL.Path))
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.Warn("file not found", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		slog.Warn("file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
 	if file.UserID != userID {
-		slog.Warn("unauthorized access to file", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		slog.Warn("unauthorized access to file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized access to file", http.StatusForbidden)
 		return
 	}
@@ -198,7 +320,7 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(toIngestedFileDTO(file))
+		json.NewEncoder(w).Encode(toIngestedFileDTO(file, a.fileChunkCount(r.Context(), file.ID, userID)))
 
 	case http.MethodDelete:
 		// Delete from DB (document_chunks cascade on delete)
@@ -238,17 +360,13 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 5 {
-		slog.Warn("invalid path", slog.String("path", r.URL.Path))
-		http.Error(w, "invalid path", http.StatusBadRequest)
+	fileID, category, ok := parseFileRequest(w, r)
+	if !ok {
 		return
 	}
-	idStr := parts[3] // /v1/files/{id}/category
-	fileID, err := uuid.Parse(idStr)
-	if err != nil {
-		slog.Warn("invalid file id", slog.String("id", idStr), slog.String("path", r.URL.Path))
-		http.Error(w, "invalid file id", http.StatusBadRequest)
+	if !category {
+		slog.Warn("invalid path", slog.String("path", r.URL.Path))
+		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
@@ -262,13 +380,13 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	// First verify the file exists and belongs to the user
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.Warn("file not found", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		slog.Warn("file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
 	if file.UserID != userID {
-		slog.Warn("unauthorized access to file", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		slog.Warn("unauthorized access to file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized access to file", http.StatusForbidden)
 		return
 	}
@@ -293,5 +411,5 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(toIngestedFileDTO(updatedFile))
+	json.NewEncoder(w).Encode(toIngestedFileDTO(updatedFile, a.fileChunkCount(r.Context(), updatedFile.ID, userID)))
 }

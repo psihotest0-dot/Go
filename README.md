@@ -83,6 +83,7 @@ The system supports uploading external knowledge documents via the `POST /v1/fil
 1. **Upload & Verification**: Enforces a 50MB limit, hashes the file for deduplication, securely saves it to a local `storage/` directory, and writes a tracking record.
 2. **Extraction**: The `internal/ingest` module detects formats strictly by magic bytes via `mimetype`. It includes robust parsers for plain text formats, HTML (tag stripping), PDF (`pdfcpu`), DOCX, and XLSX (`excelize`).
 3. **Background Chunking**: An async River job (`IngestFileWorker`) extracts the raw text, splits it into chunks, generates vector embeddings, and stores them in the `document_chunks` table for retrieval.
+4. **Embedding Status**: `GET /v1/files` (also available as `GET /files`) reports `chunk_count`, `has_embeddings` and `embedding_status` per file. Embeddings live in PostgreSQL via `pgvector` — there is no external vector store. `embedding_status` mirrors the ingest status but maps a `completed` file with zero chunks to `empty`, so the UI can distinguish "indexed" from "ingested but nothing to search".
 
 ### Known limitations and considerations
 * **Vector Dimensions Validation:** When verifying embedder outputs, avoid hardcoding the dimensions logic like `len(vectors[0]) == 384` across the codebase. Since the embedding model config could change (e.g. from MiniLM with 384 dimensions to a model with 768 dimensions), hardcoding this check will break functionality. A constant or environment variable should be used if dimension validation is needed.

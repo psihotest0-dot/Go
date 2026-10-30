@@ -99,18 +99,47 @@ type IngestedFileDTO struct {
 	UpdatedAt      *time.Time `json:"updated_at"`
 	Category       string     `json:"category"`
 	ManualOverride bool       `json:"manual_override"`
+	// ChunkCount is the number of embedded chunks stored for the file and
+	// HasEmbeddings tells the client whether the file can be used for search.
+	ChunkCount      int64  `json:"chunk_count"`
+	HasEmbeddings   bool   `json:"has_embeddings"`
+	EmbeddingStatus string `json:"embedding_status"`
 }
 
-func toIngestedFileDTO(f db.IngestedFile) IngestedFileDTO {
+// Embedding statuses reported per file. They extend the ingest status with the
+// state the UI cares about most: whether vectors actually exist.
+const (
+	EmbeddingStatusPending    = "pending"
+	EmbeddingStatusProcessing = "processing"
+	EmbeddingStatusFailed     = "failed"
+	EmbeddingStatusReady      = "completed"
+	EmbeddingStatusEmpty      = "empty"
+)
+
+// fileEmbeddingStatus derives the embedding status from the ingest status and
+// the stored chunk count. A file can finish ingestion with no chunks at all
+// (for example a scanned PDF without extractable text), which is reported as
+// "empty" instead of "completed" so the client can tell the two apart.
+func fileEmbeddingStatus(status string, chunkCount int64) string {
+	if status == EmbeddingStatusReady && chunkCount == 0 {
+		return EmbeddingStatusEmpty
+	}
+	return status
+}
+
+func toIngestedFileDTO(f db.IngestedFile, chunkCount int64) IngestedFileDTO {
 	dto := IngestedFileDTO{
-		ID:             f.ID,
-		UserID:         f.UserID,
-		FileName:       f.FileName,
-		MimeType:       f.MimeType,
-		FileSize:       f.FileSize,
-		Status:         f.Status,
-		Category:       f.Category,
-		ManualOverride: f.ManualOverride,
+		ID:              f.ID,
+		UserID:          f.UserID,
+		FileName:        f.FileName,
+		MimeType:        f.MimeType,
+		FileSize:        f.FileSize,
+		Status:          f.Status,
+		Category:        f.Category,
+		ManualOverride:  f.ManualOverride,
+		ChunkCount:      chunkCount,
+		HasEmbeddings:   chunkCount > 0,
+		EmbeddingStatus: fileEmbeddingStatus(f.Status, chunkCount),
 	}
 	if f.CreatedAt.Valid {
 		dto.CreatedAt = &f.CreatedAt.Time
