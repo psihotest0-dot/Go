@@ -100,7 +100,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	cyrillicCount := 0
 	runes := []rune(text)
-	for _, r := range runes {
+	for _, r := range text {
 		if unicode.Is(unicode.Cyrillic, r) {
 			cyrillicCount++
 		}
@@ -201,7 +201,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	if !file.ManualOverride && w.catMgr != nil {
 		votes := make(map[string]int)
-		for i, _ := range chunks {
+		for i := range chunks {
 			if i >= 30 {
 				break
 			}

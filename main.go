@@ -100,6 +100,9 @@ func enqueueIncompleteDistillations(ctx context.Context, client *river.Client[pg
 		}
 		count++
 	}
+	if err := rows.Err(); err != nil {
+		slog.Error("startup distillation scan failed while iterating rows", "error", err)
+	}
 	slog.Info("Startup distillation scan complete", "enqueued", count)
 }
 
@@ -223,22 +226,24 @@ func run() error {
 	protectedMux.HandleFunc("/chat/regenerate", orchestrator.HandleRegenerate)
 
 	protectedMux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			apiService.CreateMessageHandler(w, r)
-		} else if r.Method == http.MethodGet {
+		case http.MethodGet:
 			apiService.GetMessagesHandler(w, r)
-		} else {
+		default:
 			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
 
 	protectedMux.HandleFunc("/memories", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			apiService.CreateMemoryHandler(w, r)
-		} else if r.Method == http.MethodGet {
+		case http.MethodGet:
 			apiService.GetMemoriesHandler(w, r)
-		} else {
+		default:
 			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -247,11 +252,12 @@ func run() error {
 	protectedMux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
 
 	protectedMux.HandleFunc("/v1/files", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
+		switch r.Method {
+		case http.MethodPost:
 			apiService.CreateFileHandler(riverClient)(w, r)
-		} else if r.Method == http.MethodGet {
+		case http.MethodGet:
 			apiService.GetFilesHandler(w, r)
-		} else {
+		default:
 			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}

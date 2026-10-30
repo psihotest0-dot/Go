@@ -38,14 +38,6 @@ func textChunk(content string) openai.ChatCompletionStreamResponse {
 	}
 }
 
-func reasoningChunk(reasoning string) openai.ChatCompletionStreamResponse {
-	return openai.ChatCompletionStreamResponse{
-		Choices: []openai.ChatCompletionStreamChoice{
-			{Delta: openai.ChatCompletionStreamChoiceDelta{ReasoningContent: reasoning}},
-		},
-	}
-}
-
 func toolCallChunk(index int, id, name, args string) openai.ChatCompletionStreamResponse {
 	return openai.ChatCompletionStreamResponse{
 		Choices: []openai.ChatCompletionStreamChoice{

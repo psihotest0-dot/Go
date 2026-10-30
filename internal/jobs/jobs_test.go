@@ -109,10 +109,11 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 
 	var superseded, active bool
 	for _, m := range mems2 {
-		if m.Status == "superseded" {
+		switch m.Status {
+		case "superseded":
 			superseded = true
 			assert.Equal(t, "Живея в София", m.Content)
-		} else if m.Status == "active" {
+		case "active":
 			active = true
 			assert.Equal(t, "Преместих се във Варна", m.Content)
 		}
