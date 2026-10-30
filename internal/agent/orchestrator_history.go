@@ -39,7 +39,7 @@ func pruneHistory(historyMessages []openai.ChatCompletionMessage) ([]openai.Chat
 	return finalHistory, oldMessages, droppedMessagesCount
 }
 
-func (o *Orchestrator) rollingSummary(ctx context.Context, sessionID string, oldMessages []openai.ChatCompletionMessage, droppedMessagesCount int) string {
+func (o *Orchestrator) rollingSummary(sessionID string, oldMessages []openai.ChatCompletionMessage, droppedMessagesCount int) string {
 	v, _ := o.sessionSummaries.LoadOrStore(sessionID, &sessionSummary{})
 	summaryState := v.(*sessionSummary)
 

@@ -142,7 +142,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		return nil
 	}
 
-	assistantContent, _, toolCalls, err := o.generateResponse(r.Context(), finalMessages, tools, sources, onDelta)
+	assistantContent, _, toolCalls, err := o.generateResponse(r.Context(), finalMessages, tools, onDelta)
 	if err != nil {
 		if ctxErr := r.Context().Err(); ctxErr != nil {
 			slog.Info("stream cancelled", "reason", ctxErr, "session_id", sessionID)

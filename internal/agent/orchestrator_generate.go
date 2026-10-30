@@ -12,8 +12,6 @@ import (
 	"unicode/utf8"
 
 	openai "github.com/sashabaranov/go-openai"
-
-	"go-monolith/internal/api"
 )
 
 // generateResponse handles the LLM generation and tool calling logic, but unlike streamResponse, it
@@ -22,7 +20,6 @@ func (o *Orchestrator) generateResponse(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
-	sources []api.SourceInfo,
 	onDelta func(content, reasoning string) error,
 ) (string, string, []openai.ToolCall, error) {
 	chatReq := openai.ChatCompletionRequest{
