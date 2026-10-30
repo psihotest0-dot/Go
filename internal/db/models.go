@@ -54,6 +54,7 @@ type IngestedFile struct {
 	UpdatedAt      sql.NullTime `json:"updated_at"`
 	Category       string       `json:"category"`
 	ManualOverride bool         `json:"manual_override"`
+	DeletedAt      sql.NullTime `json:"deleted_at"`
 }
 
 type Memory struct {

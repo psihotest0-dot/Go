@@ -74,9 +74,27 @@ If you make changes to the DB schema, jobs or SQL queries, you need to run:
 
 4. **Scripts**
 A suite of backup, restore, and reindex scripts with `set -euo pipefail` are available in the `scripts/` directory.
-- `./scripts/backup.sh` uses `pg_dump -Fc`
+- `./scripts/backup.sh` uses `pg_dump -Fc`; `BACKUP_DIR` and `BACKUP_KEEP` (default `backups` / `14` dumps) control where dumps go and how many are kept.
+- `scripts/backup.ps1` is the Windows equivalent and falls back to `docker compose exec db pg_dump` when the host has no PostgreSQL client.
 - `./scripts/restore.sh` uses `pg_restore --clean --if-exists`
 - `./scripts/reindex.sh` rebuilds concurrent HNSW indices.
+- `scripts/backup-task.ps1` registers a daily Windows Scheduled Task (`go-monolith-backup`) that runs `backup.ps1` and keeps the dumps outside the repository.
+
+> **Take backups.** On 2026-10-30 a `DELETE FROM users` cascade wiped the ingested files, the chunks and their embeddings. Nothing could be restored because no dump had ever been taken — see `docs/incident-2026-10-30/REPORT.md`.
+
+## Tests
+
+Integration tests **never** read `DATABASE_URL`. They require `TEST_DATABASE_URL`, and they refuse to run unless the database name contains `test`:
+
+```bash
+# one-time: create the throwaway database
+docker compose exec db psql -U postgres -c "CREATE DATABASE app_test"
+
+export TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/app_test?sslmode=disable"
+go test -p 1 ./...
+```
+
+`-p 1` matters: `internal/db` runs the migrations down to zero and back up, so the packages that share the test database must not run at the same time. Without `TEST_DATABASE_URL` the database-backed tests skip; the pure unit tests still run. Some of them execute `goose.DownTo(..., 0)` and `DELETE FROM users`, which is exactly why they are fenced off from the live connection string.
 
 ### File Ingestion Pipeline
 The system supports uploading external knowledge documents via the `POST /v1/files` endpoint.

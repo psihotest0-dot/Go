@@ -10,17 +10,22 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/db"
+	"go-monolith/internal/dbtest"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/retrieval"
 )
 
 func TestRetrieval_Integration(t *testing.T) {
-	connString := os.Getenv("DATABASE_URL")
+	connString := dbtest.ConnString(t)
 	embedderURL := os.Getenv("EMBEDDER_URL")
 
-	if connString == "" || embedderURL == "" {
-		t.Skip("Пропускане: няма база/embedder")
+	if embedderURL == "" {
+		t.Skip("Пропускане: няма embedder")
 	}
+
+	// db.RunMigrations resolves "migrations" relative to the working directory,
+	// which is the package directory under `go test`.
+	t.Chdir("../..")
 
 	err := db.RunMigrations(connString)
 	require.NoError(t, err)
@@ -30,12 +35,14 @@ func TestRetrieval_Integration(t *testing.T) {
 	require.NoError(t, err)
 	defer d.Close()
 
-	// Clear DB for test
-	_, _ = d.Pool.Exec(ctx, "DELETE FROM memories")
-	_, _ = d.Pool.Exec(ctx, "DELETE FROM users")
-
 	user, err := d.Queries.CreateUser(ctx)
 	require.NoError(t, err)
+
+	// Only this test's own rows are removed; a bare `DELETE FROM users` would
+	// cascade through the whole library (docs/incident-2026-10-30/REPORT.md).
+	defer func() {
+		_, _ = d.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+	}()
 
 	// Since we mock embedder with a health check, we need to pass the real HTTPEmbedder if we want,
 	// but the requirement is to use MockEmbedder or real depending on availability.
@@ -56,12 +63,16 @@ func TestRetrieval_Integration(t *testing.T) {
 }
 
 func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
-	connString := os.Getenv("DATABASE_URL")
+	connString := dbtest.ConnString(t)
 	embedderURL := os.Getenv("EMBEDDER_URL")
 
-	if connString == "" || embedderURL == "" {
-		t.Skip("Пропускане: няма база/embedder")
+	if embedderURL == "" {
+		t.Skip("Пропускане: няма embedder")
 	}
+
+	// db.RunMigrations resolves "migrations" relative to the working directory,
+	// which is the package directory under `go test`.
+	t.Chdir("../..")
 
 	err := db.RunMigrations(connString)
 	require.NoError(t, err)
@@ -71,12 +82,14 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	require.NoError(t, err)
 	defer d.Close()
 
-	// Clear DB for test
-	_, _ = d.Pool.Exec(ctx, "DELETE FROM memories")
-	_, _ = d.Pool.Exec(ctx, "DELETE FROM users")
-
 	user, err := d.Queries.CreateUser(ctx)
 	require.NoError(t, err)
+
+	// Only this test's own rows are removed; a bare `DELETE FROM users` would
+	// cascade through the whole library (docs/incident-2026-10-30/REPORT.md).
+	defer func() {
+		_, _ = d.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+	}()
 
 	embedder := llm.NewHTTPEmbedder(d)
 	svc := retrieval.NewRetrievalService(d, embedder, nil)

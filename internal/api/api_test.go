@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 
 	"go-monolith/internal/llm"
@@ -20,13 +19,11 @@ import (
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/db"
+	"go-monolith/internal/dbtest"
 )
 
 func setupTestDB(t *testing.T) *db.Database {
-	connString := os.Getenv("DATABASE_URL")
-	if connString == "" {
-		t.Skip("DATABASE_URL not set")
-	}
+	connString := dbtest.ConnString(t)
 
 	rawDB, err := sql.Open("pgx", connString)
 	require.NoError(t, err)
@@ -42,8 +39,12 @@ func setupTestDB(t *testing.T) *db.Database {
 	t.Cleanup(func() {
 		// Close through Database.Close so the database/sql wrapper releases its
 		// connections before the pool is closed (the reverse order hangs).
+		//
+		// The schema is deliberately left in place: dropping it (goose.DownTo
+		// to 0) would erase the shared test database while other packages are
+		// still using it, and it is the exact operation that once emptied the
+		// live database (docs/incident-2026-10-30/REPORT.md).
 		database.Close()
-		goose.DownTo(rawDB, "../../migrations", 0)
 		rawDB.Close()
 	})
 
@@ -59,6 +60,12 @@ func setupAPI(t *testing.T) (*api.API, *db.Database, uuid.UUID) {
 	// Create test user
 	user, err := database.Queries.CreateUser(context.Background())
 	require.NoError(t, err)
+
+	// Remove only this test's own user. The cleanup runs before the pool is
+	// closed because it is registered later than the one in setupTestDB.
+	t.Cleanup(func() {
+		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+	})
 
 	return apiService, database, user.ID
 }

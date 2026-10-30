@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -317,14 +316,25 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A soft deleted row is kept so the delete can be undone, but it is gone as
+	// far as clients are concerned.
+	if file.DeletedAt.Valid {
+		slog.Warn("access to soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(toIngestedFileDTO(file, a.fileChunkCount(r.Context(), file.ID, userID)))
 
 	case http.MethodDelete:
-		// Delete from DB (document_chunks cascade on delete)
-		err = a.db.Queries.DeleteIngestedFile(r.Context(), db.DeleteIngestedFileParams{
+		// Soft delete: the row and its chunks are kept, and so is the original
+		// upload, so an accidental delete can be undone with one UPDATE. A hard
+		// delete cascades into document_chunks, which is how the whole library
+		// was destroyed on 2026-10-30 (docs/incident-2026-10-30/REPORT.md).
+		err = a.db.Queries.SoftDeleteIngestedFile(r.Context(), db.SoftDeleteIngestedFileParams{
 			ID:     fileID,
 			UserID: userID,
 		})
@@ -334,10 +344,9 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Delete from local storage
-		if file.LocalPath != "" {
-			_ = os.Remove(file.LocalPath)
-		}
+		slog.Info("soft deleted ingested file",
+			slog.String("file_id", fileID.String()),
+			slog.String("local_path", file.LocalPath))
 
 		w.WriteHeader(http.StatusNoContent)
 	default:

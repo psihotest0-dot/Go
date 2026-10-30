@@ -90,7 +90,7 @@ func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocum
 const createIngestedFile = `-- name: CreateIngestedFile :one
 INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override
+RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at
 `
 
 type CreateIngestedFileParams struct {
@@ -127,6 +127,7 @@ func (q *Queries) CreateIngestedFile(ctx context.Context, arg CreateIngestedFile
 		&i.UpdatedAt,
 		&i.Category,
 		&i.ManualOverride,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -146,7 +147,10 @@ func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFile
 }
 
 const getDocumentChunksByFile = `-- name: GetDocumentChunksByFile :many
-SELECT id, file_id, user_id, chunk_index, text, embedding, created_at, chunk_type, metadata FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC
+SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, c.chunk_type, c.metadata FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.file_id = $1 AND c.user_id = $2 AND f.deleted_at IS NULL
+ORDER BY c.chunk_index ASC
 `
 
 type GetDocumentChunksByFileParams struct {
@@ -192,6 +196,7 @@ SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.id = ANY($1::uuid[]) AND c.user_id = $2
+  AND f.deleted_at IS NULL
 `
 
 type GetDocumentChunksWithFileParams struct {
@@ -247,7 +252,7 @@ func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, arg GetDocument
 }
 
 const getIngestedFileByHash = `-- name: GetIngestedFileByHash :one
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE user_id = $1 AND file_hash = $2
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE user_id = $1 AND file_hash = $2 AND deleted_at IS NULL
 `
 
 type GetIngestedFileByHashParams struct {
@@ -271,12 +276,13 @@ func (q *Queries) GetIngestedFileByHash(ctx context.Context, arg GetIngestedFile
 		&i.UpdatedAt,
 		&i.Category,
 		&i.ManualOverride,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getIngestedFileByID = `-- name: GetIngestedFileByID :one
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE id = $1
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE id = $1
 `
 
 func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (IngestedFile, error) {
@@ -295,6 +301,7 @@ func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (Ingest
 		&i.UpdatedAt,
 		&i.Category,
 		&i.ManualOverride,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -318,7 +325,7 @@ func (q *Queries) GetIngestedFileChunkCount(ctx context.Context, arg GetIngested
 }
 
 const getIngestedFiles = `-- name: GetIngestedFiles :many
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC
 `
 
 func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]IngestedFile, error) {
@@ -343,6 +350,7 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 			&i.UpdatedAt,
 			&i.Category,
 			&i.ManualOverride,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -399,6 +407,7 @@ FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.user_id = $2
   AND f.status = 'completed'
+  AND f.deleted_at IS NULL
   AND c.chunk_type = 'concept_summary'
   AND (c.embedding <=> $1) < 0.40
 ORDER BY distance ASC
@@ -458,6 +467,7 @@ WITH chunk_vector_search AS (
         JOIN ingested_files f ON c.file_id = f.id
         WHERE c.user_id = $3
           AND f.status = 'completed'
+          AND f.deleted_at IS NULL
           AND c.chunk_type = 'raw_text'
           AND (c.embedding <=> $5) < 0.45
     ) sub
@@ -475,6 +485,7 @@ chunk_text_search AS (
         JOIN ingested_files f ON c.file_id = f.id
         WHERE c.user_id = $3
           AND f.status = 'completed'
+          AND f.deleted_at IS NULL
           AND similarity(c.text, $6) > 0.15
     ) sub
     WHERE file_rank <= 2
@@ -559,6 +570,7 @@ FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.user_id = $2
   AND f.status = 'completed'
+  AND f.deleted_at IS NULL
 ORDER BY score DESC
 LIMIT $3
 `
@@ -602,6 +614,22 @@ func (q *Queries) SearchTextChunks(ctx context.Context, arg SearchTextChunksPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const softDeleteIngestedFile = `-- name: SoftDeleteIngestedFile :exec
+UPDATE ingested_files
+SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
+WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+`
+
+type SoftDeleteIngestedFileParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) SoftDeleteIngestedFile(ctx context.Context, arg SoftDeleteIngestedFileParams) error {
+	_, err := q.db.ExecContext(ctx, softDeleteIngestedFile, arg.ID, arg.UserID)
+	return err
 }
 
 const updateIngestedFileCategory = `-- name: UpdateIngestedFileCategory :exec

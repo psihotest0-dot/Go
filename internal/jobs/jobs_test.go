@@ -6,7 +6,8 @@ import (
 	"testing"
 
 	"go-monolith/internal/db"
-	"os"
+	"go-monolith/internal/dbtest"
+	"go-monolith/internal/prompts"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -78,10 +79,14 @@ func TestMemoryConsolidationInsertOptsAllowsReenqueueAfterCompletion(t *testing.
 }
 
 func TestMemoryConsolidationWorker(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set")
-	}
+	dbURL := dbtest.ConnString(t)
+
+	// prompts.GlobalManager is initialised by the application bootstrap, and
+	// the worker renders its instructions through it. The template directory is
+	// resolved relative to the working directory, which is the package dir when
+	// running `go test`, so move to the module root first.
+	t.Chdir("../..")
+	prompts.Init("prompts")
 
 	ctx := context.Background()
 	database, err := db.Connect(ctx, dbURL)
@@ -89,6 +94,12 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	t.Cleanup(database.Close)
 	user, err := database.Queries.CreateUser(ctx)
 	require.NoError(t, err)
+
+	// Delete only the user this test created, so the shared test database
+	// keeps whatever the other tests are using.
+	defer func() {
+		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+	}()
 
 	llmMock := &mockLLMClient{
 		responses: []string{
@@ -118,7 +129,9 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	mems1, err := database.Queries.GetMemories(ctx, db.GetMemoriesParams{UserID: user.ID})
 	require.NoError(t, err)
 	assert.Len(t, mems1, 1)
-	assert.Equal(t, "candidate", mems1[0].Status) // First fact is candidate
+	// A fact with no conflicting memory is stored as "active"; "candidate" is
+	// reserved for a silent change against an existing fact (processFact).
+	assert.Equal(t, "active", mems1[0].Status)
 
 	// Message 2
 	_, err = database.Queries.CreateMessage(ctx, db.CreateMessageParams{

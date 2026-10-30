@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -16,16 +15,14 @@ import (
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/db"
+	"go-monolith/internal/dbtest"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/prompts"
 	"go-monolith/internal/retrieval"
 )
 
 func TestOrchestratorIntegration(t *testing.T) {
-	connString := os.Getenv("DATABASE_URL")
-	if connString == "" {
-		t.Skip("Пропускане: няма база")
-	}
+	connString := dbtest.ConnString(t)
 
 	// db.RunMigrations resolves the "migrations" directory relative to the
 	// working directory, which is the package directory when running
@@ -47,11 +44,10 @@ func TestOrchestratorIntegration(t *testing.T) {
 	require.NoError(t, err)
 	defer database.Close()
 
-	// Clear DB for test
-	_, _ = database.Pool.Exec(ctx, "DELETE FROM agent_traces")
-	_, _ = database.Pool.Exec(ctx, "DELETE FROM messages")
-	_, _ = database.Pool.Exec(ctx, "DELETE FROM memories")
-	_, _ = database.Pool.Exec(ctx, "DELETE FROM users")
+	// The test creates its own user below and every row it writes hangs off
+	// that user, so no cleanup of other people's data is needed - or allowed.
+	// `DELETE FROM users` without a WHERE clause is what destroyed the library
+	// on 2026-10-30 (see docs/incident-2026-10-30/REPORT.md).
 
 	// Set up mocks
 	mockEmbedder := &llm.MockEmbedder{}
@@ -69,6 +65,13 @@ func TestOrchestratorIntegration(t *testing.T) {
 	// Create user
 	user, err := database.Queries.CreateUser(ctx)
 	require.NoError(t, err)
+
+	// Remove only this test's own user; the cascade takes its messages,
+	// memories and traces with it. Declared after `defer database.Close()` so
+	// it runs while the pool is still open.
+	defer func() {
+		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+	}()
 
 	// Create memory (which generates embedding via mock)
 	_, err = retrievalService.CreateMemory(ctx, user.ID, "This is a memory", 1, "active", pqtype.NullRawMessage{})

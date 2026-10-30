@@ -4,3 +4,4 @@ __pycache__/
 backend.log
 storage/
 .env
+backups/

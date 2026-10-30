@@ -4,13 +4,16 @@ VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetIngestedFileByHash :one
-SELECT * FROM ingested_files WHERE user_id = $1 AND file_hash = $2;
+SELECT * FROM ingested_files WHERE user_id = $1 AND file_hash = $2 AND deleted_at IS NULL;
 
+-- GetIngestedFileByID is deliberately unfiltered: the ingest worker and the
+-- restore path must be able to see a soft deleted row. Callers that serve
+-- clients filter on deleted_at.
 -- name: GetIngestedFileByID :one
 SELECT * FROM ingested_files WHERE id = $1;
 
 -- name: GetIngestedFiles :many
-SELECT * FROM ingested_files WHERE user_id = $1 ORDER BY created_at DESC;
+SELECT * FROM ingested_files WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC;
 
 -- name: GetUserChunkCountsByFile :many
 SELECT file_id, CAST(COUNT(*) AS BIGINT) AS chunk_count
@@ -26,8 +29,20 @@ WHERE file_id = $1 AND user_id = $2;
 -- name: UpdateIngestedFileStatus :exec
 UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3;
 
+-- DeleteIngestedFile is a hard delete. Only used to roll back an upload that
+-- never produced chunks; anything a client asks to remove goes through
+-- SoftDeleteIngestedFile.
 -- name: DeleteIngestedFile :exec
 DELETE FROM ingested_files WHERE id = $1 AND user_id = $2;
+
+-- SoftDeleteIngestedFile marks the file as gone without destroying its chunks,
+-- so a mistaken delete can be undone. The partial unique index on
+-- (user_id, file_hash) only covers live rows, which keeps re-uploads of the same
+-- document working.
+-- name: SoftDeleteIngestedFile :exec
+UPDATE ingested_files
+SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
+WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL;
 
 -- name: UpdateIngestedFileCategory :exec
 UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1 AND user_id = $3;
@@ -41,7 +56,10 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetDocumentChunksByFile :many
-SELECT * FROM document_chunks WHERE file_id = $1 AND user_id = $2 ORDER BY chunk_index ASC;
+SELECT c.* FROM document_chunks c
+JOIN ingested_files f ON c.file_id = f.id
+WHERE c.file_id = $1 AND c.user_id = $2 AND f.deleted_at IS NULL
+ORDER BY c.chunk_index ASC;
 
 -- name: CreateDocumentChunksBatch :exec
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
@@ -58,7 +76,8 @@ SELECT
 SELECT c.*, f.file_name
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
-WHERE c.id = ANY(sqlc.arg('chunk_ids')::uuid[]) AND c.user_id = sqlc.arg('user_id');
+WHERE c.id = ANY(sqlc.arg('chunk_ids')::uuid[]) AND c.user_id = sqlc.arg('user_id')
+  AND f.deleted_at IS NULL;
 
 -- name: SearchConceptChunks :many
 SELECT c.id, c.text as content, f.file_name, c.metadata,
@@ -67,6 +86,7 @@ FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.user_id = sqlc.arg('user_id')
   AND f.status = 'completed'
+  AND f.deleted_at IS NULL
   AND c.chunk_type = 'concept_summary'
   AND (c.embedding <=> sqlc.arg('embedding')) < 0.40
 ORDER BY distance ASC
@@ -83,6 +103,7 @@ WITH chunk_vector_search AS (
         JOIN ingested_files f ON c.file_id = f.id
         WHERE c.user_id = sqlc.arg('user_id')
           AND f.status = 'completed'
+          AND f.deleted_at IS NULL
           AND c.chunk_type = 'raw_text'
           AND (c.embedding <=> sqlc.arg('embedding')) < 0.45
     ) sub
@@ -100,6 +121,7 @@ chunk_text_search AS (
         JOIN ingested_files f ON c.file_id = f.id
         WHERE c.user_id = sqlc.arg('user_id')
           AND f.status = 'completed'
+          AND f.deleted_at IS NULL
           AND similarity(c.text, sqlc.arg('query_text')) > 0.15
     ) sub
     WHERE file_rank <= 2
@@ -132,5 +154,6 @@ FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.user_id = sqlc.arg('user_id')
   AND f.status = 'completed'
+  AND f.deleted_at IS NULL
 ORDER BY score DESC
 LIMIT sqlc.arg('match_count');

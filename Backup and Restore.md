@@ -22,6 +22,58 @@
 * Името на файла ще съдържа името на базата данни и точен час (например: `backups/db_20231020_143000.dump`).
 * Този файл съдържа цялата база данни – настройки, запаметена памет, качени документи (извлечения текст и вектори) и правила.
 
+**Настройки (по избор):**
+* `BACKUP_DIR` – къде да се записват файловете (по подразбиране `backups/`). Задайте път извън проекта, за да не зависят бекъпите от `git clean` или от счупен диск.
+* `BACKUP_KEEP` – колко бекъпа да се пазят, по-старите се изтриват (по подразбиране `14`, `0` изключва изтриването).
+
+```bash
+BACKUP_DIR="D:/backups/go-monolith" BACKUP_KEEP=30 ./scripts/backup.sh
+```
+
+Скриптът отказва да запише файл, по-малък от 1000 байта, за да не остави „празен“ бекъп, който изглежда валиден.
+
+### 1.1 Автоматичен бекъп всеки ден (Windows)
+
+За да не зависи бекъпът от това дали някой си спомни да го пусне, регистрирайте планирана задача:
+
+```powershell
+# ежедневно в 03:00, бекъпите се пазят в %USERPROFILE%\go-monolith-backups
+powershell -ExecutionPolicy Bypass -File scripts\backup-task.ps1
+
+# друг час/място/брой файлове
+powershell -ExecutionPolicy Bypass -File scripts\backup-task.ps1 -Time 02:30 -BackupDir "D:\backups\go-monolith" -Keep 30
+
+# премахване на задачата
+powershell -ExecutionPolicy Bypass -File scripts\backup-task.ps1 -Remove
+```
+
+Задачата `go-monolith-backup` стартира `scripts\backup.ps1`. Този скрипт:
+
+* използва локален `pg_dump`, ако има такъв; иначе пуска `pg_dump` вътре в контейнера `db` (`docker compose exec -T db pg_dump …`) — на тази машина `pg_dump` няма инсталиран на Windows, а клиентът в контейнера винаги съвпада с версията на сървъра;
+* зарежда `DATABASE_URL` от `.env`; ако липсва (както е в текущия `.env`), ползва същия default, който ползва и приложението (`internal/config.Load`);
+* не пази файл под 1000 байта и трие по-старите бекъпи (`-Keep`).
+
+Проверете, че работи:
+
+```powershell
+Start-ScheduledTask -TaskName "go-monolith-backup"
+Get-ScheduledTaskInfo -TaskName "go-monolith-backup"   # LastTaskResult трябва да е 0
+```
+
+Първият бекъп беше направен на 30.10.2026 23:45 (преди миграция 00017) и след това заменен от по-новите според политиката за задържане. Текущите файлове са `postgres_20261030_235854.dump` и `postgres_20261031_000011.dump` (последният е създаден от планираната задача) — по 497 MB, 15 таблици (включително `ingested_files`, `document_chunks` и `embedding_cache`), проверени с `pg_restore --list`. Пълният dump на тази база отнема ~1 минута и е ~500 MB (най-голямата таблица е `embedding_cache` с ~257 000 вектора), така че при `-Keep 14` трябва да предвидите ~7 GB място.
+
+Скриптът пуска `pg_dump` **отделено** в контейнера (`docker compose exec -d`) и следи файл-маркер с exit кода, след което копира готовия архив с `docker compose cp`. Причината: изчакването на дълъг `compose exec` може да блокира след края на `pg_dump` (възпроизведено от Task Scheduler), а тогава на хоста остава файл с размер 0 байта.
+
+**Защо това е важно:** при инцидента от 30.10.2026 (`DELETE FROM users` с каскадно изтриване) нямаше нито един `.dump` файл, затова извлеченият текст и векторите на 26 документа бяха безвъзвратно загубени. Метаданните бяха спасени само от мъртвите tuple-и в heap страниците на таблицата.
+
+**Проверка, че бекъпът е валиден (без да пипате живата база):**
+
+```powershell
+docker compose cp "%USERPROFILE%\go-monolith-backups\postgres_20261030_234239.dump" db:/tmp/verify.dump
+docker compose exec -T db pg_restore --list /tmp/verify.dump
+docker compose exec -T db rm -f /tmp/verify.dump
+```
+
 ---
 
 ## 2. Пренасяне на проекта на друг компютър/носител

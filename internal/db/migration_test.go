@@ -2,19 +2,17 @@ package db_test
 
 import (
 	"database/sql"
-	"os"
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	goose "github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
+
+	"go-monolith/internal/dbtest"
 )
 
 func TestMigrations(t *testing.T) {
-	connString := os.Getenv("DATABASE_URL")
-	if connString == "" {
-		t.Skip("DATABASE_URL not set")
-	}
+	connString := dbtest.ConnString(t)
 
 	db, err := sql.Open("pgx", connString)
 	require.NoError(t, err)
@@ -27,7 +25,8 @@ func TestMigrations(t *testing.T) {
 	err = goose.Up(db, "../../migrations")
 	require.NoError(t, err)
 
-	// Run all migrations down
+	// Running the migrations down to zero drops every table, which is safe
+	// only because dbtest.ConnString guarantees a throwaway database.
 	err = goose.DownTo(db, "../../migrations", 0)
 	require.NoError(t, err)
 

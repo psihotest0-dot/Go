@@ -259,10 +259,13 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to update status to completed: %w", err)
 	}
 
+	// The original upload is kept on disk. It is the only copy of the source
+	// document once it is chunked, and on 2026-10-30 removing it immediately
+	// after ingest left nothing to re-ingest from after the rows were deleted
+	// (docs/incident-2026-10-30/REPORT.md). Cleanup is a separate, deliberate
+	// operation.
 	if file.LocalPath != "" {
-		if err := os.Remove(file.LocalPath); err != nil {
-			slog.Warn("Failed to remove local file after ingestion", "file_id", file.ID, "path", file.LocalPath, "error", err)
-		}
+		slog.Info("retained original upload after ingestion", "file_id", file.ID, "path", file.LocalPath)
 	}
 
 	// Enqueue distillation worker
