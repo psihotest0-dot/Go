@@ -14,8 +14,10 @@ import (
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/require"
 
+	"go-monolith/internal/api"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/prompts"
 	"go-monolith/internal/retrieval"
 )
 
@@ -24,6 +26,15 @@ func TestOrchestratorIntegration(t *testing.T) {
 	if connString == "" {
 		t.Skip("Пропускане: няма база")
 	}
+
+	// db.RunMigrations resolves the "migrations" directory relative to the
+	// working directory, which is the package directory when running
+	// `go test`. Move to the module root so the migrations can be found.
+	t.Chdir("../..")
+
+	// The orchestrator renders system prompts through prompts.GlobalManager,
+	// which is normally initialized by the application bootstrap.
+	prompts.Init("prompts")
 
 	ctx := context.Background()
 
@@ -34,7 +45,12 @@ func TestOrchestratorIntegration(t *testing.T) {
 	// Connect to DB
 	database, err := db.Connect(ctx, connString)
 	require.NoError(t, err)
-	defer database.Pool.Close()
+	defer func() {
+		// Close the database/sql wrapper first, otherwise pgxpool.Close
+		// blocks forever waiting for its connections to be released.
+		_ = database.SqlDB.Close()
+		database.Pool.Close()
+	}()
 
 	// Clear DB for test
 	_, _ = database.Pool.Exec(ctx, "DELETE FROM agent_traces")
@@ -90,6 +106,11 @@ func TestOrchestratorIntegration(t *testing.T) {
 	reqBytes, _ := json.Marshal(reqBody)
 	req := httptest.NewRequest(http.MethodPost, "/chat/stream", bytes.NewReader(reqBytes))
 	req.Header.Set("X-User-ID", user.ID.String())
+	// The handler reads the parsed user ID from the context, which is normally
+	// injected by api.UserMiddleware. The test calls the handler directly, so
+	// inject it manually. It must be a uuid.UUID to satisfy the handler's
+	// type assertion (a plain string would still yield 401).
+	req = req.WithContext(context.WithValue(req.Context(), api.ParsedUserIDKey, user.ID))
 
 	rr := httptest.NewRecorder()
 	orchestrator.HandleStreamChat(rr, req)
@@ -105,10 +126,15 @@ func TestOrchestratorIntegration(t *testing.T) {
 	msgs, err := database.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
 		UserID:    user.ID,
 		SessionID: sessionID,
+		Limit:     10,
 	})
 	require.NoError(t, err)
 	require.Len(t, msgs, 4) // 2 long strings, 1 new user, 1 new assistant
-	require.Equal(t, "Hello World", msgs[3].Content)
+	// GetMessagesBySession orders by created_at DESC, so the newest messages come first.
+	require.Equal(t, "assistant", msgs[0].Role)
+	require.Equal(t, "Hello World", msgs[0].Content)
+	require.Equal(t, "user", msgs[1].Role)
+	require.Equal(t, "Hello from test", msgs[1].Content)
 
 	// Verify Traces were created (Search, Prune, StreamEnd)
 	var count int
