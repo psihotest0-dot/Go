@@ -25,6 +25,11 @@ const (
 
 	// maxToolResultChars caps what one tool result contributes to the prompt.
 	maxToolResultChars = 8192
+
+	// maxLoggedToolArgsRunes caps how much of an unusable argument payload is
+	// written to the log. The full value is model output and can be huge, while
+	// a short prefix is enough to see what went wrong.
+	maxLoggedToolArgsRunes = 256
 )
 
 // deltaFunc receives streamed content and reasoning chunks. Returning an error
@@ -143,28 +148,50 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 			slog.Warn("tool call without a name", "id", tc.ID)
 			content = "Error: tool name missing"
 		} else {
-			var args map[string]interface{}
-			if tc.Function.Arguments != "" {
-				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-					slog.Warn("tool arguments are not valid JSON",
-						"tool", tc.Function.Name, "err", err)
+			args := map[string]interface{}{}
+			var parseErr error
+			rawArgs := strings.TrimSpace(tc.Function.Arguments)
+			if rawArgs != "" {
+				if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+					parseErr = fmt.Errorf("arguments are not valid JSON: %w", err)
+				} else if args == nil {
+					parseErr = errors.New("arguments are not a JSON object")
 				}
 			}
 
-			res, err := o.tools.ExecuteTool(ctx, tc.Function.Name, args)
-			switch {
-			case err != nil:
-				slog.Error("tool execution failed", "tool", tc.Function.Name, "err", err)
-				content = fmt.Sprintf("Error: %v", err)
-			default:
-				resBytes, marshalErr := json.Marshal(res)
-				if marshalErr != nil {
-					slog.Error("failed to marshal tool result", "tool", tc.Function.Name, "err", marshalErr)
-					content = fmt.Sprintf("Error: %v", marshalErr)
-					break
+			if parseErr != nil {
+				// A half parsed map would make the tool look for arguments that
+				// are not there and report a misleading error, so the model is
+				// asked to repeat the call instead.
+				slog.Warn("tool arguments are unusable",
+					"tool", tc.Function.Name,
+					"err", parseErr,
+					"raw", truncateRunes(rawArgs, maxLoggedToolArgsRunes))
+				content = fmt.Sprintf("Error: %v. Call %s again with a JSON object that matches its schema.",
+					parseErr, tc.Function.Name)
+			} else {
+				res, err := o.tools.ExecuteTool(ctx, tc.Function.Name, args)
+				switch {
+				case err != nil:
+					var argErr *toolArgumentError
+					if errors.As(err, &argErr) {
+						// The model got the call wrong, the server did not fail;
+						// the reason goes back to the model as tool output.
+						slog.Warn("tool call rejected", "tool", tc.Function.Name, "err", err)
+					} else {
+						slog.Error("tool execution failed", "tool", tc.Function.Name, "err", err)
+					}
+					content = fmt.Sprintf("Error: %v", err)
+				default:
+					resBytes, marshalErr := json.Marshal(res)
+					if marshalErr != nil {
+						slog.Error("failed to marshal tool result", "tool", tc.Function.Name, "err", marshalErr)
+						content = fmt.Sprintf("Error: %v", marshalErr)
+						break
+					}
+					content = truncateRunes(string(resBytes), maxToolResultChars)
+					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
 				}
-				content = truncateRunes(string(resBytes), maxToolResultChars)
-				slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
 			}
 		}
 

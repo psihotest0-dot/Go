@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -217,4 +219,54 @@ func TestExecuteToolCallsTruncatesHugeResults(t *testing.T) {
 
 	require.Len(t, messages, 1)
 	assert.LessOrEqual(t, len([]rune(messages[0].Content)), maxToolResultChars+2)
+}
+
+func TestExecuteToolCallsRejectsUnparsableArguments(t *testing.T) {
+	tools := &fakeToolRegistry{result: "ok"}
+	orchestrator := newGenerateOrchestrator(&llm.MockLLM{}, tools)
+
+	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
+		{ID: "call_1", Function: openai.FunctionCall{Name: "search_memories", Arguments: `{"query":`}},
+	})
+
+	require.Len(t, messages, 1)
+	assert.Empty(t, tools.executed, "the tool must not run on arguments that could not be parsed")
+	assert.Contains(t, messages[0].Content, "not valid JSON")
+	assert.Contains(t, messages[0].Content, "search_memories")
+}
+
+func TestExecuteToolCallsPassesAnEmptyObjectWhenArgumentsAreMissing(t *testing.T) {
+	tools := &fakeToolRegistry{result: "ok"}
+	orchestrator := newGenerateOrchestrator(&llm.MockLLM{}, tools)
+
+	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
+		{ID: "call_1", Function: openai.FunctionCall{Name: "search_memories"}},
+	})
+
+	require.Len(t, messages, 1)
+	require.Len(t, tools.args, 1)
+	assert.NotNil(t, tools.args[0], "tools must receive an empty object, never a nil map")
+	assert.Empty(t, tools.args[0])
+	assert.Contains(t, messages[0].Content, "ok")
+}
+
+func TestExecuteToolCallsLogsArgumentErrorsAsWarnings(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	tools := &fakeToolRegistry{err: missingArgError("search_memories", "query", `{"query": "<text>"}`)}
+	orchestrator := newGenerateOrchestrator(&llm.MockLLM{}, tools)
+
+	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
+		{ID: "call_1", Function: openai.FunctionCall{Name: "search_memories", Arguments: `{}`}},
+	})
+
+	require.Len(t, messages, 1)
+	assert.Contains(t, messages[0].Content, `"query"`)
+
+	output := logs.String()
+	assert.Contains(t, output, "level=WARN")
+	assert.NotContains(t, output, "level=ERROR", "a malformed model call is not a server failure")
 }

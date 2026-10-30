@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -60,10 +63,93 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 	}
 }
 
+// toolArgumentError reports a tool call the model got wrong: a required
+// argument is missing, empty or of the wrong type. The server is healthy, so
+// the orchestrator logs it as a warning and passes the message back to the
+// model, which can retry the call with the arguments its schema requires.
+type toolArgumentError struct {
+	tool   string
+	reason string
+}
+
+func (e *toolArgumentError) Error() string {
+	return fmt.Sprintf("invalid arguments for %s: %s", e.tool, e.reason)
+}
+
+// missingArgError builds the model facing error for an absent argument. The
+// example shows the shape the model should retry with.
+func missingArgError(tool, arg, example string) error {
+	reason := fmt.Sprintf("missing required %q argument", arg)
+	if example != "" {
+		reason += "; call the tool again with " + example
+	}
+	return &toolArgumentError{tool: tool, reason: reason}
+}
+
+// stringArg reads a required string argument and trims it, so a value made of
+// whitespace counts as missing instead of reaching the database.
+func stringArg(args map[string]interface{}, name string) (string, bool) {
+	raw, ok := args[name]
+	if !ok {
+		return "", false
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	return value, value != ""
+}
+
+// intArg reads an optional positive integer argument. JSON decoding produces
+// float64, but json.Number and numeric strings are accepted too because some
+// model servers emit numbers that way.
+func intArg(args map[string]interface{}, name string, fallback int) int {
+	switch value := args[name].(type) {
+	case float64:
+		if value > 0 {
+			return int(value)
+		}
+	case json.Number:
+		if n, err := value.Int64(); err == nil && n > 0 {
+			return int(n)
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return fallback
+}
+
+// maxFallbackQueryRunes bounds the user message reused as a search query. The
+// message can be a whole paragraph, while the embedding model expects a short
+// query.
+const maxFallbackQueryRunes = 500
+
+// searchQueryArg resolves the text a search tool must run. Models regularly
+// call search_memories or search_documents with an empty argument object; in
+// that case the user message that triggered the turn is a better query than
+// failing the turn with an error the model cannot explain to the user.
+func searchQueryArg(ctx context.Context, tool string, args map[string]interface{}) (string, error) {
+	if query, ok := stringArg(args, "query"); ok {
+		return query, nil
+	}
+
+	if query := strings.TrimSpace(currentQuery(ctx)); query != "" {
+		query = truncateRunes(query, maxFallbackQueryRunes)
+		slog.Warn("search tool called without a query, using the current user message",
+			"tool", tool, "query_chars", utf8.RuneCountInString(query))
+		return query, nil
+	}
+
+	return "", missingArgError(tool, "query", `{"query": "<what to search for>"}`)
+}
+
 func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	query, ok := args["query"].(string)
-	if !ok || query == "" {
-		return nil, fmt.Errorf("invalid or missing 'query' argument")
+	query, ok := stringArg(args, "query")
+	if !ok {
+		return nil, missingArgError("web_search", "query", `{"query": "<what to search for>"}`)
 	}
 
 	apiKey := os.Getenv("DEEPSEEK_API_KEY")
@@ -98,9 +184,9 @@ func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[str
 }
 
 func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	url, ok := args["url"].(string)
-	if !ok || url == "" {
-		return nil, fmt.Errorf("invalid or missing 'url' argument")
+	url, ok := stringArg(args, "url")
+	if !ok {
+		return nil, missingArgError("web_fetch", "url", `{"url": "<page url>"}`)
 	}
 
 	apiKey := os.Getenv("DEEPSEEK_API_KEY")
@@ -135,14 +221,14 @@ func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[stri
 }
 
 func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
-	key, ok := args["key"].(string)
-	if !ok || key == "" {
-		return nil, fmt.Errorf("invalid or missing 'key' argument")
+	key, ok := stringArg(args, "key")
+	if !ok {
+		return nil, missingArgError("save_global_rule", "key", `{"key": "<short rule name>", "value": "<instruction>"}`)
 	}
 
-	value, ok := args["value"].(string)
-	if !ok || value == "" {
-		return nil, fmt.Errorf("invalid or missing 'value' argument")
+	value, ok := stringArg(args, "value")
+	if !ok {
+		return nil, missingArgError("save_global_rule", "value", `{"key": "<short rule name>", "value": "<instruction>"}`)
 	}
 
 	err := r.db.Queries.SaveGlobalRule(ctx, db.SaveGlobalRuleParams{
@@ -162,15 +248,12 @@ func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID 
 }
 
 func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
-	content, ok := args["content"].(string)
-	if !ok || content == "" {
-		return nil, fmt.Errorf("invalid or missing 'content' argument")
+	content, ok := stringArg(args, "content")
+	if !ok {
+		return nil, missingArgError("create_memory", "content", `{"content": "<fact about the user>"}`)
 	}
 
-	importance := 5
-	if imp, ok := args["importance"].(float64); ok {
-		importance = int(imp)
-	}
+	importance := intArg(args, "importance", 5)
 
 	// Always save as "active" to avoid conflicts, letting the background worker consolidate.
 	mem, err := r.retrieval.CreateMemory(ctx, userID, content, importance, "active", pqtype.NullRawMessage{})
@@ -203,9 +286,9 @@ func truncateString(s string, maxRunes int) string {
 }
 
 func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
-	query, ok := args["query"].(string)
-	if !ok || query == "" {
-		return nil, fmt.Errorf("invalid or missing 'query' argument")
+	query, err := searchQueryArg(ctx, "search_memories", args)
+	if err != nil {
+		return nil, err
 	}
 
 	if shouldSkipRetrieval(query) {
@@ -216,10 +299,7 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 		}, nil
 	}
 
-	limit := 5
-	if lim, ok := args["limit"].(float64); ok {
-		limit = int(lim)
-	}
+	limit := intArg(args, "limit", 5)
 	// Enforce hard cap of 5 chunks for LLM context limits
 	if limit > 5 {
 		limit = 5
@@ -247,9 +327,9 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 }
 
 func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
-	query, ok := args["query"].(string)
-	if !ok || query == "" {
-		return nil, fmt.Errorf("invalid or missing 'query' argument")
+	query, err := searchQueryArg(ctx, "search_documents", args)
+	if err != nil {
+		return nil, err
 	}
 
 	if shouldSkipRetrieval(query) {
@@ -260,10 +340,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		}, nil
 	}
 
-	limit := 5
-	if lim, ok := args["limit"].(float64); ok {
-		limit = int(lim)
-	}
+	limit := intArg(args, "limit", 5)
 	// Enforce hard cap of 5 chunks for LLM context limits
 	if limit > 5 {
 		limit = 5

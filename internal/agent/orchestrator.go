@@ -76,6 +76,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Tool calls carry only the arguments the model chose to send. Remember the
+	// question so the search tools can fall back to it when the model omits
+	// "query" (small local models regularly send an empty argument object).
+	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
+
 	// The user turn is stored before generation because the prompt history is
 	// read back from the database. A failed generation therefore leaves the
 	// question without an answer; /chat/regenerate is the recovery path, so the
@@ -205,6 +210,10 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		Content:   lastUserContent,
 	}
 
+	// See HandleStreamChat: tool calls fall back to the user turn when the
+	// model omits the "query" argument.
+	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
+
 	chatCtx, memoryIDs, err := o.loadContext(r.Context(), userID, req)
 	if err != nil {
 		// Streaming has not started, so the client can still receive a normal
@@ -279,6 +288,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 // ProcessChat executes the chat pipeline without HTTP dependencies.
 func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, string, error) {
 	ctx = context.WithValue(ctx, api.ParsedUserIDKey, userID)
+	ctx = WithCurrentQuery(ctx, req.Content)
 
 	if req.SessionID == "" || req.Content == "" {
 		return "", "", fmt.Errorf("session_id and content are required")
