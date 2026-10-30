@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/prompts"
@@ -37,6 +38,13 @@ const (
 	sessionSummarySweepInterval = time.Minute
 )
 
+// summaryKey scopes a cached rolling summary to its owner. Session IDs are
+// client supplied, so keying the cache by session alone would let two users who
+// pick the same session ID read each other's summary.
+func summaryKey(userID uuid.UUID, sessionID string) string {
+	return userID.String() + "\x00" + sessionID
+}
+
 // sessionSummaryStore is a TTL- and size-bounded cache of rolling summaries.
 // Use newSessionSummaryStore to create one.
 type sessionSummaryStore struct {
@@ -49,10 +57,10 @@ func newSessionSummaryStore() *sessionSummaryStore {
 	return &sessionSummaryStore{entries: make(map[string]*sessionSummary)}
 }
 
-// get returns the summary state for sessionID, creating it when missing.
+// get returns the summary state for key, creating it when missing.
 // Idle and surplus entries are evicted opportunistically, so the cache cannot
 // grow without bound.
-func (s *sessionSummaryStore) get(sessionID string) *sessionSummary {
+func (s *sessionSummaryStore) get(key string) *sessionSummary {
 	if s == nil {
 		// A zero-value Orchestrator has no cache: return a throwaway state so
 		// the call still works but nothing is retained.
@@ -64,7 +72,7 @@ func (s *sessionSummaryStore) get(sessionID string) *sessionSummary {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if state, ok := s.entries[sessionID]; ok {
+	if state, ok := s.entries[key]; ok {
 		state.touch(now)
 		return state
 	}
@@ -73,12 +81,12 @@ func (s *sessionSummaryStore) get(sessionID string) *sessionSummary {
 
 	state := &sessionSummary{}
 	state.touch(now)
-	s.entries[sessionID] = state
+	s.entries[key] = state
 	return state
 }
 
-// peek returns the state for sessionID without creating or touching it.
-func (s *sessionSummaryStore) peek(sessionID string) (*sessionSummary, bool) {
+// peek returns the state for key without creating or touching it.
+func (s *sessionSummaryStore) peek(key string) (*sessionSummary, bool) {
 	if s == nil {
 		return nil, false
 	}
@@ -86,7 +94,7 @@ func (s *sessionSummaryStore) peek(sessionID string) (*sessionSummary, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	state, ok := s.entries[sessionID]
+	state, ok := s.entries[key]
 	return state, ok
 }
 
@@ -184,10 +192,11 @@ func pruneHistory(historyMessages []openai.ChatCompletionMessage) ([]openai.Chat
 	return finalHistory, oldMessages, droppedMessagesCount
 }
 
-// rollingSummary returns the cached summary for the session and, once enough
-// new history has been pruned, refreshes it in the background.
-func (o *Orchestrator) rollingSummary(sessionID string, oldMessages []openai.ChatCompletionMessage, droppedMessagesCount int) string {
-	state := o.summaries.get(sessionID)
+// rollingSummary returns the cached summary for the user's session and, once
+// enough new history has been pruned, refreshes it in the background.
+func (o *Orchestrator) rollingSummary(userID uuid.UUID, sessionID string, oldMessages []openai.ChatCompletionMessage, droppedMessagesCount int) string {
+	key := summaryKey(userID, sessionID)
+	state := o.summaries.get(key)
 
 	state.mu.Lock()
 	summary := state.text
@@ -219,7 +228,7 @@ func (o *Orchestrator) rollingSummary(sessionID string, oldMessages []openai.Cha
 	olds := make([]openai.ChatCompletionMessage, len(newOlds))
 	copy(olds, newOlds)
 
-	go o.generateSummary(sessionID, olds, droppedMessagesCount, summary)
+	go o.generateSummary(key, userID, sessionID, olds, droppedMessagesCount, summary)
 
 	return summary
 }
@@ -227,12 +236,12 @@ func (o *Orchestrator) rollingSummary(sessionID string, oldMessages []openai.Cha
 // generateSummary renders the rolling summary prompt and asks the LLM for an
 // updated summary. It runs in a detached goroutine, so it must never panic and
 // must always clear the in-flight marker.
-func (o *Orchestrator) generateSummary(sessionID string, olds []openai.ChatCompletionMessage, droppedCount int, previousSummary string) {
+func (o *Orchestrator) generateSummary(key string, userID uuid.UUID, sessionID string, olds []openai.ChatCompletionMessage, droppedCount int, previousSummary string) {
 	defer func() {
 		if rcv := recover(); rcv != nil {
-			slog.Error("panic while generating rolling summary", "panic", rcv, "session_id", sessionID)
+			slog.Error("panic while generating rolling summary", "panic", rcv, "session_id", sessionID, "user_id", userID)
 		}
-		if state, ok := o.summaries.peek(sessionID); ok {
+		if state, ok := o.summaries.peek(key); ok {
 			state.isGenerating.Store(false)
 		}
 	}()
@@ -278,7 +287,7 @@ func (o *Orchestrator) generateSummary(sessionID string, olds []openai.ChatCompl
 		return
 	}
 
-	state, ok := o.summaries.peek(sessionID)
+	state, ok := o.summaries.peek(key)
 	if !ok {
 		// The session was evicted meanwhile, drop the result.
 		return

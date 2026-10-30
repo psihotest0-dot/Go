@@ -37,6 +37,23 @@ func TestTruncateRunes(t *testing.T) {
 	}
 }
 
+// TestSourceSnippetIsBounded covers the snippet shown to the client: it must be
+// trimmed and stay within the cap even for very long retrieved passages.
+func TestSourceSnippetIsBounded(t *testing.T) {
+	if got := sourceSnippet("  къс фрагмент  "); got != "къс фрагмент" {
+		t.Fatalf("sourceSnippet() = %q, want %q", got, "къс фрагмент")
+	}
+
+	long := strings.Repeat("д", maxSourceSnippetChars+50)
+	got := sourceSnippet(long)
+	if n := utf8.RuneCountInString(got); n != maxSourceSnippetChars {
+		t.Fatalf("sourceSnippet() returned %d runes, want %d", n, maxSourceSnippetChars)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("truncated snippet should be marked as truncated")
+	}
+}
+
 func TestPromptBudgetKeepsItemsUntilExhausted(t *testing.T) {
 	budget := newPromptBudget(10)
 

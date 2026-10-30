@@ -98,7 +98,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	})
 
 	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
-	chatCtx.RollingSum = o.rollingSummary(req.SessionID, oldMessages, droppedCount)
+	chatCtx.RollingSum = o.rollingSummary(userID, req.SessionID, oldMessages, droppedCount)
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
@@ -222,7 +222,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	})
 
 	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
-	chatCtx.RollingSum = o.rollingSummary(req.SessionID, oldMessages, droppedCount)
+	chatCtx.RollingSum = o.rollingSummary(userID, req.SessionID, oldMessages, droppedCount)
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
@@ -299,7 +299,7 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 	})
 
 	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
-	chatCtx.RollingSum = o.rollingSummary(req.SessionID, oldMessages, droppedCount)
+	chatCtx.RollingSum = o.rollingSummary(userID, req.SessionID, oldMessages, droppedCount)
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {

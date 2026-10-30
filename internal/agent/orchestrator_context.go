@@ -43,7 +43,16 @@ const (
 	maxTopMemoryChars       = 400
 	maxRetrievedMemoryChars = 800
 	maxConceptChunkChars    = 1500
+
+	// maxSourceSnippetChars bounds the text a retrieval hit contributes to the
+	// `sources` event, so the SSE payload stays small regardless of chunk size.
+	maxSourceSnippetChars = 1500
 )
+
+// sourceSnippet renders a retrieval hit for the client: trimmed and capped.
+func sourceSnippet(content string) string {
+	return truncateRunes(strings.TrimSpace(content), maxSourceSnippetChars)
+}
 
 // truncateRunes shortens s to at most max runes, marking the cut with an
 // ellipsis so the model does not read a sentence that simply stops.
@@ -152,7 +161,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
 			ChunkID:        m.ID,
 			FileName:       "Памет (Memory)",
-			ContentSnippet: m.Content,
+			ContentSnippet: sourceSnippet(m.Content),
 			Score:          m.Score * 100,
 			ScoreType:      "cosine",
 			SourceType:     "memory",
@@ -162,22 +171,13 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	for _, c := range conceptChunks {
 		chatCtx.Chunks = append(chatCtx.Chunks, c.Content)
 
-		snippet := c.Content
-		sourceType := "concept"
-
-		snippet = strings.TrimSpace(snippet)
-		if utf8.RuneCountInString(snippet) > 1500 {
-			runes := []rune(snippet)
-			snippet = string(runes[:1500]) + "..."
-		}
-
 		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
 			ChunkID:        c.ID,
 			FileName:       c.FileName,
-			ContentSnippet: snippet,
+			ContentSnippet: sourceSnippet(c.Content),
 			Score:          c.Score * 100,
 			ScoreType:      "cosine",
-			SourceType:     sourceType,
+			SourceType:     "concept",
 		})
 	}
 

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/require"
 
@@ -120,18 +121,20 @@ func TestRollingSummaryGeneratesSummaryInBackground(t *testing.T) {
 		}
 	}
 
+	userID := uuid.New()
+
 	// Below the threshold no summary is requested.
-	require.Equal(t, "", orchestrator.rollingSummary("sess-1", olds, summaryMinNewMessages-1))
+	require.Equal(t, "", orchestrator.rollingSummary(userID, "sess-1", olds, summaryMinNewMessages-1))
 	require.Equal(t, 1, orchestrator.summaries.size())
 
-	require.Equal(t, "", orchestrator.rollingSummary("sess-1", olds, summaryMinNewMessages))
+	require.Equal(t, "", orchestrator.rollingSummary(userID, "sess-1", olds, summaryMinNewMessages))
 
 	// The summary is produced asynchronously.
 	require.Eventually(t, func() bool {
-		return orchestrator.rollingSummary("sess-1", olds, summaryMinNewMessages) == "summarised conversation"
+		return orchestrator.rollingSummary(userID, "sess-1", olds, summaryMinNewMessages) == "summarised conversation"
 	}, 5*time.Second, 10*time.Millisecond)
 
-	state, ok := orchestrator.summaries.peek("sess-1")
+	state, ok := orchestrator.summaries.peek(summaryKey(userID, "sess-1"))
 	require.True(t, ok)
 	require.False(t, state.isGenerating.Load(), "the in-flight marker must be cleared")
 	require.LessOrEqual(t, utf8.RuneCountInString(state.text), maxSummaryChars+3)
@@ -149,18 +152,68 @@ func TestRollingSummarySurvivesSummariserFailure(t *testing.T) {
 		olds[i] = openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "old message"}
 	}
 
-	require.Equal(t, "", orchestrator.rollingSummary("sess-2", olds, summaryMinNewMessages))
+	userID := uuid.New()
+
+	require.Equal(t, "", orchestrator.rollingSummary(userID, "sess-2", olds, summaryMinNewMessages))
 
 	// A failed summarisation must not leave the session permanently marked as
 	// in flight, otherwise it would never be summarised again.
 	require.Eventually(t, func() bool {
-		state, ok := orchestrator.summaries.peek("sess-2")
+		state, ok := orchestrator.summaries.peek(summaryKey(userID, "sess-2"))
 		return ok && !state.isGenerating.Load()
 	}, 5*time.Second, 10*time.Millisecond)
 
-	state, _ := orchestrator.summaries.peek("sess-2")
+	state, _ := orchestrator.summaries.peek(summaryKey(userID, "sess-2"))
 	require.Equal(t, "", state.text)
 	require.Equal(t, 0, state.lastDropCount)
+}
+
+// TestRollingSummaryIsScopedPerUser guards the cache key: session IDs are
+// supplied by the client, so two users that pick the same session ID must not
+// share (or overwrite) each other's rolling summary.
+func TestRollingSummaryIsScopedPerUser(t *testing.T) {
+	previous := prompts.GlobalManager
+	prompts.Init("")
+	t.Cleanup(func() { prompts.GlobalManager = previous })
+
+	mock := &llm.MockLLM{
+		Response: openai.ChatCompletionResponse{
+			Choices: []openai.ChatCompletionChoice{
+				{
+					Message: openai.ChatCompletionMessage{
+						Role:    openai.ChatMessageRoleAssistant,
+						Content: "user A private summary",
+					},
+				},
+			},
+		},
+	}
+	orchestrator := NewOrchestrator(nil, nil, mock, nil)
+
+	olds := make([]openai.ChatCompletionMessage, summaryMinNewMessages)
+	for i := range olds {
+		olds[i] = openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "old message"}
+	}
+
+	userA := uuid.New()
+	userB := uuid.New()
+
+	require.Equal(t, "", orchestrator.rollingSummary(userA, "shared-session", olds, summaryMinNewMessages))
+	require.Eventually(t, func() bool {
+		return orchestrator.rollingSummary(userA, "shared-session", olds, summaryMinNewMessages) == "user A private summary"
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Same session ID, different owner: user B sees nothing of user A's summary.
+	require.Equal(t, "", orchestrator.rollingSummary(userB, "shared-session", olds, 0))
+	require.Equal(t, 2, orchestrator.summaries.size(), "each user needs its own cache entry")
+
+	stateA, ok := orchestrator.summaries.peek(summaryKey(userA, "shared-session"))
+	require.True(t, ok)
+	require.Equal(t, "user A private summary", stateA.text)
+
+	stateB, ok := orchestrator.summaries.peek(summaryKey(userB, "shared-session"))
+	require.True(t, ok)
+	require.Equal(t, "", stateB.text)
 }
 
 func TestDropTrailingAssistantMessages(t *testing.T) {

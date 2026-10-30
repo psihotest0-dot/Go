@@ -22,9 +22,10 @@ type ChatRequest struct {
 }
 
 // sessionSummary holds the cached rolling summary of a single chat session.
-// text and lastDropCount are guarded by mu. isGenerating and lastUsed are
-// atomic because the background summariser and the eviction sweep access them
-// without holding mu.
+// Entries are keyed per owner (see summaryKey) so identical session IDs from
+// different users never share text. text and lastDropCount are guarded by mu.
+// isGenerating and lastUsed are atomic because the background summariser and
+// the eviction sweep access them without holding mu.
 type sessionSummary struct {
 	mu            sync.Mutex
 	text          string
