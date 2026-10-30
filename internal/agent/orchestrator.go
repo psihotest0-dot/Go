@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,11 +19,13 @@ import (
 
 // Orchestrator orchestrates the main agent pipeline.
 type Orchestrator struct {
-	db               *db.Database
-	retrieval        *retrieval.RetrievalService
-	llmClient        llm.LLMClient
-	tools            ToolRegistry
-	sessionSummaries sync.Map
+	db        *db.Database
+	retrieval *retrieval.RetrievalService
+	llmClient llm.LLMClient
+	tools     ToolRegistry
+	// summaries caches rolling summaries per session. The cache is bounded so
+	// that client supplied session IDs cannot grow memory without limit.
+	summaries *sessionSummaryStore
 }
 
 // NewOrchestrator creates a new Orchestrator.
@@ -34,6 +35,7 @@ func NewOrchestrator(database *db.Database, r *retrieval.RetrievalService, l llm
 		retrieval: r,
 		llmClient: l,
 		tools:     t,
+		summaries: newSessionSummaryStore(),
 	}
 }
 

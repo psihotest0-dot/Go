@@ -13,26 +13,40 @@ import (
 	"go-monolith/internal/api"
 )
 
+const (
+	// streamFilterMaxBuffered bounds how many bytes streamFilter holds back
+	// while waiting for a tag to complete (longest supported tag plus slack).
+	streamFilterMaxBuffered = 30
+	// streamFilterThinkTail is how many bytes are kept while inside a <think>
+	// block so a split closing marker is still detected.
+	streamFilterThinkTail = 7
+	// streamFilterThinkClose is the marker that ends a thinking block.
+	streamFilterThinkClose = "</think>"
+)
+
 type streamFilter struct {
 	inThink bool
 	buffer  string
 }
 
+// Process appends chunk to the internal buffer and returns the content that is
+// safe to forward to the client. The buffer stays bounded: only a short tail is
+// retained, so an unterminated tag cannot grow memory without limit.
 func (f *streamFilter) Process(chunk string) string {
 	f.buffer += chunk
 	var out strings.Builder
 
 	for len(f.buffer) > 0 {
 		if f.inThink {
-			idx := strings.Index(f.buffer, "</think>")
+			idx := strings.Index(f.buffer, streamFilterThinkClose)
 			if idx != -1 {
 				f.inThink = false
-				f.buffer = f.buffer[idx+8:]
+				f.buffer = f.buffer[idx+len(streamFilterThinkClose):]
 				continue
 			}
 
-			if len(f.buffer) > 7 {
-				f.buffer = f.buffer[len(f.buffer)-7:]
+			if len(f.buffer) > streamFilterThinkTail {
+				f.buffer = f.buffer[len(f.buffer)-streamFilterThinkTail:]
 			}
 			break
 		}
@@ -51,10 +65,13 @@ func (f *streamFilter) Process(chunk string) string {
 
 		endIdx := strings.IndexByte(f.buffer, '>')
 		if endIdx == -1 {
-			if len(f.buffer) > 30 {
-				out.WriteByte('<')
-				f.buffer = f.buffer[1:]
-				continue
+			// No closing '>' anywhere in the buffer, so this cannot become a
+			// tag. Flush the excess in one pass instead of dropping a single
+			// byte per iteration, which made long runs of '<' quadratic.
+			if len(f.buffer) > streamFilterMaxBuffered {
+				cut := len(f.buffer) - streamFilterMaxBuffered
+				out.WriteString(f.buffer[:cut])
+				f.buffer = f.buffer[cut:]
 			}
 			break
 		}
@@ -86,6 +103,7 @@ func (f *streamFilter) Process(chunk string) string {
 
 func (f *streamFilter) Flush() string {
 	if f.inThink {
+		f.buffer = ""
 		return ""
 	}
 	res := f.buffer
@@ -93,7 +111,14 @@ func (f *streamFilter) Flush() string {
 	return res
 }
 
-func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (string, []openai.ToolCall, error) {
+// Reset releases the buffered content so the filter does not retain it once the
+// stream is over, whether it finished or failed.
+func (f *streamFilter) Reset() {
+	f.inThink = false
+	f.buffer = ""
+}
+
+func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (assistantContent string, toolCalls []openai.ToolCall, err error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
@@ -101,15 +126,19 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		return "", nil, errors.New("streaming unsupported")
 	}
 
+	filter := &streamFilter{}
+
+	// A panic must be reported as an error instead of a nil one, otherwise the
+	// caller treats the truncated answer as a success. The filter is released
+	// on every path so it does not keep buffered content alive.
 	defer func() {
 		if rcv := recover(); rcv != nil {
-			slog.Error("panic in streamResponse", "panic", rcv)
-			errorBytes, _ := json.Marshal(map[string]string{
-				"error": "Internal error occurred",
-			})
-			fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorBytes))
-			flusher.Flush()
+			slog.Error("panic in streamResponse", "panic", rcv, "session_id", sessionID)
+			writeSSEError(w, flusher, "Internal error occurred")
+			assistantContent, toolCalls = "", nil
+			err = fmt.Errorf("panic while streaming response: %v", rcv)
 		}
+		filter.Reset()
 	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -120,9 +149,14 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(sourcesBytes))
 	flusher.Flush()
 
-	filter := &streamFilter{}
-
 	onDelta := func(content, reasoning string) error {
+		// Stop as soon as the client is gone: otherwise the LLM keeps
+		// streaming into a dead connection and the answer keeps growing for
+		// nothing.
+		if ctxErr := r.Context().Err(); ctxErr != nil {
+			return ctxErr
+		}
+
 		if reasoning != "" {
 			dataMap := map[string]string{"reasoning_content": reasoning}
 			dataBytes, _ := json.Marshal(dataMap)
@@ -142,15 +176,14 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		return nil
 	}
 
-	assistantContent, _, toolCalls, err := o.generateResponse(r.Context(), finalMessages, tools, onDelta)
+	assistantContent, _, toolCalls, err = o.generateResponse(r.Context(), finalMessages, tools, onDelta)
 	if err != nil {
 		if ctxErr := r.Context().Err(); ctxErr != nil {
 			slog.Info("stream cancelled", "reason", ctxErr, "session_id", sessionID)
 			return assistantContent, toolCalls, err
 		}
 
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
-		flusher.Flush()
+		writeSSEError(w, flusher, err.Error())
 		return assistantContent, toolCalls, err
 	}
 
@@ -166,4 +199,16 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	flusher.Flush()
 
 	return assistantContent, toolCalls, nil
+}
+
+// writeSSEError sends a terminal SSE error frame and flushes it.
+func writeSSEError(w http.ResponseWriter, flusher http.Flusher, message string) {
+	errorBytes, marshalErr := json.Marshal(map[string]string{"error": message})
+	if marshalErr != nil {
+		// The payload only contains strings, so this is not expected.
+		slog.Error("failed to marshal stream error payload", "err", marshalErr)
+		return
+	}
+	fmt.Fprintf(w, "event: error\ndata: %s\n\n", string(errorBytes))
+	flusher.Flush()
 }
