@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -45,7 +46,7 @@ func (h *LevelFilterHandler) Handle(ctx context.Context, r slog.Record) error {
 	if err := h.fileHandler.Handle(ctx, r); err != nil {
 		return err
 	}
-	if r.Level >= slog.LevelError || r.Message == "server listening on :8080" {
+	if r.Level >= slog.LevelError || strings.HasPrefix(r.Message, "server listening on") {
 		return h.stdoutHandler.Handle(ctx, r)
 	}
 	return nil
@@ -283,8 +284,18 @@ func run() error {
 
 	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(c.Handler(mux)))
 
+	addr := ":8080"
+
+	// The chat client connects to localhost:8080, so the port is fixed. Bind
+	// before announcing the address so that a port already taken by a stale
+	// instance is reported as a startup error, not as a fake "listening" line.
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s (is another instance of the server already running? check with: netstat -ano | findstr :8080): %w", addr, err)
+	}
+
 	srv := &http.Server{
-		Addr:              ":8080",
+		Addr:              addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -297,8 +308,8 @@ func run() error {
 	srvErr := make(chan error, 1)
 
 	go func() {
-		logger.Info("server listening on :8080")
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		logger.Info("server listening on " + addr)
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			srvErr <- err
 		}
 	}()
