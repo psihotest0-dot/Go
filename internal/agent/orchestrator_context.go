@@ -26,6 +26,76 @@ var (
 		"кога", "колко", "може ли", "what", "how", "why", "who", "where", "when", "which", "?"}
 )
 
+// The system prompt is assembled from data that is unbounded on the database
+// side: book chunks, memories and user defined rules can all be arbitrarily
+// long. Without caps a single large chunk pushes the prompt past the model's
+// context window, which fails the whole request instead of degrading.
+const (
+	// maxSystemPromptContextChars caps the dynamic sections of the system
+	// prompt: rules, profile facts, retrieved memories and concept chunks. The
+	// rolling summary is capped separately by maxSummaryChars and the history by
+	// maxContextChars.
+	maxSystemPromptContextChars = 12000
+
+	// Per-item caps stop one long passage from crowding out everything else
+	// that was retrieved.
+	maxRuleChars            = 400
+	maxTopMemoryChars       = 400
+	maxRetrievedMemoryChars = 800
+	maxConceptChunkChars    = 1500
+)
+
+// truncateRunes shortens s to at most max runes, marking the cut with an
+// ellipsis so the model does not read a sentence that simply stops.
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(runes[:max-1]) + "…"
+}
+
+// promptBudget distributes a character budget over the dynamic sections of the
+// system prompt. Sections are offered in priority order, so the least important
+// context is dropped first.
+type promptBudget struct {
+	remaining int
+}
+
+func newPromptBudget(total int) *promptBudget {
+	return &promptBudget{remaining: total}
+}
+
+// take truncates every item to maxItemChars and returns the longest prefix that
+// still fits into the remaining budget. Items are expected to be ordered by
+// relevance, so the first one that does not fit ends the section instead of
+// being cut down to a fragment that no longer carries meaning.
+func (b *promptBudget) take(items []string, maxItemChars int) []string {
+	if len(items) == 0 {
+		return nil
+	}
+
+	kept := make([]string, 0, len(items))
+	for _, item := range items {
+		item = truncateRunes(item, maxItemChars)
+		size := utf8.RuneCountInString(item)
+		if size == 0 || size > b.remaining {
+			break
+		}
+
+		kept = append(kept, item)
+		b.remaining -= size
+	}
+	return kept
+}
+
 func shouldSkipRetrieval(query string) bool {
 	q := strings.TrimSpace(query)
 	if q == "" {
@@ -63,13 +133,16 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 
 	var memories []retrieval.SearchResult
 	var conceptChunks []retrieval.SearchResult
-	var errM error
+	var searchErr error
 
 	if !skip {
 		// Call new SearchForContext method
-		memories, conceptChunks, errM = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
-		if errM != nil {
-			slog.Warn("Failed to search for context", "error", errM)
+		memories, conceptChunks, searchErr = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
+		// Retrieval is an enhancement, not a requirement: a degraded search must
+		// not cost the user their answer, so the error is logged and the chat
+		// continues without retrieved context.
+		if searchErr != nil {
+			slog.Warn("Failed to search for context", "error", searchErr, "session_id", req.SessionID)
 		}
 	}
 
@@ -124,21 +197,24 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		return chatCtx.Sources[i].Score > chatCtx.Sources[j].Score
 	})
 
-	// Fetch Global Rules
+	// Fetch Global Rules. Like retrieval, the rules are an enhancement: a
+	// failure here is logged and the chat continues without them instead of
+	// failing the whole request.
 	rules, err := o.db.Queries.GetGlobalRules(ctx, userID)
 	if err != nil {
-		slog.Error("failed to get global rules", "err", err)
-		return chatCtx, memoryIDs, err
+		slog.Error("failed to get global rules", "err", err, "session_id", req.SessionID)
+	} else {
+		chatCtx.Rules = rules
 	}
-	chatCtx.Rules = rules
 
-	// Fetch Top Memories
+	// Fetch Top Memories. Best effort as well, so a profile lookup failure does
+	// not abort the generation.
 	topMemoriesDb, err := o.db.Queries.GetTopMemories(ctx, db.GetTopMemoriesParams{
 		UserID: userID,
 		Limit:  15,
 	})
 	if err != nil {
-		slog.Error("failed to get top memories", "err", err)
+		slog.Error("failed to get top memories", "err", err, "session_id", req.SessionID)
 	}
 	for _, m := range topMemoriesDb {
 		chatCtx.TopMemories = append(chatCtx.TopMemories, m.Content)
@@ -168,6 +244,16 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		}
 		chatCtx.History = append(chatCtx.History, msg)
 	}
+
+	// Bound the dynamic part of the system prompt. The rules come first because
+	// the user configured them explicitly, then the profile facts, then the
+	// retrieved memories and finally the concept chunks, which are the most
+	// voluminous and therefore the most disposable.
+	budget := newPromptBudget(maxSystemPromptContextChars)
+	chatCtx.Rules = budget.take(chatCtx.Rules, maxRuleChars)
+	chatCtx.TopMemories = budget.take(chatCtx.TopMemories, maxTopMemoryChars)
+	chatCtx.Memories = budget.take(chatCtx.Memories, maxRetrievedMemoryChars)
+	chatCtx.Chunks = budget.take(chatCtx.Chunks, maxConceptChunkChars)
 
 	return chatCtx, memoryIDs, nil
 }

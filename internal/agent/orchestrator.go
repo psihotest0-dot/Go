@@ -71,6 +71,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The user turn is stored before generation because the prompt history is
+	// read back from the database. A failed generation therefore leaves the
+	// question without an answer; /chat/regenerate is the recovery path, so the
+	// turn is deliberately kept instead of being rolled back on every transient
+	// LLM error.
 	if err := o.saveUserMessage(r.Context(), userID, req.SessionID, req.Content); err != nil {
 		slog.Error("failed to save user message", "err", err)
 		http.Error(w, fmt.Sprintf("failed to save user message: %v", err), http.StatusInternalServerError)
@@ -276,6 +281,8 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 		return "", "", fmt.Errorf("session_id and content are required")
 	}
 
+	// See HandleStreamChat: the user turn is persisted up front so that it is
+	// part of the history the prompt is built from.
 	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
 		slog.Error("failed to save user message", "err", err)
 		return "", "", fmt.Errorf("failed to save user message: %w", err)
