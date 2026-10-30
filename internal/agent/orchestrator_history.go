@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -20,15 +19,16 @@ const (
 	summaryMinNewMessages = 6
 	// summaryTimeout bounds a single summarisation LLM call.
 	summaryTimeout = 2 * time.Minute
-	// maxSummaryChars caps the retained summary text so a runaway model
-	// response cannot be pinned in memory for the lifetime of a session.
-	maxSummaryChars = 4000
-	// maxSummaryInputMessages, maxSummaryInputChars and maxSummaryMessageChars
-	// bound what is handed to the summariser and therefore what its background
-	// goroutine keeps alive.
+	// maxSummaryTokens caps the retained summary so a runaway model response
+	// cannot be pinned in memory for the lifetime of a session, and so the
+	// summary cannot push the system prompt past the context window.
+	maxSummaryTokens = 1000
+	// maxSummaryInputMessages, maxSummaryInputTokens and
+	// maxSummaryMessageTokens bound what is handed to the summariser and
+	// therefore what its background goroutine keeps alive.
 	maxSummaryInputMessages = 40
-	maxSummaryInputChars    = 12000
-	maxSummaryMessageChars  = 2000
+	maxSummaryInputTokens   = 3000
+	maxSummaryMessageTokens = 500
 
 	// The rolling summary cache is bounded: session IDs are client supplied, so
 	// idle entries expire after sessionSummaryTTL and the cache never holds
@@ -168,19 +168,19 @@ func dropTrailingAssistantMessages(historyMessages []openai.ChatCompletionMessag
 func pruneHistory(historyMessages []openai.ChatCompletionMessage) ([]openai.ChatCompletionMessage, []openai.ChatCompletionMessage, int) {
 	var oldMessages []openai.ChatCompletionMessage
 	var reversedKeep []openai.ChatCompletionMessage
-	currentChars := 0
+	currentTokens := 0
 
 	for i := len(historyMessages) - 1; i >= 0; i-- {
-		msgLen := utf8.RuneCountInString(historyMessages[i].Content)
+		msgTokens := estimateTokens(historyMessages[i].Content)
 
 		if i != len(historyMessages)-1 {
-			if (currentChars+msgLen > maxContextChars && len(reversedKeep) > 0) || len(reversedKeep) >= maxHistoryMessages {
+			if (currentTokens+msgTokens > maxContextTokens && len(reversedKeep) > 0) || len(reversedKeep) >= maxHistoryMessages {
 				oldMessages = historyMessages[:i+1]
 				break
 			}
 		}
 		reversedKeep = append(reversedKeep, historyMessages[i])
-		currentChars += msgLen
+		currentTokens += msgTokens
 	}
 
 	var finalHistory []openai.ChatCompletionMessage
@@ -293,7 +293,7 @@ func (o *Orchestrator) generateSummary(key string, userID uuid.UUID, sessionID s
 		return
 	}
 	state.mu.Lock()
-	state.text = truncateString(strings.TrimSpace(summaryResp.Choices[0].Message.Content), maxSummaryChars)
+	state.text = truncateTokens(strings.TrimSpace(summaryResp.Choices[0].Message.Content), maxSummaryTokens)
 	state.lastDropCount = droppedCount
 	state.mu.Unlock()
 }
@@ -306,20 +306,19 @@ func summaryInputText(olds []openai.ChatCompletionMessage) string {
 	used := 0
 
 	for _, m := range olds {
-		line := string(m.Role) + ": " + truncateString(m.Content, maxSummaryMessageChars)
-		remaining := maxSummaryInputChars - used
+		remaining := maxSummaryInputTokens - used
 		if remaining <= 0 {
 			break
 		}
-		if utf8.RuneCountInString(line) > remaining {
-			line = string([]rune(line)[:remaining])
-		}
+
+		line := string(m.Role) + ": " + truncateTokens(m.Content, maxSummaryMessageTokens)
+		line = truncateTokens(line, remaining)
 
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
 		b.WriteString(line)
-		used += utf8.RuneCountInString(line)
+		used += estimateTokens(line)
 	}
 
 	return b.String()

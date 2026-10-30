@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -79,7 +78,7 @@ func TestSessionSummaryStoreKeepsInFlightSessions(t *testing.T) {
 
 func TestSummaryInputTextIsBounded(t *testing.T) {
 	olds := make([]openai.ChatCompletionMessage, maxSummaryInputMessages)
-	huge := strings.Repeat("a", maxSummaryMessageChars*3)
+	huge := strings.Repeat("a", maxSummaryMessageTokens*bytesPerToken*3)
 	for i := range olds {
 		olds[i] = openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleUser,
@@ -90,8 +89,48 @@ func TestSummaryInputTextIsBounded(t *testing.T) {
 	text := summaryInputText(olds)
 
 	// One separator per retained line is not counted against the budget.
-	require.LessOrEqual(t, utf8.RuneCountInString(text), maxSummaryInputChars+maxSummaryInputMessages)
+	if n := estimateTokens(text); n > maxSummaryInputTokens+maxSummaryInputMessages {
+		t.Fatalf("summary input costs %d tokens, want at most %d", n, maxSummaryInputTokens+maxSummaryInputMessages)
+	}
 	require.Contains(t, text, "user: ")
+}
+
+// TestPruneHistoryBoundsTokens covers the history replayed on every turn: the
+// budget is charged in estimated tokens, so Cyrillic history cannot grow to
+// twice the intended context, and the newest turn is always kept.
+func TestPruneHistoryBoundsTokens(t *testing.T) {
+	history := make([]openai.ChatCompletionMessage, 0, 20)
+	for i := 0; i < 20; i++ {
+		history = append(history, openai.ChatCompletionMessage{
+			Role: openai.ChatMessageRoleUser,
+			// 1990 Cyrillic characters are 3980 bytes, so every turn costs
+			// roughly a thousand tokens.
+			Content: fmt.Sprintf("%s-%d", strings.Repeat("д", 1990), i),
+		})
+	}
+
+	kept, dropped, droppedCount := pruneHistory(history)
+
+	if len(kept) == 0 {
+		t.Fatal("expected the newest turn to be kept")
+	}
+	if kept[len(kept)-1].Content != history[len(history)-1].Content {
+		t.Fatal("the newest message must always be kept")
+	}
+	if len(kept)+len(dropped) != len(history) {
+		t.Fatalf("kept %d + dropped %d messages, want %d", len(kept), len(dropped), len(history))
+	}
+	if droppedCount != len(dropped) {
+		t.Fatalf("droppedCount = %d, want %d", droppedCount, len(dropped))
+	}
+
+	total := 0
+	for _, m := range kept {
+		total += estimateTokens(m.Content)
+	}
+	if total > maxContextTokens {
+		t.Fatalf("kept history costs %d tokens, want at most %d", total, maxContextTokens)
+	}
 }
 
 func TestRollingSummaryGeneratesSummaryInBackground(t *testing.T) {
@@ -137,7 +176,7 @@ func TestRollingSummaryGeneratesSummaryInBackground(t *testing.T) {
 	state, ok := orchestrator.summaries.peek(summaryKey(userID, "sess-1"))
 	require.True(t, ok)
 	require.False(t, state.isGenerating.Load(), "the in-flight marker must be cleared")
-	require.LessOrEqual(t, utf8.RuneCountInString(state.text), maxSummaryChars+3)
+	require.LessOrEqual(t, estimateTokens(state.text), maxSummaryTokens)
 }
 
 func TestRollingSummarySurvivesSummariserFailure(t *testing.T) {

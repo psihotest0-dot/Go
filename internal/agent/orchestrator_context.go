@@ -30,15 +30,28 @@ var (
 // side: book chunks, memories and user defined rules can all be arbitrarily
 // long. Without caps a single large chunk pushes the prompt past the model's
 // context window, which fails the whole request instead of degrading.
+//
+// Budgets are charged in estimated tokens rather than characters because the
+// content is mostly Bulgarian: a Cyrillic character costs roughly twice what a
+// Latin character costs, so a character budget silently lets a Cyrillic prompt
+// use twice the context it was meant to.
 const (
-	// maxSystemPromptContextChars caps the dynamic sections of the system
+	// bytesPerToken is the usual rough ratio for BPE tokenizers on natural
+	// text: Latin runs at about four characters per token and Cyrillic
+	// characters carry two bytes each, so both work out to roughly four bytes
+	// per token.
+	bytesPerToken = 4
+
+	// maxSystemPromptContextTokens caps the dynamic sections of the system
 	// prompt: rules, profile facts, retrieved memories and concept chunks. The
-	// rolling summary is capped separately by maxSummaryChars and the history by
-	// maxContextChars.
-	maxSystemPromptContextChars = 12000
+	// rolling summary is capped separately by maxSummaryTokens and the history
+	// by maxContextTokens. Raise these constants if the deployment targets a
+	// model with a large context window.
+	maxSystemPromptContextTokens = 3000
 
 	// Per-item caps stop one long passage from crowding out everything else
-	// that was retrieved.
+	// that was retrieved. They stay in characters so they remain easy to reason
+	// about; the section budget itself is charged in estimated tokens.
 	maxRuleChars            = 400
 	maxTopMemoryChars       = 400
 	maxRetrievedMemoryChars = 800
@@ -48,6 +61,43 @@ const (
 	// `sources` event, so the SSE payload stays small regardless of chunk size.
 	maxSourceSnippetChars = 1500
 )
+
+// estimateTokens approximates how many model tokens s occupies. It is
+// deliberately a heuristic: bundling the model's real tokenizer is not worth it
+// for a budget that only needs to be in the right ballpark, but counting bytes
+// keeps the estimate comparable across Latin and Cyrillic text.
+func estimateTokens(s string) int {
+	if s == "" {
+		return 0
+	}
+	return (len(s) + bytesPerToken - 1) / bytesPerToken
+}
+
+// truncateTokens shortens s so its estimated token cost fits maxTokens. The cut
+// is placed on a rune boundary and the ellipsis counts against the budget, so
+// the result never costs more than maxTokens even for multibyte text.
+func truncateTokens(s string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	if estimateTokens(s) <= maxTokens {
+		return s
+	}
+
+	// Reserve the ellipsis inside the budget. s is longer than the budget by
+	// definition, so the cut always falls inside it.
+	cut := maxTokens*bytesPerToken - len("…")
+	if cut >= len(s) {
+		cut = len(s) - 1
+	}
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if cut <= 0 {
+		return "…"
+	}
+	return s[:cut] + "…"
+}
 
 // sourceSnippet renders a retrieval hit for the client: trimmed and capped.
 func sourceSnippet(content string) string {
@@ -71,10 +121,11 @@ func truncateRunes(s string, max int) string {
 	return string(runes[:max-1]) + "…"
 }
 
-// promptBudget distributes a character budget over the dynamic sections of the
+// promptBudget distributes a token budget over the dynamic sections of the
 // system prompt. Sections are offered in priority order, so the least important
 // context is dropped first.
 type promptBudget struct {
+	// remaining is the number of estimated tokens still available.
 	remaining int
 }
 
@@ -82,10 +133,10 @@ func newPromptBudget(total int) *promptBudget {
 	return &promptBudget{remaining: total}
 }
 
-// take truncates every item to maxItemChars and returns the longest prefix that
-// still fits into the remaining budget. Items are expected to be ordered by
-// relevance, so the first one that does not fit ends the section instead of
-// being cut down to a fragment that no longer carries meaning.
+// take truncates every item to maxItemChars characters and returns the longest
+// prefix that still fits into the remaining token budget. Items are expected to
+// be ordered by relevance, so the first one that does not fit ends the section
+// instead of being cut down to a fragment that no longer carries meaning.
 func (b *promptBudget) take(items []string, maxItemChars int) []string {
 	if len(items) == 0 {
 		return nil
@@ -94,7 +145,7 @@ func (b *promptBudget) take(items []string, maxItemChars int) []string {
 	kept := make([]string, 0, len(items))
 	for _, item := range items {
 		item = truncateRunes(item, maxItemChars)
-		size := utf8.RuneCountInString(item)
+		size := estimateTokens(item)
 		if size == 0 || size > b.remaining {
 			break
 		}
@@ -249,7 +300,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	// the user configured them explicitly, then the profile facts, then the
 	// retrieved memories and finally the concept chunks, which are the most
 	// voluminous and therefore the most disposable.
-	budget := newPromptBudget(maxSystemPromptContextChars)
+	budget := newPromptBudget(maxSystemPromptContextTokens)
 	chatCtx.Rules = budget.take(chatCtx.Rules, maxRuleChars)
 	chatCtx.TopMemories = budget.take(chatCtx.TopMemories, maxTopMemoryChars)
 	chatCtx.Memories = budget.take(chatCtx.Memories, maxRetrievedMemoryChars)

@@ -11,7 +11,11 @@ import (
 )
 
 const (
-	maxContextChars    = 12000
+	// maxContextTokens bounds the conversation history replayed on every turn,
+	// measured in estimated tokens (see estimateTokens). The earlier character
+	// cap of 12000 was the same budget for Latin text but let Cyrillic history
+	// grow to roughly twice the intended context.
+	maxContextTokens   = 3000
 	maxHistoryMessages = 10
 )
 

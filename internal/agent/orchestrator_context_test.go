@@ -54,8 +54,68 @@ func TestSourceSnippetIsBounded(t *testing.T) {
 	}
 }
 
+// TestEstimateTokens pins the heuristic down: four bytes per token, so Cyrillic
+// text (two bytes per character) costs about twice as much as Latin text for the
+// same number of characters.
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{name: "empty", in: "", want: 0},
+		{name: "short latin", in: "abcd", want: 1},
+		{name: "latin over boundary", in: "abcde", want: 2},
+		{name: "cyrillic four bytes", in: "яя", want: 1},
+		{name: "cyrillic six bytes", in: "яяя", want: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := estimateTokens(tt.in); got != tt.want {
+				t.Fatalf("estimateTokens(%q) = %d, want %d", tt.in, got, tt.want)
+			}
+		})
+	}
+
+	// Equal character counts must not cost the same in both scripts.
+	latin := strings.Repeat("a", 100)
+	cyrillic := strings.Repeat("д", 100)
+	if estimateTokens(cyrillic) <= estimateTokens(latin) {
+		t.Fatalf("cyrillic text must cost more than latin text of equal length: %d vs %d",
+			estimateTokens(cyrillic), estimateTokens(latin))
+	}
+}
+
+func TestTruncateTokens(t *testing.T) {
+	if got := truncateTokens("abcdefgh", 1); estimateTokens(got) > 1 {
+		t.Fatalf("truncateTokens() = %q, costs %d tokens, want at most 1", got, estimateTokens(got))
+	}
+	if got := truncateTokens("", 5); got != "" {
+		t.Fatalf("truncateTokens(\"\", 5) = %q, want empty", got)
+	}
+	if got := truncateTokens("abcdef", 0); got != "" {
+		t.Fatalf("truncateTokens with no tokens = %q, want empty", got)
+	}
+	if got := truncateTokens("кратко", 100); got != "кратко" {
+		t.Fatalf("truncateTokens should not touch text inside the budget, got %q", got)
+	}
+
+	// The bound has to hold for multibyte text as well.
+	long := strings.Repeat("д", 5000)
+	got := truncateTokens(long, 100)
+	if n := estimateTokens(got); n > 100 {
+		t.Fatalf("truncateTokens() = %d tokens, want at most 100", n)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatal("truncated text should be marked as truncated")
+	}
+}
+
 func TestPromptBudgetKeepsItemsUntilExhausted(t *testing.T) {
-	budget := newPromptBudget(10)
+	// Four latin characters are one estimated token, so a two token budget
+	// keeps exactly two of the four items.
+	budget := newPromptBudget(2)
 
 	got := budget.take([]string{"aaaa", "bbbb", "cccc", "dddd"}, 100)
 
@@ -68,8 +128,8 @@ func TestPromptBudgetKeepsItemsUntilExhausted(t *testing.T) {
 			t.Fatalf("kept[%d] = %q, want %q", i, got[i], want[i])
 		}
 	}
-	if budget.remaining != 2 {
-		t.Fatalf("remaining = %d, want 2", budget.remaining)
+	if budget.remaining != 0 {
+		t.Fatalf("remaining = %d, want 0", budget.remaining)
 	}
 }
 
@@ -87,8 +147,10 @@ func TestPromptBudgetTruncatesOversizedItem(t *testing.T) {
 	if !strings.HasSuffix(got[0], "…") {
 		t.Fatalf("kept item %q should be marked as truncated", got[0])
 	}
-	if budget.remaining != 5 {
-		t.Fatalf("remaining = %d, want 5", budget.remaining)
+	// Four Cyrillic characters plus the ellipsis cost eleven bytes, which is
+	// three estimated tokens.
+	if budget.remaining != 7 {
+		t.Fatalf("remaining = %d, want 7", budget.remaining)
 	}
 }
 
@@ -96,15 +158,15 @@ func TestPromptBudgetTruncatesOversizedItem(t *testing.T) {
 // longer fits ends the section, so the prompt never receives a fragment that
 // was cut down just to fill the remaining budget.
 func TestPromptBudgetDropsItemThatDoesNotFit(t *testing.T) {
-	budget := newPromptBudget(3)
+	budget := newPromptBudget(1)
 
 	got := budget.take([]string{"abcdefgh"}, 100)
 
 	if len(got) != 0 {
 		t.Fatalf("kept %v, want nothing", got)
 	}
-	if budget.remaining != 3 {
-		t.Fatalf("remaining = %d, want 3", budget.remaining)
+	if budget.remaining != 1 {
+		t.Fatalf("remaining = %d, want 1", budget.remaining)
 	}
 }
 
@@ -131,7 +193,9 @@ func TestPromptBudgetEmptyInput(t *testing.T) {
 // system prompt draw from one budget: once the rules have consumed it, the
 // lower priority sections get nothing.
 func TestPromptBudgetIsSharedBetweenSections(t *testing.T) {
-	budget := newPromptBudget(20)
+	// The twenty byte rule costs five estimated tokens, leaving a single token
+	// that the two token memory cannot use.
+	budget := newPromptBudget(6)
 
 	rules := budget.take([]string{strings.Repeat("rule ", 4)}, maxRuleChars)
 	if len(rules) != 1 {
@@ -151,7 +215,7 @@ func TestPromptBudgetBoundsConceptChunks(t *testing.T) {
 		chunks = append(chunks, strings.Repeat("концепт ", 500))
 	}
 
-	kept := newPromptBudget(maxSystemPromptContextChars).take(chunks, maxConceptChunkChars)
+	kept := newPromptBudget(maxSystemPromptContextTokens).take(chunks, maxConceptChunkChars)
 
 	if len(kept) == 0 {
 		t.Fatal("expected at least one chunk to be kept")
@@ -159,13 +223,12 @@ func TestPromptBudgetBoundsConceptChunks(t *testing.T) {
 
 	total := 0
 	for _, chunk := range kept {
-		n := utf8.RuneCountInString(chunk)
-		if n > maxConceptChunkChars {
+		if n := utf8.RuneCountInString(chunk); n > maxConceptChunkChars {
 			t.Fatalf("kept chunk has %d runes, want at most %d", n, maxConceptChunkChars)
 		}
-		total += n
+		total += estimateTokens(chunk)
 	}
-	if total > maxSystemPromptContextChars {
-		t.Fatalf("kept %d runes, want at most %d", total, maxSystemPromptContextChars)
+	if total > maxSystemPromptContextTokens {
+		t.Fatalf("kept %d tokens, want at most %d", total, maxSystemPromptContextTokens)
 	}
 }
