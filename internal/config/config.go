@@ -6,6 +6,10 @@ import (
 
 const VectorDimension = 384
 
+// DefaultEmbedModel is the embedding model recorded on rows written by the
+// embedder sidecar's default configuration.
+const DefaultEmbedModel = "intfloat/multilingual-e5-small"
+
 type Config struct {
 	LLMBaseURL         string
 	EmbedderURL        string

@@ -292,6 +292,37 @@ func TestRetrieval_SearchAll_WithBoost(t *testing.T) {
 	assert.Len(t, chunks, 1)
 }
 
+func TestRetrieval_SearchAll_IncludesConceptChunks(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+
+	d := &db.Database{Queries: db.New(mockDB)}
+	svc := retrieval.NewRetrievalService(d, &llm.MockEmbedder{}, nil)
+
+	conceptID := uuid.New()
+	mock.MatchExpectationsInOrder(false)
+
+	mock.ExpectQuery(`(?i)chunk_type = 'concept_summary'`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "metadata", "distance"}).
+			AddRow(conceptID, "Concept summary.", "book.txt", []byte(`{"themes":["alpha"]}`), 0.1))
+
+	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}))
+
+	mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
+			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1).
+			AddRow(conceptID, "Concept summary.", "book.txt", 1))
+
+	_, chunks, err := svc.SearchAll(context.Background(), uuid.New(), "query", 10)
+	require.NoError(t, err)
+	require.Len(t, chunks, 2, "concept result must be kept and not duplicated by the hybrid chunk hit")
+	assert.Equal(t, "concept", chunks[0].SourceType)
+	assert.Equal(t, conceptID, chunks[0].ID)
+	assert.Equal(t, "chunk", chunks[1].SourceType)
+}
+
 func TestRetrieval_CreateMemory_ConflictError(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
