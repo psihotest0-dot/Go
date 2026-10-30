@@ -2,8 +2,10 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/google/uuid"
@@ -26,9 +28,11 @@ func NewBot(token string, orch *agent.Orchestrator, pool *pgxpool.Pool) (*Bot, e
 		return nil, fmt.Errorf("telegram token is empty")
 	}
 
-	api, err := tgbotapi.NewBotAPI(token)
+	// The client timeout must outlast the 60s long-poll in Start.
+	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, &http.Client{Timeout: 90 * time.Second})
 	if err != nil {
-		return nil, err
+		// Transport errors embed the request URL, which contains the bot token.
+		return nil, errors.New(strings.ReplaceAll(err.Error(), token, "<redacted>"))
 	}
 
 	return &Bot{
@@ -36,6 +40,33 @@ func NewBot(token string, orch *agent.Orchestrator, pool *pgxpool.Pool) (*Bot, e
 		orchestrator: orch,
 		dbPool:       pool,
 	}, nil
+}
+
+const (
+	initialConnectBackoff = 5 * time.Second
+	maxConnectBackoff     = 5 * time.Minute
+)
+
+// Run connects to Telegram and serves updates until ctx is cancelled. A failed
+// connection (network down, connection reset, ...) is retried with exponential
+// backoff instead of leaving the bot disabled until the next restart.
+func Run(ctx context.Context, token string, orch *agent.Orchestrator, pool *pgxpool.Pool) {
+	backoff := initialConnectBackoff
+	for {
+		bot, err := NewBot(token, orch, pool)
+		if err == nil {
+			bot.Start(ctx)
+			return
+		}
+
+		slog.Error("failed to initialize telegram bot", slog.Any("error", err), slog.Duration("retry_in", backoff))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, maxConnectBackoff)
+	}
 }
 
 func (b *Bot) generateDeterministicUUID(chatID int64) uuid.UUID {

@@ -202,19 +202,14 @@ func run() error {
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
 
 	if cfg.TelegramBotToken != "" {
-		tgBot, err := telegram.NewBot(cfg.TelegramBotToken, orchestrator, database.Pool)
-		if err != nil {
-			logger.Error("failed to initialize telegram bot", slog.Any("error", err))
-		} else {
-			go func() {
-				defer func() {
-					if r := recover(); r != nil {
-						logger.Error("telegram bot panicked", slog.Any("error", r))
-					}
-				}()
-				tgBot.Start(ctx)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("telegram bot panicked", slog.Any("error", r))
+				}
 			}()
-		}
+			telegram.Run(ctx, cfg.TelegramBotToken, orchestrator, database.Pool)
+		}()
 	}
 
 
