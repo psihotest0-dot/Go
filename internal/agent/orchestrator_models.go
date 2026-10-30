@@ -17,6 +17,17 @@ const (
 	// grow to roughly twice the intended context.
 	maxContextTokens   = 3000
 	maxHistoryMessages = 10
+
+	// maxChatBodyBytes bounds the chat and regenerate request bodies before they
+	// are decoded, so a malformed client cannot make the process allocate an
+	// arbitrarily large buffer.
+	maxChatBodyBytes = 1 << 20
+
+	// maxUserMessageTokens bounds a single user turn, measured with the same
+	// estimateTokens used by the history budget. Anything larger than the whole
+	// context budget is pruned before it can be answered, so rejecting it up
+	// front is clearer than silently dropping the question.
+	maxUserMessageTokens = 4000
 )
 
 // ChatRequest defines the expected payload for the stream chat endpoint.

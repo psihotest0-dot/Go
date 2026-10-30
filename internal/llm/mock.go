@@ -64,11 +64,22 @@ func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 
 // MockLLM is a mock implementation of LLMClient for testing.
 type MockLLM struct {
-	LastRequest  openai.ChatCompletionRequest
-	LastSchema   interface{}
+	LastRequest openai.ChatCompletionRequest
+	LastSchema  interface{}
+	// StreamChunks is the script used for every ChatStream call when
+	// StreamScript is empty.
 	StreamChunks []openai.ChatCompletionStreamResponse
-	Response     openai.ChatCompletionResponse
-	Error        error
+	// StreamScript supplies the chunks for the n-th ChatStream call; the last
+	// entry is reused for any further call. It takes precedence over
+	// StreamChunks so multi-round conversations can be exercised.
+	StreamScript [][]openai.ChatCompletionStreamResponse
+	// StreamErrors makes the n-th ChatStream call fail when the entry is not
+	// nil. Missing entries mean "no error".
+	StreamErrors []error
+	// Requests records every ChatStream request in call order.
+	Requests []openai.ChatCompletionRequest
+	Response openai.ChatCompletionResponse
+	Error    error
 }
 
 // Chat records the request and returns the configured response or error.
@@ -77,18 +88,34 @@ func (m *MockLLM) Chat(ctx context.Context, req openai.ChatCompletionRequest) (o
 	return m.Response, m.Error
 }
 
-// ChatStream records the request and uses the mock round tripper to simulate a stream.
+// ChatStream records the request and uses the mock round tripper to simulate a
+// stream. StreamScript selects the chunks per call so multi-round conversations
+// can be tested; the last scripted entry is reused for further calls.
 func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
 	m.LastRequest = req
+	m.Requests = append(m.Requests, req)
 
+	call := len(m.Requests) - 1
+	if call < len(m.StreamErrors) && m.StreamErrors[call] != nil {
+		return nil, m.StreamErrors[call]
+	}
 	if m.Error != nil {
 		return nil, m.Error
+	}
+
+	chunks := m.StreamChunks
+	if len(m.StreamScript) > 0 {
+		if call < len(m.StreamScript) {
+			chunks = m.StreamScript[call]
+		} else {
+			chunks = m.StreamScript[len(m.StreamScript)-1]
+		}
 	}
 
 	config := openai.DefaultConfig("mock-token")
 	config.HTTPClient = &http.Client{
 		Transport: &MockRoundTripper{
-			StreamChunks: m.StreamChunks,
+			StreamChunks: chunks,
 		},
 	}
 	config.EmptyMessagesLimit = 4294967295 // math.MaxUint32

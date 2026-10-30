@@ -36,10 +36,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
-	defer func() {
-		database.Pool.Close()
-		database.SqlDB.Close()
-	}()
+	defer database.Close()
 
 	embedder := llm.NewHTTPEmbedder(database)
 

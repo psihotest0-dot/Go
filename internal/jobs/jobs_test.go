@@ -55,7 +55,7 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	ctx := context.Background()
 	database, err := db.Connect(ctx, dbURL)
 	require.NoError(t, err)
-
+	t.Cleanup(database.Close)
 	user, err := database.Queries.CreateUser(ctx)
 	require.NoError(t, err)
 

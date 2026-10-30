@@ -1,26 +1,19 @@
 package api
 
 import (
-	"crypto/sha256"
+	"context"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
-
-	"context"
 	"strings"
 	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
 
-	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
@@ -41,47 +34,39 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		// Enforce size limit (e.g. 100MB)
-		r.Body = http.MaxBytesReader(w, r.Body, 100<<20)
-		if err := r.ParseMultipartForm(100 << 20); err != nil {
-			slog.Warn("file too large or invalid multipart form", slog.Any("error", err), slog.String("path", r.URL.Path))
-			http.Error(w, "file too large or invalid multipart form", http.StatusBadRequest)
-			return
-		}
-
-		file, handler, err := r.FormFile("file")
+		// The file is streamed straight into uploadDir while it is hashed, so the
+		// request body never has to fit in memory.
+		upload, err := a.spoolUpload(w, r, maxUploadBytes)
 		if err != nil {
-			slog.Warn("missing file", slog.Any("error", err), slog.String("path", r.URL.Path))
-			http.Error(w, "missing file", http.StatusBadRequest)
+			var clientErr *clientError
+			if errors.As(err, &clientErr) {
+				if clientErr.status >= http.StatusInternalServerError {
+					slog.Error("failed to accept upload", slog.Any("error", err), slog.String("path", r.URL.Path))
+				} else {
+					slog.Warn("rejected upload", slog.String("reason", clientErr.msg), slog.String("path", r.URL.Path))
+				}
+				http.Error(w, clientErr.msg, clientErr.status)
+				return
+			}
+			writeInternalError(w, "failed to accept upload", err)
 			return
 		}
 
-		// Read into memory for hash and mimetype (for files under 100MB this is ok, else temp file is better)
-		// Since MaxBytesReader is used, reading all is safe up to 100MB.
-		fileBytes, err := io.ReadAll(file)
-		file.Close() // explicitly close file after reading to avoid sharing violation on Windows before rename/remove
-		if err != nil {
-			slog.Error("failed to read file", slog.Any("error", err))
-			http.Error(w, "failed to read file", http.StatusInternalServerError)
-			return
-		}
-
-		hash := sha256.Sum256(fileBytes)
-		hashStr := hex.EncodeToString(hash[:])
-
-		mtype := mimetype.Detect(fileBytes)
-		mimeStr := mtype.String()
-
-		fileSize := int64(len(fileBytes))
+		// Every failure path below has to leave neither a row nor a file behind.
+		committed := false
+		defer func() {
+			if !committed {
+				upload.discard()
+			}
+		}()
 
 		// Check deduplication
 		existingFile, err := a.db.Queries.GetIngestedFileByHash(r.Context(), db.GetIngestedFileByHashParams{
 			UserID:   userID,
-			FileHash: hashStr,
+			FileHash: upload.hash,
 		})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			slog.Error("failed to check existing file by hash", slog.Any("error", err))
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			writeInternalError(w, "failed to check existing file by hash", err)
 			return
 		}
 		if err == nil && existingFile.ID != uuid.Nil {
@@ -91,36 +76,17 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			return
 		}
 
-		// Ensure storage dir
-		os.MkdirAll("storage", 0755)
-		localPath := filepath.Join("storage", fmt.Sprintf("%s_%s", uuid.New().String(), filepath.Base(handler.Filename)))
-
 		ingestedFile, err := a.db.Queries.CreateIngestedFile(r.Context(), db.CreateIngestedFileParams{
 			UserID:    userID,
-			FileName:  handler.Filename,
-			FileHash:  hashStr,
-			MimeType:  mimeStr,
-			FileSize:  fileSize,
+			FileName:  upload.fileName,
+			FileHash:  upload.hash,
+			MimeType:  upload.mimeType,
+			FileSize:  upload.size,
 			Status:    "pending",
-			LocalPath: localPath,
+			LocalPath: upload.path,
 		})
 		if err != nil {
-			slog.Error("failed to record file in database", slog.Any("error", err))
-			http.Error(w, "failed to record file in database", http.StatusInternalServerError)
-			return
-		}
-
-		ioErr := os.WriteFile(localPath, fileBytes, 0644)
-		if ioErr != nil {
-			slog.Error("failed to save file locally", slog.Any("error", ioErr))
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
-				ID:     ingestedFile.ID,
-				Status: "failed",
-				UserID: userID,
-			})
-			http.Error(w, "failed to save file locally", http.StatusInternalServerError)
+			writeInternalError(w, "failed to record file in database", err)
 			return
 		}
 
@@ -131,20 +97,36 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 				Queue: "ingest",
 			})
 			if jobErr != nil {
-				slog.Error("failed to enqueue ingest job", slog.Any("error", jobErr))
-				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = a.db.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
-					ID:     ingestedFile.ID,
-					Status: "failed",
-					UserID: userID,
-				})
+				// Without the job nothing would ever process the file, and a row
+				// left in "pending" would make the client wait forever. Roll the
+				// upload back instead of answering 201 for work that will not
+				// happen; the deferred discard removes the spooled file.
+				a.deleteIngestRow(r.Context(), ingestedFile.ID, userID)
+				writeInternalError(w, "failed to enqueue ingest job", jobErr)
+				return
 			}
 		}
 
+		committed = true
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(toIngestedFileDTO(ingestedFile))
+	}
+}
+
+// deleteIngestRow removes an ingest row whose job could not be enqueued. It uses
+// its own timeout because the request context may already be cancelled.
+func (a *API) deleteIngestRow(ctx context.Context, id, userID uuid.UUID) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	if err := a.db.Queries.DeleteIngestedFile(cleanupCtx, db.DeleteIngestedFileParams{
+		ID:     id,
+		UserID: userID,
+	}); err != nil {
+		slog.Error("failed to roll back ingest row",
+			slog.Any("error", err),
+			slog.String("file_id", id.String()))
 	}
 }
 
@@ -273,9 +255,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Category string `json:"category"`
 	}
-	if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
-		slog.Warn("invalid request body", slog.Any("error", decErr), slog.String("path", r.URL.Path))
-		http.Error(w, decErr.Error(), http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

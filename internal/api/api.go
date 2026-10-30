@@ -62,8 +62,12 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 		Role      string `json:"role"`
 		Content   string `json:"content"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := validateMessageInput(req.SessionID, req.Role, req.Content); err != nil {
+		slog.Warn("invalid message payload", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -75,8 +79,7 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Content,
 	})
 	if err != nil {
-		slog.Error("failed to create message", slog.Any("error", err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w, "failed to create message", err)
 		return
 	}
 
@@ -146,8 +149,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		Limit:     limit,
 	})
 	if err != nil {
-		slog.Error("failed to get messages by session", slog.Any("error", err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w, "failed to get messages by session", err)
 		return
 	}
 
@@ -252,14 +254,18 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		Importance      int32                 `json:"importance"`
 		Metadata        pqtype.NullRawMessage `json:"metadata"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
 	if req.Status == "" {
 		req.Status = "candidate"
+	}
+
+	if err := validateMemoryInput(req.Content, req.Status, req.Importance); err != nil {
+		slog.Warn("invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	contentHash := db.GenerateHash(req.Content)
@@ -268,8 +274,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		ContentHash: contentHash,
 	})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		slog.Error("failed to get memory by hash", slog.Any("error", err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeInternalError(w, "failed to get memory by hash", err)
 		return
 	}
 	if err == nil {
@@ -285,8 +290,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Content) != "" {
 		vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content}, false)
 		if embedErr != nil {
-			slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
-			http.Error(w, embedErr.Error(), http.StatusInternalServerError)
+			writeInternalError(w, "failed to generate embedding", embedErr)
 			return
 		}
 		if len(vectors) == 0 {
@@ -320,8 +324,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 		return
 	} else if err != nil {
-		slog.Error("failed to create memory", slog.Any("error", err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w, "failed to create memory", err)
 		return
 	}
 
@@ -355,8 +358,7 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 		Status: statusParam,
 	})
 	if err != nil {
-		slog.Error("failed to get memories", slog.Any("error", err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		writeInternalError(w, "failed to get memories", err)
 		return
 	}
 
@@ -401,14 +403,13 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Importance int32                 `json:"importance"`
 			Metadata   pqtype.NullRawMessage `json:"metadata"`
 		}
-		if decErr := json.NewDecoder(r.Body).Decode(&req); decErr != nil {
-			slog.Warn("invalid request body", slog.Any("error", decErr), slog.String("path", r.URL.Path))
-			http.Error(w, decErr.Error(), http.StatusBadRequest)
+		if !decodeJSON(w, r, &req) {
 			return
 		}
 
-		if strings.TrimSpace(req.Content) == "" {
-			http.Error(w, "content cannot be empty", http.StatusBadRequest)
+		if err := validateMemoryInput(req.Content, req.Status, req.Importance); err != nil {
+			slog.Warn("invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -420,8 +421,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(dbErr, sql.ErrNoRows) {
 				http.Error(w, "memory not found", http.StatusNotFound)
 			} else {
-				slog.Error("failed to get existing memory", slog.Any("error", dbErr))
-				http.Error(w, dbErr.Error(), http.StatusInternalServerError)
+				writeInternalError(w, "failed to get existing memory", dbErr)
 			}
 			return
 		}
@@ -433,8 +433,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		if newContentHash != existingMem.ContentHash {
 			vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content}, false)
 			if embedErr != nil {
-				slog.Error("failed to generate embedding", slog.Any("embedError", embedErr))
-				http.Error(w, embedErr.Error(), http.StatusInternalServerError)
+				writeInternalError(w, "failed to generate embedding", embedErr)
 				return
 			}
 			if len(vectors) == 0 {
@@ -466,8 +465,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Memory already exists", http.StatusConflict)
 			return
 		} else if dbErr != nil {
-			slog.Error("failed to update memory", slog.Any("error", dbErr))
-			http.Error(w, dbErr.Error(), http.StatusInternalServerError)
+			writeInternalError(w, "failed to update memory", dbErr)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -479,8 +477,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			UserID: userID,
 		})
 		if err != nil {
-			slog.Error("failed to delete memory", slog.Any("error", err))
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			writeInternalError(w, "failed to delete memory", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

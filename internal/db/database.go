@@ -3,13 +3,14 @@ package db
 import (
 	"context"
 	"crypto/sha256"
-	"github.com/lib/pq"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/lib/pq"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,6 +40,10 @@ func Connect(ctx context.Context, connString string) (*Database, error) {
 	}
 
 	if err := pool.Ping(ctx); err != nil {
+		// The pool already holds background goroutines and connections; without
+		// closing it here they outlive this function and leak on every failed
+		// startup attempt.
+		pool.Close()
 		return nil, fmt.Errorf("unable to ping database: %w", err)
 	}
 
@@ -52,6 +57,25 @@ func Connect(ctx context.Context, connString string) (*Database, error) {
 		SqlDB:   sqlDb,
 		Queries: New(sqlDb),
 	}, nil
+}
+
+// Close releases both connection handles.
+//
+// The database/sql wrapper is closed before the pgx pool on purpose: closing
+// the pool first blocks until every pooled connection has been returned, and
+// the wrapper only returns them when it is closed itself. Reversing the order
+// hangs the shutdown. Close is safe to call on a nil or partially initialised
+// Database and tolerates being called twice.
+func (d *Database) Close() {
+	if d == nil {
+		return
+	}
+	if d.SqlDB != nil {
+		_ = d.SqlDB.Close()
+	}
+	if d.Pool != nil {
+		d.Pool.Close()
+	}
 }
 
 func RunMigrations(connString string) error {

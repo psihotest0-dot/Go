@@ -28,7 +28,7 @@ func TestRetrieval_Integration(t *testing.T) {
 	ctx := context.Background()
 	d, err := db.Connect(ctx, connString)
 	require.NoError(t, err)
-	defer d.Pool.Close()
+	defer d.Close()
 
 	// Clear DB for test
 	_, _ = d.Pool.Exec(ctx, "DELETE FROM memories")
@@ -69,7 +69,7 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	ctx := context.Background()
 	d, err := db.Connect(ctx, connString)
 	require.NoError(t, err)
-	defer d.Pool.Close()
+	defer d.Close()
 
 	// Clear DB for test
 	_, _ = d.Pool.Exec(ctx, "DELETE FROM memories")

@@ -9,230 +9,240 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	openai "github.com/sashabaranov/go-openai"
 )
 
-// generateResponse handles the LLM generation and tool calling logic, but unlike streamResponse, it
-// does not write SSE events to an HTTP ResponseWriter. Instead, it accumulates the result and returns it.
+const (
+	// maxToolRounds bounds how many tool rounds one turn may run. Each round is
+	// a full completion round trip, so an unbounded loop lets a confused model
+	// keep the request alive until the client times out.
+	maxToolRounds = 2
+
+	// maxToolCalls bounds the number of tool calls per round. The indexes come
+	// from the model, so this also caps the slice built while merging deltas.
+	maxToolCalls = 8
+
+	// maxToolResultChars caps what one tool result contributes to the prompt.
+	maxToolResultChars = 8192
+)
+
+// deltaFunc receives streamed content and reasoning chunks. Returning an error
+// aborts the stream.
+type deltaFunc func(content, reasoning string) error
+
+// streamResult is the accumulated output of a single streaming completion.
+type streamResult struct {
+	content   string
+	reasoning string
+	toolCalls []openai.ToolCall
+}
+
+// streamOnce runs one streaming completion and collects text, reasoning and tool
+// call deltas. Provider, network and callback errors are all returned: a
+// truncated answer must never look like a finished one.
+func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletionRequest, onDelta deltaFunc) (streamResult, error) {
+	stream, err := o.llmClient.ChatStream(ctx, req)
+	if err != nil {
+		return streamResult{}, err
+	}
+	defer stream.Close()
+
+	var content, reasoning strings.Builder
+	var toolCalls []openai.ToolCall
+
+	snapshot := func() streamResult {
+		return streamResult{
+			content:   content.String(),
+			reasoning: reasoning.String(),
+			toolCalls: toolCalls,
+		}
+	}
+
+	for {
+		resp, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			return snapshot(), recvErr
+		}
+		if len(resp.Choices) == 0 {
+			continue
+		}
+
+		delta := resp.Choices[0].Delta
+		if delta.ReasoningContent != "" {
+			reasoning.WriteString(delta.ReasoningContent)
+		}
+
+		mergeToolCallDeltas(&toolCalls, delta.ToolCalls)
+
+		chunk := delta.Content
+		if chunk != "" {
+			content.WriteString(chunk)
+		}
+
+		if onDelta != nil && (chunk != "" || delta.ReasoningContent != "") {
+			if cbErr := onDelta(chunk, delta.ReasoningContent); cbErr != nil {
+				return snapshot(), cbErr
+			}
+		}
+	}
+
+	return snapshot(), nil
+}
+
+// mergeToolCallDeltas folds streamed tool call fragments into calls. Both the
+// slice size and the number of calls are bounded because the indexes are chosen
+// by the model: without the guard a single delta claiming index 1e9 would
+// allocate gigabytes.
+func mergeToolCallDeltas(calls *[]openai.ToolCall, deltas []openai.ToolCall) {
+	for _, delta := range deltas {
+		if delta.Index == nil {
+			continue
+		}
+
+		idx := *delta.Index
+		if idx < 0 || idx >= maxToolCalls {
+			slog.Warn("ignoring tool call with out-of-range index", "index", idx, "max", maxToolCalls)
+			continue
+		}
+
+		for len(*calls) <= idx {
+			*calls = append(*calls, openai.ToolCall{})
+		}
+
+		call := &(*calls)[idx]
+		if delta.ID != "" {
+			call.ID = delta.ID
+		}
+		if delta.Type != "" {
+			call.Type = delta.Type
+		}
+		if delta.Function.Name != "" {
+			call.Function.Name = delta.Function.Name
+		}
+		if delta.Function.Arguments != "" {
+			call.Function.Arguments += delta.Function.Arguments
+		}
+	}
+}
+
+// executeToolCalls runs every requested tool and returns the tool messages the
+// API expects: one per call, in the order the model asked for them.
+func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.ToolCall) []openai.ChatCompletionMessage {
+	messages := make([]openai.ChatCompletionMessage, 0, len(calls))
+
+	for _, tc := range calls {
+		var content string
+
+		if tc.Function.Name == "" {
+			// The conversation still needs a tool message for this call ID,
+			// otherwise the next request is rejected as malformed.
+			slog.Warn("tool call without a name", "id", tc.ID)
+			content = "Error: tool name missing"
+		} else {
+			var args map[string]interface{}
+			if tc.Function.Arguments != "" {
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					slog.Warn("tool arguments are not valid JSON",
+						"tool", tc.Function.Name, "err", err)
+				}
+			}
+
+			res, err := o.tools.ExecuteTool(ctx, tc.Function.Name, args)
+			switch {
+			case err != nil:
+				slog.Error("tool execution failed", "tool", tc.Function.Name, "err", err)
+				content = fmt.Sprintf("Error: %v", err)
+			default:
+				resBytes, marshalErr := json.Marshal(res)
+				if marshalErr != nil {
+					slog.Error("failed to marshal tool result", "tool", tc.Function.Name, "err", marshalErr)
+					content = fmt.Sprintf("Error: %v", marshalErr)
+					break
+				}
+				content = truncateRunes(string(resBytes), maxToolResultChars)
+				slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
+			}
+		}
+
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:       openai.ChatMessageRoleTool,
+			Content:    content,
+			ToolCallID: tc.ID,
+		})
+	}
+
+	return messages
+}
+
+// generateResponse handles the LLM generation and tool calling logic. Unlike
+// streamResponse it does not write SSE events; it accumulates the answer and
+// returns it, so streaming and regenerate share the same code path.
 func (o *Orchestrator) generateResponse(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
-	onDelta func(content, reasoning string) error,
+	onDelta deltaFunc,
 ) (string, string, []openai.ToolCall, error) {
-	chatReq := openai.ChatCompletionRequest{
-		Messages: finalMessages,
-		Stream:   true,
-		Tools:    tools,
-	}
+	// The caller's slice is copied because tool rounds append to it and the
+	// caller may still use its own view (e.g. for tracing).
+	messages := slices.Clone(finalMessages)
 
-	stream, err := o.llmClient.ChatStream(ctx, chatReq)
-	if err != nil {
-		slog.Error("llm stream failed", "err", err)
-		return "", "", nil, err
-	}
-	defer stream.Close()
+	var assistantContent, reasoningContent strings.Builder
+	var executed []openai.ToolCall
 
-	var fullAssistantMessage strings.Builder
-	var fullReasoningMessage strings.Builder
-	var toolCalls []openai.ToolCall
-
+	toolRounds := 0
 	for {
-		resp, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			slog.Error("stream reading failed", "err", err)
-			return "", "", nil, err
-		}
-
-		if len(resp.Choices) > 0 {
-			delta := resp.Choices[0].Delta
-
-			reasoningChunk := delta.ReasoningContent
-			if reasoningChunk != "" {
-				fullReasoningMessage.WriteString(reasoningChunk)
-			}
-
-			if len(delta.ToolCalls) > 0 {
-				for _, tc := range delta.ToolCalls {
-					if tc.Index != nil {
-						idx := *tc.Index
-						for len(toolCalls) <= idx {
-							toolCalls = append(toolCalls, openai.ToolCall{})
-						}
-
-						if tc.ID != "" {
-							toolCalls[idx].ID = tc.ID
-						}
-						if tc.Type != "" {
-							toolCalls[idx].Type = tc.Type
-						}
-						if tc.Function.Name != "" {
-							toolCalls[idx].Function.Name = tc.Function.Name
-						}
-						if tc.Function.Arguments != "" {
-							toolCalls[idx].Function.Arguments += tc.Function.Arguments
-						}
-					}
-				}
-			}
-
-			chunk := delta.Content
-			if chunk != "" {
-				fullAssistantMessage.WriteString(chunk)
-			}
-
-			if onDelta != nil && (chunk != "" || reasoningChunk != "") {
-				if err := onDelta(chunk, reasoningChunk); err != nil {
-					slog.Error("onDelta callback failed", "err", err)
-					return "", "", nil, err
-				}
-			}
-		}
-	}
-
-	if len(toolCalls) > 0 {
-		finalMessages = append(finalMessages, openai.ChatCompletionMessage{
-			Role:      openai.ChatMessageRoleAssistant,
-			Content:   fullAssistantMessage.String(),
-			ToolCalls: toolCalls,
-		})
-
-		for _, tc := range toolCalls {
-			if tc.Function.Name != "" {
-				var args map[string]interface{}
-				if tc.Function.Arguments != "" {
-					_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
-				}
-
-				res, err := o.tools.ExecuteTool(ctx, tc.Function.Name, args)
-
-				var contentStr string
-				if err != nil {
-					slog.Error("tool execution failed", "tool", tc.Function.Name, "err", err)
-					contentStr = fmt.Sprintf("Error: %v", err)
-				} else {
-					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result", res)
-					resBytes, _ := json.Marshal(res)
-					contentStr = string(resBytes)
-
-					if utf8.RuneCountInString(contentStr) > 8192 {
-						runes := []rune(contentStr)
-						contentStr = string(runes[:8192]) + "... [TRUNCATED]"
-					}
-				}
-
-				finalMessages = append(finalMessages, openai.ChatCompletionMessage{
-					Role:       openai.ChatMessageRoleTool,
-					Content:    contentStr,
-					ToolCallID: tc.ID,
-				})
-			}
-		}
-
-		chatReq2 := openai.ChatCompletionRequest{
-			Messages: finalMessages,
+		result, err := o.streamOnce(ctx, openai.ChatCompletionRequest{
+			Messages: messages,
 			Stream:   true,
 			Tools:    tools,
-		}
-
-		stream2, err := o.llmClient.ChatStream(ctx, chatReq2)
+		}, onDelta)
+		assistantContent.WriteString(result.content)
+		reasoningContent.WriteString(result.reasoning)
 		if err != nil {
-			slog.Error("llm second stream failed", "err", err)
-			return fullAssistantMessage.String(), fullReasoningMessage.String(), toolCalls, err
+			return assistantContent.String(), reasoningContent.String(), executed, err
 		}
 
-		var secondCallText strings.Builder
+		if len(result.toolCalls) == 0 {
+			return assistantContent.String(), reasoningContent.String(), executed, nil
+		}
 
-		func() {
-			defer stream2.Close()
-			for {
-				resp2, err := stream2.Recv()
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				if err != nil {
-					break
-				}
-				if len(resp2.Choices) > 0 {
-					reasoningChunk := resp2.Choices[0].Delta.ReasoningContent
-					if reasoningChunk != "" {
-						fullReasoningMessage.WriteString(reasoningChunk)
-					}
+		if toolRounds >= maxToolRounds {
+			slog.Warn("tool round limit reached, answering without further tools",
+				"rounds", toolRounds,
+				"pending_tool_calls", len(result.toolCalls))
+			break
+		}
 
-					chunk := resp2.Choices[0].Delta.Content
-					if chunk != "" {
-						secondCallText.WriteString(chunk)
-						fullAssistantMessage.WriteString(chunk)
-					}
+		toolRounds++
+		executed = append(executed, result.toolCalls...)
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:      openai.ChatMessageRoleAssistant,
+			Content:   result.content,
+			ToolCalls: result.toolCalls,
+		})
+		messages = append(messages, o.executeToolCalls(ctx, result.toolCalls)...)
+	}
 
-					if onDelta != nil && (chunk != "" || reasoningChunk != "") {
-						if err := onDelta(chunk, reasoningChunk); err != nil {
-							break // error in callback, stop processing
-						}
-					}
-				}
-			}
-		}()
-
-		if strings.TrimSpace(secondCallText.String()) == "" {
-			var toolResponses strings.Builder
-			for _, tcMsg := range finalMessages {
-				if tcMsg.Role == openai.ChatMessageRoleTool {
-					toolResponses.WriteString(tcMsg.Content)
-					toolResponses.WriteString("\n\n")
-				}
-			}
-
-			fallbackFinalMessages := slices.Clone(finalMessages)
-			fallbackFinalMessages = append(fallbackFinalMessages, openai.ChatCompletionMessage{
-				Role:    openai.ChatMessageRoleUser,
-				Content: "Отговори на въпроса на потребителя въз основа на намерените документи по-долу.\n\n" + toolResponses.String(),
-			})
-
-			chatReqFallbackTool := chatReq2
-			chatReqFallbackTool.Messages = fallbackFinalMessages
-			chatReqFallbackTool.Tools = nil
-
-			stream3, err := o.llmClient.ChatStream(ctx, chatReqFallbackTool)
-			if err != nil {
-				slog.Error("llm third stream failed", "err", err)
-				return fullAssistantMessage.String(), fullReasoningMessage.String(), toolCalls, err
-			}
-			defer stream3.Close()
-
-			for {
-				resp3, err := stream3.Recv()
-				if errors.Is(err, io.EOF) {
-					break
-				}
-				if err != nil {
-					break
-				}
-				if len(resp3.Choices) > 0 {
-					reasoningChunk := resp3.Choices[0].Delta.ReasoningContent
-					if reasoningChunk != "" {
-						fullReasoningMessage.WriteString(reasoningChunk)
-					}
-
-					chunk := resp3.Choices[0].Delta.Content
-					if chunk != "" {
-						fullAssistantMessage.WriteString(chunk)
-					}
-
-					if onDelta != nil && (chunk != "" || reasoningChunk != "") {
-						if err := onDelta(chunk, reasoningChunk); err != nil {
-							break // error in callback, stop processing
-						}
-					}
-				}
-			}
+	// The model asked for tools but never produced prose. Ask again with tools
+	// disabled so it has to answer in text. The tool results are already part of
+	// the conversation, so nothing is repeated here: an earlier version appended
+	// them a second time, which doubled the prompt of the final call.
+	if strings.TrimSpace(assistantContent.String()) == "" {
+		result, err := o.streamOnce(ctx, openai.ChatCompletionRequest{
+			Messages: messages,
+			Stream:   true,
+		}, onDelta)
+		assistantContent.WriteString(result.content)
+		reasoningContent.WriteString(result.reasoning)
+		if err != nil {
+			return assistantContent.String(), reasoningContent.String(), executed, err
 		}
 	}
 
-	return fullAssistantMessage.String(), fullReasoningMessage.String(), toolCalls, nil
+	return assistantContent.String(), reasoningContent.String(), executed, nil
 }

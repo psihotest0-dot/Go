@@ -45,12 +45,7 @@ func TestOrchestratorIntegration(t *testing.T) {
 	// Connect to DB
 	database, err := db.Connect(ctx, connString)
 	require.NoError(t, err)
-	defer func() {
-		// Close the database/sql wrapper first, otherwise pgxpool.Close
-		// blocks forever waiting for its connections to be released.
-		_ = database.SqlDB.Close()
-		database.Pool.Close()
-	}()
+	defer database.Close()
 
 	// Clear DB for test
 	_, _ = database.Pool.Exec(ctx, "DELETE FROM agent_traces")

@@ -40,7 +40,9 @@ func setupTestDB(t *testing.T) *db.Database {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		database.Pool.Close()
+		// Close through Database.Close so the database/sql wrapper releases its
+		// connections before the pool is closed (the reverse order hangs).
+		database.Close()
 		goose.DownTo(rawDB, "../../migrations", 0)
 		rawDB.Close()
 	})

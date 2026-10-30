@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -59,15 +58,21 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req ChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !readJSONBody(w, r, &req) {
 		return
 	}
 
 	if req.SessionID == "" || req.Content == "" {
 		slog.Warn("missing session_id or content", slog.String("path", r.URL.Path))
 		http.Error(w, "session_id and content are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateUserMessage(req.Content); err != nil {
+		slog.Warn("message too long",
+			slog.Any("error", err),
+			slog.String("session_id", req.SessionID))
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -78,7 +83,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	// LLM error.
 	if err := o.saveUserMessage(r.Context(), userID, req.SessionID, req.Content); err != nil {
 		slog.Error("failed to save user message", "err", err)
-		http.Error(w, fmt.Sprintf("failed to save user message: %v", err), http.StatusInternalServerError)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -160,9 +165,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var regenReq RegenerateRequest
-	if err := json.NewDecoder(r.Body).Decode(&regenReq); err != nil {
-		slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !readJSONBody(w, r, &regenReq) {
 		return
 	}
 

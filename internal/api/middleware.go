@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"go-monolith/metrics"
@@ -101,6 +103,98 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 }
 
 func UserMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return newUserMiddleware(poolUserUpserter{pool: pool})
+}
+
+// userUpserter makes sure a users row exists before rows referencing it are
+// written. It is an interface so the middleware can be exercised without a
+// live PostgreSQL instance.
+type userUpserter interface {
+	UpsertUser(ctx context.Context, id uuid.UUID) error
+}
+
+// poolUserUpserter implements userUpserter on top of a pgx pool.
+type poolUserUpserter struct {
+	pool *pgxpool.Pool
+}
+
+func (u poolUserUpserter) UpsertUser(ctx context.Context, id uuid.UUID) error {
+	if u.pool == nil {
+		return errors.New("user middleware: nil connection pool")
+	}
+	_, err := u.pool.Exec(ctx, "INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING;", id)
+	return err
+}
+
+const (
+	// userCacheTTL is how long a confirmed users row is trusted without going
+	// back to the database. The row is created by the first request of a user,
+	// so re-asserting it on every request only adds a write to the hot path.
+	userCacheTTL = 10 * time.Minute
+	// maxKnownUsers bounds the cache; entries nearest to expiry are dropped
+	// first once the cap is reached.
+	maxKnownUsers = 10000
+)
+
+// knownUsers is a bounded TTL cache of user ids whose row is known to exist.
+// It is safe for concurrent use.
+type knownUsers struct {
+	mu      sync.Mutex
+	expires map[uuid.UUID]time.Time
+}
+
+func newKnownUsers() *knownUsers {
+	return &knownUsers{expires: make(map[uuid.UUID]time.Time)}
+}
+
+// contains reports whether id was recorded and has not expired yet.
+func (k *knownUsers) contains(id uuid.UUID, now time.Time) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	expiry, ok := k.expires[id]
+	if !ok {
+		return false
+	}
+	if !now.Before(expiry) {
+		delete(k.expires, id)
+		return false
+	}
+	return true
+}
+
+// add records id as known until now+userCacheTTL, evicting expired entries and,
+// if that is not enough, the entries closest to expiry.
+func (k *knownUsers) add(id uuid.UUID, now time.Time) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	k.expires[id] = now.Add(userCacheTTL)
+	if len(k.expires) <= maxKnownUsers {
+		return
+	}
+
+	for candidate, expiry := range k.expires {
+		if !now.Before(expiry) {
+			delete(k.expires, candidate)
+		}
+	}
+	for len(k.expires) > maxKnownUsers {
+		var oldestID uuid.UUID
+		var oldestExpiry time.Time
+		first := true
+		for candidate, expiry := range k.expires {
+			if first || expiry.Before(oldestExpiry) {
+				oldestID, oldestExpiry, first = candidate, expiry, false
+			}
+		}
+		delete(k.expires, oldestID)
+	}
+}
+
+func newUserMiddleware(users userUpserter) func(http.Handler) http.Handler {
+	known := newKnownUsers()
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userIDStr := r.Header.Get("X-User-ID")
@@ -117,11 +211,14 @@ func UserMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 				return
 			}
 
-			_, err = pool.Exec(r.Context(), "INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING;", userID)
-			if err != nil {
-				slog.Error("failed to upsert user", slog.Any("error", err))
-				http.Error(w, "internal server error", http.StatusInternalServerError)
-				return
+			now := time.Now()
+			if !known.contains(userID, now) {
+				if err := users.UpsertUser(r.Context(), userID); err != nil {
+					slog.Error("failed to upsert user", slog.Any("error", err))
+					http.Error(w, "internal server error", http.StatusInternalServerError)
+					return
+				}
+				known.add(userID, now)
 			}
 
 			ctx := context.WithValue(r.Context(), ParsedUserIDKey, userID)

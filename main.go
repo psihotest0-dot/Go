@@ -154,14 +154,7 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
-	defer func() {
-		if database.SqlDB != nil {
-			database.SqlDB.Close()
-		}
-		if database.Pool != nil {
-			database.Pool.Close()
-		}
-	}()
+	defer database.Close()
 
 	llmClient := llm.NewLemonadeClient()
 	embedder := llm.NewHTTPEmbedder(database)
