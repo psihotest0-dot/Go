@@ -142,6 +142,21 @@ func (s *sessionSummaryStore) evictLocked(now time.Time) {
 	}
 }
 
+// dropTrailingAssistantMessages removes assistant replies from the end of the
+// history. Regenerating keeps the previous answer in the database until a new
+// one is ready, so it has to be dropped from the prompt: otherwise the model is
+// asked to answer a question it has already answered, with that answer in view.
+func dropTrailingAssistantMessages(historyMessages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
+	end := len(historyMessages)
+	for end > 0 && historyMessages[end-1].Role == openai.ChatMessageRoleAssistant {
+		end--
+	}
+	if end == len(historyMessages) {
+		return historyMessages
+	}
+	return historyMessages[:end]
+}
+
 func pruneHistory(historyMessages []openai.ChatCompletionMessage) ([]openai.ChatCompletionMessage, []openai.ChatCompletionMessage, int) {
 	var oldMessages []openai.ChatCompletionMessage
 	var reversedKeep []openai.ChatCompletionMessage

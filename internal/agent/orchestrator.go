@@ -79,6 +79,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	chatCtx, memoryIDs, err := o.loadContext(r.Context(), userID, req)
 	if err != nil {
+		// Streaming has not started, so the client can still receive a normal
+		// HTTP error instead of a "200 OK" with an empty body that leaves the
+		// caller waiting for events that never arrive.
+		slog.Error("failed to load context", "err", err, "session_id", req.SessionID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -110,6 +115,10 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, finalMessages, tools, chatCtx.Sources)
 	if err != nil {
+		// The response is already committed and the reason has been sent to the
+		// client as an SSE error frame, so only log it here and skip persisting
+		// a partial answer.
+		slog.Error("stream failed", "err", err, "session_id", req.SessionID)
 		return
 	}
 
@@ -158,20 +167,10 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err := o.db.Queries.DeleteLastAssistantMessage(r.Context(), db.DeleteLastAssistantMessageParams{
-		SessionID: regenReq.SessionID,
-		UserID:    userID,
-	})
-	if err != nil {
-		slog.Error("failed to delete last assistant message", "err", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: regenReq.SessionID,
-		Limit:     10,
+		Limit:     maxHistoryMessages,
 	})
 	if err != nil {
 		slog.Error("failed to get messages", "err", err)
@@ -200,8 +199,17 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	chatCtx, memoryIDs, err := o.loadContext(r.Context(), userID, req)
 	if err != nil {
+		// Streaming has not started, so the client can still receive a normal
+		// HTTP error instead of a "200 OK" with an empty body.
+		slog.Error("failed to load context", "err", err, "session_id", req.SessionID)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// The previous answer is still persisted, so it is fetched as part of the
+	// history. Drop it from the prompt: the model must regenerate the reply,
+	// not read (and copy) the one it is replacing.
+	chatCtx.History = dropTrailingAssistantMessages(chatCtx.History)
 
 	_ = o.writeTrace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
@@ -231,11 +239,28 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, finalMessages, tools, chatCtx.Sources)
 	if err != nil {
+		// The previous answer is untouched, so a failed regeneration leaves the
+		// session as it was instead of losing the reply it replaced.
+		slog.Error("stream failed", "err", err, "session_id", req.SessionID)
 		return
 	}
 
+	// The answer is already complete, so the write phase must not be aborted by
+	// a client that disconnects right after the final event.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
+
+	// Replace the old answer only now that a complete new one exists.
+	if err := o.db.Queries.DeleteLastAssistantMessage(bgCtx, db.DeleteLastAssistantMessageParams{
+		SessionID: req.SessionID,
+		UserID:    userID,
+	}); err != nil {
+		// Persisting as well would leave two answers for the same question, so
+		// keep the stored history consistent and drop the new one.
+		slog.Error("failed to delete last assistant message", "err", err, "session_id", req.SessionID)
+		return
+	}
+
 	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
 
 	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{

@@ -162,3 +162,20 @@ func TestRollingSummarySurvivesSummariserFailure(t *testing.T) {
 	require.Equal(t, "", state.text)
 	require.Equal(t, 0, state.lastDropCount)
 }
+
+func TestDropTrailingAssistantMessages(t *testing.T) {
+	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "question"}
+	assistant := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: "answer"}
+
+	// The reply being regenerated must not be part of the prompt.
+	require.Equal(t, []openai.ChatCompletionMessage{user}, dropTrailingAssistantMessages([]openai.ChatCompletionMessage{user, assistant}))
+
+	// Consecutive trailing replies are all removed.
+	require.Equal(t, []openai.ChatCompletionMessage{user}, dropTrailingAssistantMessages([]openai.ChatCompletionMessage{user, assistant, assistant}))
+
+	// A history that already ends with a user message is left untouched.
+	history := []openai.ChatCompletionMessage{assistant, user}
+	require.Equal(t, history, dropTrailingAssistantMessages(history))
+
+	require.Empty(t, dropTrailingAssistantMessages(nil))
+}

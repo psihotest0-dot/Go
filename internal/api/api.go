@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -80,7 +81,35 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(toMessageDTO(msg))
+}
+
+const (
+	// defaultMessagesLimit is used when the client asks for no specific page
+	// size. GetMessagesBySession always requires a LIMIT, so leaving it at the
+	// zero value would silently return an empty page for every session.
+	defaultMessagesLimit = 50
+	// maxMessagesLimit caps the page size so a single request cannot pull the
+	// complete history of a large session out of the database.
+	maxMessagesLimit = 200
+)
+
+// parseMessagesLimit resolves the "limit" query parameter into a usable page
+// size, falling back to defaultMessagesLimit when it is absent.
+func parseMessagesLimit(raw string) (int32, error) {
+	if raw == "" {
+		return defaultMessagesLimit, nil
+	}
+
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit <= 0 {
+		return 0, errors.New("limit must be a positive integer")
+	}
+	if limit > maxMessagesLimit {
+		limit = maxMessagesLimit
+	}
+	return int32(limit), nil
 }
 
 func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
@@ -104,9 +133,17 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	limit, err := parseMessagesLimit(r.URL.Query().Get("limit"))
+	if err != nil {
+		slog.Warn("invalid limit parameter", slog.Any("error", err), slog.String("path", r.URL.Path))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	msgs, err := a.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: sessionID,
+		Limit:     limit,
 	})
 	if err != nil {
 		slog.Error("failed to get messages by session", slog.Any("error", err))
