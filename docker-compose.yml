@@ -4,7 +4,8 @@ services:
       context: ./services/embedder
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      # Published on the loopback interface only: the host backend is the only client.
+      - "127.0.0.1:8000:8000"
     environment:
       - CUDA_VISIBLE_DEVICES=-1
     deploy:
@@ -17,18 +18,25 @@ services:
           cpus: '0.1'
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.15.0
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+    extra_hosts:
+      # The backend runs on the host, not in compose (prometheus/prometheus.yml
+      # scrapes host.docker.internal:8080). Docker Desktop defines the name
+      # itself; the mapping makes it work on Linux hosts too.
+      - "host.docker.internal:host-gateway"
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2.3
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Set GRAFANA_ADMIN_PASSWORD in .env (see .env.example). Grafana only reads
+      # this when it creates its database, i.e. on a fresh container.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}

@@ -1,0 +1,88 @@
+name: Go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Fast feedback: static checks and every test that needs no database.
+  # Integration tests skip themselves when TEST_DATABASE_URL is unset.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -count=1 ./...
+
+  # The integration tests run migrations and create/delete users, so they need a
+  # disposable database whose name contains "test" (internal/dbtest refuses
+  # anything else). The image is the one docker-compose uses (PostgreSQL 15 with
+  # pgvector 0.5.1). -p 1 because every package shares that one database.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: ankane/pgvector:v0.5.1
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d app_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/app_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -p 1 -count=1 ./...
+
+  # The race detector needs cgo (gcc is preinstalled on ubuntu-latest). It runs
+  # with the database too, because the concurrent code - jobs, Telegram, the
+  # orchestrator - is the part that touches it.
+  race:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: ankane/pgvector:v0.5.1
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d app_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CGO_ENABLED: "1"
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/app_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race -p 1 -count=1 ./...

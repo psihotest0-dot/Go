@@ -70,7 +70,7 @@ func TestOrchestratorIntegration(t *testing.T) {
 	// memories and traces with it. Declared after `defer database.Close()` so
 	// it runs while the pool is still open.
 	defer func() {
-		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, database.Pool, user.ID)
 	}()
 
 	// Create memory (which generates embedding via mock)

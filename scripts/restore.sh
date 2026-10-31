@@ -30,5 +30,9 @@ if [[ $FORCE -eq 0 ]]; then
 fi
 
 echo "Restoring database from $BACKUP_FILE..."
-pg_restore --clean --if-exists -d "$DATABASE_URL" "$BACKUP_FILE" || true
+# One transaction: either the whole archive is restored or the database is left
+# exactly as it was. Any pg_restore error stops the script (set -e) with
+# pg_restore's own exit code; "Restore complete." is printed only after success.
+# (On Windows use scripts/restore.ps1, which needs no pg_restore on the host.)
+pg_restore --clean --if-exists --single-transaction --no-owner --no-privileges     -d "$DATABASE_URL" "$BACKUP_FILE"
 echo "Restore complete."

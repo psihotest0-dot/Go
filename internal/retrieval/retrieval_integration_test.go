@@ -41,7 +41,7 @@ func TestRetrieval_Integration(t *testing.T) {
 	// Only this test's own rows are removed; a bare `DELETE FROM users` would
 	// cascade through the whole library (docs/incident-2026-10-30/REPORT.md).
 	defer func() {
-		_, _ = d.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, d.Pool, user.ID)
 	}()
 
 	// Since we mock embedder with a health check, we need to pass the real HTTPEmbedder if we want,
@@ -88,7 +88,7 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	// Only this test's own rows are removed; a bare `DELETE FROM users` would
 	// cascade through the whole library (docs/incident-2026-10-30/REPORT.md).
 	defer func() {
-		_, _ = d.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, d.Pool, user.ID)
 	}()
 
 	embedder := llm.NewHTTPEmbedder(d)

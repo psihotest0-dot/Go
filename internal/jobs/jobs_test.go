@@ -98,7 +98,7 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	// Delete only the user this test created, so the shared test database
 	// keeps whatever the other tests are using.
 	defer func() {
-		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, database.Pool, user.ID)
 	}()
 
 	llmMock := &mockLLMClient{

@@ -53,7 +53,7 @@ func newSanitizeFixture(t *testing.T, chunks ...string) *sanitizeFixture {
 	require.NoError(t, err)
 	// Removes only this test's own user; its rows go with it.
 	t.Cleanup(func() {
-		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, database.Pool, user.ID)
 	})
 
 	return &sanitizeFixture{

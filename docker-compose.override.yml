@@ -2,8 +2,35 @@ services:
   db:
     image: ankane/pgvector:v0.5.1
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_DB=postgres
+    volumes:
+      # A named volume: the data survives recreating the container. (Without it
+      # Docker makes a new anonymous volume per container and the old one is
+      # orphaned - see ACTION_PLAN.md, task 17.)
+      - pgdata:/var/lib/postgresql/data
+    # Docker's default /dev/shm is 64 MB, too little for parallel queries with
+    # work_mem = 32MB; they fail with "could not resize shared memory segment".
+    shm_size: 1gb
+    # Sized for a 16-thread / 32 GB host with ~15 GB given to the Docker VM.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - work_mem=32MB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - effective_cache_size=8GB
+      - -c
+      - max_parallel_workers_per_gather=4
+
+volumes:
+  pgdata:
+    # Explicit name: the volume must not depend on the folder name, otherwise a
+    # renamed or re-cloned checkout would silently start on an empty database.
+    name: go_pgdata

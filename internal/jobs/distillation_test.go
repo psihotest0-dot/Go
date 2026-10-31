@@ -46,7 +46,7 @@ func TestDistillationWorkerStopsWhenContextIsCancelled(t *testing.T) {
 	user, err := database.Queries.CreateUser(base)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, database.Pool, user.ID)
 	})
 
 	file, err := database.Queries.CreateIngestedFile(base, db.CreateIngestedFileParams{

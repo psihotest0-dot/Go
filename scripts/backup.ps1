@@ -13,7 +13,10 @@ counterpart of scripts/backup.sh:
 * it reads DATABASE_URL from the environment or from the repository .env;
 * it refuses to keep a dump smaller than 1000 bytes, so a broken run cannot
   look like a valid backup;
-* it prunes old dumps so the directory does not grow forever.
+* it prunes old dumps so the directory does not grow forever;
+* it also copies the uploaded originals (storage\) next to the dumps, because the
+  database only holds extracted text and vectors: the files are the only source
+  for a re-ingest (see ACTION_PLAN.md, task 18).
 
 .PARAMETER BackupDir
 Where the dumps go. Defaults to <repo>\backups.
@@ -24,14 +27,35 @@ How many dumps to keep, oldest removed first. Defaults to 14. 0 disables pruning
 .PARAMETER Service
 docker compose service name of the database. Defaults to db.
 
+.PARAMETER ExcludeCache
+Leave the rows of embedding_cache out of the dump (--exclude-table-data). That
+table is ~80 % of a full dump but can be rebuilt; keeping it makes a re-ingest
+of the same files fast, so keep at least one full dump. Such dumps are named
+<db>_<stamp>_nocache.dump and are pruned separately from full ones, so a nocache
+run can never delete your last full dump (and the other way round).
+
+.PARAMETER SkipStorage
+Do not copy the storage directory.
+
+.PARAMETER StorageDir
+The uploaded files. Defaults to <repo>\storage (the backend stores uploads in
+./storage relative to its working directory). They are copied additively to
+<BackupDir>\storage with robocopy /E: nothing is ever deleted from the copy.
+
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File scripts\backup.ps1 -BackupDir D:\backups\go-monolith -Keep 30
+
+.EXAMPLE
+powershell -ExecutionPolicy Bypass -File scripts\backup.ps1 -ExcludeCache
 #>
 [CmdletBinding()]
 param(
     [string]$BackupDir = "",
     [int]$Keep = 14,
-    [string]$Service = "db"
+    [string]$Service = "db",
+    [switch]$ExcludeCache,
+    [switch]$SkipStorage,
+    [string]$StorageDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,12 +94,19 @@ if (-not $BackupDir) {
 }
 New-Item -ItemType Directory -Force -Path $BackupDir | Out-Null
 
-$backupFile = Join-Path $BackupDir ("{0}_{1}.dump" -f $dbName, (Get-Date -Format "yyyyMMdd_HHmmss"))
+$suffix = ""
+$dumpArgs = @("-Fc", "--no-owner", "--no-privileges")
+if ($ExcludeCache) {
+    $suffix = "_nocache"
+    $dumpArgs += "--exclude-table-data=embedding_cache"
+}
+
+$backupFile = Join-Path $BackupDir ("{0}_{1}{2}.dump" -f $dbName, (Get-Date -Format "yyyyMMdd_HHmmss"), $suffix)
 
 $pgDump = Get-Command pg_dump -ErrorAction SilentlyContinue
 if ($pgDump) {
     Write-Host "Backing up to $backupFile with $($pgDump.Source) ..."
-    & $pgDump.Source -Fc --no-owner --no-privileges $env:DATABASE_URL -f $backupFile
+    & $pgDump.Source @dumpArgs $env:DATABASE_URL -f $backupFile
     if ($LASTEXITCODE -ne 0) {
         throw "pg_dump failed with exit code $LASTEXITCODE."
     }
@@ -95,8 +126,8 @@ if ($pgDump) {
     $stamp = Get-Date -Format "yyyyMMddHHmmss"
     $containerFile = "/tmp/go-monolith-$stamp.dump"
     $containerExit = "/tmp/go-monolith-$stamp.exit"
-    $dumpScript = 'pg_dump -Fc --no-owner --no-privileges -U {0} -d {1} -f {2}; echo $? > {3}' -f `
-        $dbUser, $dbName, $containerFile, $containerExit
+    $dumpScript = 'pg_dump {4} -U {0} -d {1} -f {2}; echo $? > {3}' -f `
+        $dbUser, $dbName, $containerFile, $containerExit, ($dumpArgs -join " ")
 
     Write-Host "No local pg_dump; dumping inside the '$Service' container ..."
     Push-Location $repoRoot
@@ -147,8 +178,35 @@ if ($size -lt 1000) {
 }
 Write-Host "Backup complete: $backupFile ($size bytes)"
 
+# The dump comes first and the copy second on purpose: uploads are only ever
+# added, so every file the dump refers to is already in the copy.
+if (-not $SkipStorage) {
+    if (-not $StorageDir) {
+        $StorageDir = Join-Path $repoRoot "storage"
+    }
+    if (Test-Path -LiteralPath $StorageDir -PathType Container) {
+        $storageCopy = Join-Path $BackupDir "storage"
+        Write-Host "Copying uploaded files $StorageDir -> $storageCopy ..."
+        # /E copies sub-directories and never deletes anything in the target
+        # (no /MIR, no /PURGE). Exit codes below 8 mean success.
+        & robocopy $StorageDir $storageCopy /E /COPY:DAT /DCOPY:T /R:2 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed with exit code $LASTEXITCODE while copying $StorageDir."
+        }
+        $copied = Get-ChildItem -LiteralPath $storageCopy -Recurse -File -ErrorAction SilentlyContinue |
+            Measure-Object -Property Length -Sum
+        Write-Host ("Storage copy complete: {0} files, {1} bytes in {2}" -f $copied.Count, [int64]$copied.Sum, $storageCopy)
+    } else {
+        Write-Warning "Storage directory $StorageDir does not exist; the uploaded files were not copied."
+    }
+}
+
 if ($Keep -gt 0) {
+    # Full and -ExcludeCache dumps are pruned separately: a run of one kind must
+    # never delete the last dump of the other.
+    $namePattern = '^' + [regex]::Escape($dbName) + '_\d{8}_\d{6}' + $suffix + '\.dump$'
     $old = Get-ChildItem -Path $BackupDir -Filter ("{0}_*.dump" -f $dbName) |
+        Where-Object { $_.Name -match $namePattern } |
         Sort-Object LastWriteTime -Descending |
         Select-Object -Skip $Keep
     foreach ($file in $old) {

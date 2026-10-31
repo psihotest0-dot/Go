@@ -64,7 +64,7 @@ func setupAPI(t *testing.T) (*api.API, *db.Database, uuid.UUID) {
 	// Remove only this test's own user. The cleanup runs before the pool is
 	// closed because it is registered later than the one in setupTestDB.
 	t.Cleanup(func() {
-		_, _ = database.Pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", user.ID)
+		dbtest.DeleteUser(t, database.Pool, user.ID)
 	})
 
 	return apiService, database, user.ID
