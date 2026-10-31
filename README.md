@@ -98,7 +98,7 @@ go test -p 1 ./...
 
 ### File Ingestion Pipeline
 The system supports uploading external knowledge documents via the `POST /v1/files` endpoint.
-1. **Upload & Verification**: Enforces a 50MB limit, hashes the file for deduplication, securely saves it to a local `storage/` directory, and writes a tracking record.
+1. **Upload & Verification**: Enforces a 100MB limit (`MAX_UPLOAD_MB` changes it; larger files get `413 file too large`), hashes the file for deduplication, securely saves it to a local `storage/` directory, and writes a tracking record.
 2. **Extraction**: The `internal/ingest` module detects formats strictly by magic bytes via `mimetype`. It includes robust parsers for plain text formats, HTML (tag stripping), PDF (`pdfcpu`), DOCX, and XLSX (`excelize`).
 3. **Background Chunking**: An async River job (`IngestFileWorker`) extracts the raw text, splits it into chunks, generates vector embeddings, and stores them in the `document_chunks` table for retrieval.
 4. **Embedding Status**: `GET /v1/files` (also available as `GET /files`) reports `chunk_count`, `has_embeddings` and `embedding_status` per file. Embeddings live in PostgreSQL via `pgvector` — there is no external vector store. `embedding_status` mirrors the ingest status but maps a `completed` file with zero chunks to `empty`, so the UI can distinguish "indexed" from "ingested but nothing to search".

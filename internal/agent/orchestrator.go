@@ -267,6 +267,13 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
 
+	// A model that only "thought" leaves nothing to show; keep the old answer
+	// rather than replacing it with an empty one.
+	if sanitizeAssistantText(assistantContent) == "" && len(toolCalls) == 0 {
+		slog.Warn("regenerated answer is empty; keeping the previous one", "session_id", req.SessionID)
+		return
+	}
+
 	// Replace the old answer only now that a complete new one exists.
 	if err := o.db.Queries.DeleteLastAssistantMessage(bgCtx, db.DeleteLastAssistantMessageParams{
 		SessionID: req.SessionID,
@@ -285,25 +292,26 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// ProcessChat executes the chat pipeline without HTTP dependencies.
-func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, string, error) {
+// ProcessChat executes the chat pipeline without HTTP dependencies and returns
+// the answer with hidden reasoning and tool markup already removed.
+func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, error) {
 	ctx = context.WithValue(ctx, api.ParsedUserIDKey, userID)
 	ctx = WithCurrentQuery(ctx, req.Content)
 
 	if req.SessionID == "" || req.Content == "" {
-		return "", "", fmt.Errorf("session_id and content are required")
+		return "", fmt.Errorf("session_id and content are required")
 	}
 
 	// See HandleStreamChat: the user turn is persisted up front so that it is
 	// part of the history the prompt is built from.
 	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
 		slog.Error("failed to save user message", "err", err)
-		return "", "", fmt.Errorf("failed to save user message: %w", err)
+		return "", fmt.Errorf("failed to save user message: %w", err)
 	}
 
 	chatCtx, memoryIDs, err := o.loadContext(ctx, userID, req)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 
 	_ = o.writeTrace(ctx, userID, req.SessionID, "search", map[string]interface{}{
@@ -317,7 +325,7 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
 		slog.Error("failed to render system prompt", "err", err)
-		return "", "", fmt.Errorf("failed to render system prompt: %w", err)
+		return "", fmt.Errorf("failed to render system prompt: %w", err)
 	}
 
 	var finalMessages []openai.ChatCompletionMessage
@@ -331,19 +339,20 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 
 	tools := toolDefinitions()
 
-	assistantContent, reasoningContent, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, nil)
+	assistantContent, _, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, nil)
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
+	answer := sanitizeAssistantText(assistantContent)
 
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, answer, toolCalls, chatCtx.Sources)
 
 	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
-		"response_length": len(assistantContent),
+		"response_length": len(answer),
 	})
 
-	return assistantContent, reasoningContent, nil
+	return answer, nil
 }

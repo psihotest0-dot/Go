@@ -21,8 +21,9 @@ import (
 var uploadDir = "storage"
 
 const (
-	// maxUploadBytes caps a single upload request. The body is streamed to disk,
-	// so the cap protects storage and job cost rather than memory.
+	// maxUploadBytes is the default cap on a single upload request (MAX_UPLOAD_MB
+	// overrides it through API.WithUploadLimit). The body is streamed to disk, so
+	// the cap protects storage and job cost rather than memory.
 	maxUploadBytes = 100 << 20
 
 	// uploadDetectionBytes is how much of the file is kept for MIME sniffing.
@@ -77,6 +78,7 @@ func (u *spooledUpload) discard() {
 // copied a second time into storage. Reading the parts directly keeps memory
 // flat regardless of file size, and nothing is left behind on failure.
 func (a *API) spoolUpload(w http.ResponseWriter, r *http.Request, limit int64) (*spooledUpload, error) {
+	setReadDeadline(w, uploadReadTimeout)
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	reader, err := r.MultipartReader()

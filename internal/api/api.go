@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -21,13 +22,40 @@ import (
 	"github.com/sqlc-dev/pqtype"
 )
 
+// maxSnippetRunes caps the source snippet returned with a message.
+const maxSnippetRunes = 600
+
+// truncateRunes cuts s to at most max runes, appending "..." when it cut. Cutting
+// by bytes would split a multi-byte character, which is every Cyrillic letter.
+func truncateRunes(s string, max int) string {
+	if utf8.RuneCountInString(s) <= max {
+		return s
+	}
+	return string([]rune(s)[:max]) + "..."
+}
+
 type API struct {
 	db       *db.Database
 	embedder llm.Embedder
+	// uploadLimit is the upload size cap in bytes; zero means maxUploadBytes.
+	uploadLimit int64
 }
 
 func New(db *db.Database, embedder llm.Embedder) *API {
 	return &API{db: db, embedder: embedder}
+}
+
+// WithUploadLimit sets the largest accepted upload in bytes (MAX_UPLOAD_MB).
+func (a *API) WithUploadLimit(n int64) *API {
+	a.uploadLimit = n
+	return a
+}
+
+func (a *API) uploadLimitBytes() int64 {
+	if a.uploadLimit > 0 {
+		return a.uploadLimit
+	}
+	return maxUploadBytes
 }
 
 func (a *API) HealthzHandler(w http.ResponseWriter, r *http.Request) {
@@ -213,10 +241,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 							sourceType = "ocr"
 							snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
 						}
-						snippet = strings.TrimSpace(snippet)
-						if len(snippet) > 600 {
-							snippet = snippet[:600] + "..."
-						}
+						snippet = truncateRunes(strings.TrimSpace(snippet), maxSnippetRunes)
 
 						normalizedScore := c.Score
 						scoreType := ""

@@ -84,7 +84,7 @@ func (f *streamFilter) Process(chunk string) string {
 			continue
 		}
 
-		if tag == "</tool_call>" || tag == "</function>" || tag == "</parameter>" {
+		if tag == "<tool_call>" || tag == "</tool_call>" || tag == "</function>" || tag == "</parameter>" {
 			f.buffer = f.buffer[endIdx+1:]
 			continue
 		}
@@ -116,6 +116,14 @@ func (f *streamFilter) Flush() string {
 func (f *streamFilter) Reset() {
 	f.inThink = false
 	f.buffer = ""
+}
+
+// sanitizeAssistantText applies the live stream's filter to a complete answer:
+// <think> blocks (an unterminated one included) and tool-call markup are removed,
+// so the stored and Telegram text equals what the web client was shown.
+func sanitizeAssistantText(s string) string {
+	f := &streamFilter{}
+	return strings.TrimSpace(f.Process(s) + f.Flush())
 }
 
 func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (assistantContent string, toolCalls []openai.ToolCall, err error) {
@@ -183,7 +191,11 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 			return assistantContent, toolCalls, err
 		}
 
-		writeSSEError(w, flusher, err.Error())
+		// err can embed the LLM URL or a provider response body; the client gets
+		// a generic message and a request_id to find the details in the log.
+		reqID, _ := r.Context().Value(api.RequestIDKey).(string)
+		slog.Error("generation failed", "error", err, "session_id", sessionID, "request_id", reqID)
+		writeSSEError(w, flusher, streamErrorMessage(reqID))
 		return assistantContent, toolCalls, err
 	}
 
@@ -199,6 +211,14 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	flusher.Flush()
 
 	return assistantContent, toolCalls, nil
+}
+
+// streamErrorMessage is the client-facing text for a failed generation.
+func streamErrorMessage(requestID string) string {
+	if requestID == "" {
+		return "Failed to generate a response. Please try again."
+	}
+	return "Failed to generate a response. Please try again. (request_id: " + requestID + ")"
 }
 
 // writeSSEError sends a terminal SSE error frame and flushes it.

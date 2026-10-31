@@ -7,7 +7,11 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// ocrTimeout bounds a single tesseract run (one image or one rasterised PDF page).
+const ocrTimeout = 2 * time.Minute
 
 // ImageOCRExtractor is an extractor that uses Tesseract OCR to extract text from images via CLI.
 type ImageOCRExtractor struct{}
@@ -29,8 +33,12 @@ func (e *ImageOCRExtractor) Supports(mimeType, ext string) bool {
 
 // Extract extracts text from the image reader using the Tesseract CLI.
 func (e *ImageOCRExtractor) Extract(ctx context.Context, r io.Reader) (string, error) {
+	// A hung tesseract must not block the ingest job until its own hour-long timeout.
+	ctx, cancel := context.WithTimeout(ctx, ocrTimeout)
+	defer cancel()
+
 	// Execute tesseract CLI, reading from stdin and writing to stdout, using bul and eng languages.
-	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", "bul+eng", "--psm", "3", "-c", "preserve_interword_spaces=1")
+	cmd := exec.CommandContext(ctx,"tesseract", "stdin", "stdout", "-l", "bul+eng", "--psm", "3", "-c", "preserve_interword_spaces=1")
 
 	// Pass the image data via standard input.
 	cmd.Stdin = r

@@ -51,6 +51,7 @@ var allowedMemoryStatuses = map[string]struct{}{
 // itself and reports false when the caller must stop.
 func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	SetJSONReadDeadline(w)
 
 	err := json.NewDecoder(r.Body).Decode(dst)
 	if err == nil {

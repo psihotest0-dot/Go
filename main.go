@@ -108,6 +108,11 @@ func enqueueIncompleteDistillations(ctx context.Context, client *river.Client[pg
 }
 
 func run() error {
+	// One signal-aware context for the whole process: Ctrl+C / SIGTERM cancels
+	// it, which stops River and the Telegram bot and starts the HTTP shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("warning: failed to load .env file: %v\n", err)
 	}
@@ -143,8 +148,6 @@ func run() error {
 	if err := prompts.GlobalManager.Preload("chat_system.tmpl"); err != nil {
 		return fmt.Errorf("failed to preload critical templates: %w", err)
 	}
-
-	ctx := context.Background()
 
 	if err := db.RunMigrations(cfg.DatabaseURL); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
@@ -195,7 +198,7 @@ func run() error {
 		}
 	}()
 
-	apiService := api.New(database, embedder)
+	apiService := api.New(database, embedder).WithUploadLimit(cfg.MaxUploadBytes)
 
 	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
 	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database)
@@ -208,7 +211,7 @@ func run() error {
 					logger.Error("telegram bot panicked", slog.Any("error", r))
 				}
 			}()
-			telegram.Run(ctx, cfg.TelegramBotToken, orchestrator, database.Pool)
+			telegram.Run(ctx, cfg.TelegramBotToken, cfg.TelegramAllowedChatIDs, orchestrator, database.Pool)
 		}()
 	}
 
@@ -253,7 +256,7 @@ func run() error {
 
 	userMiddleware := api.UserMiddleware(database.Pool)
 
-	mux.Handle("/", userMiddleware(protectedMux))
+	mux.Handle("/", userMiddleware(api.RecordRoute(protectedMux)))
 
 	c := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:*", "http://127.0.0.1:*"},
@@ -282,28 +285,21 @@ func run() error {
 		AllowCredentials: true,
 	})
 
-	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(c.Handler(mux)))
+	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(c.Handler(api.RecordRoute(mux))))
 
-	addr := ":8080"
-
-	// The chat client connects to localhost:8080, so the port is fixed. Bind
+	// LISTEN_ADDR defaults to loopback only (config.DefaultListenAddr). Bind
 	// before announcing the address so that a port already taken by a stale
 	// instance is reported as a startup error, not as a fake "listening" line.
-	listener, err := net.Listen("tcp", addr)
+	listener, err := net.Listen("tcp", cfg.ListenAddr)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s (is another instance of the server already running? check with: netstat -ano | findstr :8080): %w", addr, err)
+		return fmt.Errorf("failed to listen on %s (is another instance of the server already running, or is LISTEN_ADDR invalid? check the port with: netstat -ano | findstr :8080): %w", cfg.ListenAddr, err)
 	}
+	addr := listener.Addr().String()
 
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           handler,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
-
-	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// No ReadTimeout: it would cut off slow large uploads. Body deadlines are set
+	// per request where the body is read (see api.NewHTTPServer).
+	srv := api.NewHTTPServer(handler)
+	srv.Addr = addr
 
 	srvErr := make(chan error, 1)
 
@@ -317,7 +313,7 @@ func run() error {
 	select {
 	case err := <-srvErr:
 		return fmt.Errorf("server failed: %w", err)
-	case <-shutdownCtx.Done():
+	case <-ctx.Done():
 		logger.Info("shutting down server gracefully...")
 	}
 

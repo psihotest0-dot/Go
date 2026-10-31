@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"runtime/debug"
 	"strconv"
 	"sync"
@@ -17,15 +16,54 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var uuidRegex = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
-
 type key int
 
 const (
 	RequestIDKey key = iota
 	UserIDKey
 	ParsedUserIDKey
+	routeRecorderKey
 )
+
+// maxRequestIDLen bounds a client supplied X-Request-ID, which is echoed in
+// responses and logs.
+const maxRequestIDLen = 64
+
+// unmatchedRouteLabel is the metrics path label for requests that no registered
+// route handled. A raw URL must never become a label value: every distinct URL
+// would create a new time series.
+const unmatchedRouteLabel = "other"
+
+// routeRecorder remembers which mux pattern handled a request. ServeMux sets
+// Request.Pattern on the request it routes, but each middleware layer hands the
+// next one a copy (WithContext), so the outermost layer never sees the value.
+type routeRecorder struct {
+	pattern string
+}
+
+// RecordRoute wraps a ServeMux so that Middleware can label metrics with the
+// matched route pattern. Wrap every mux in the chain; the innermost (most
+// specific) pattern wins and the catch-all "/" is ignored.
+func RecordRoute(mux *http.ServeMux) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mux.ServeHTTP(w, r)
+
+		rec, ok := r.Context().Value(routeRecorderKey).(*routeRecorder)
+		if ok && rec.pattern == "" && r.Pattern != "" && r.Pattern != "/" {
+			rec.pattern = r.Pattern
+		}
+	})
+}
+
+// methodLabel bounds the method label: HTTP accepts any token as a method.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodPatch, http.MethodDelete, http.MethodOptions:
+		return method
+	}
+	return "OTHER"
+}
 
 type responseWriter struct {
 	http.ResponseWriter
@@ -66,13 +104,16 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			reqID := r.Header.Get("X-Request-ID")
-			if reqID == "" {
-				reqID = "unknown"
+			if reqID == "" || len(reqID) > maxRequestIDLen {
+				reqID = uuid.NewString()
 			}
+			w.Header().Set("X-Request-ID", reqID)
 			userID := r.Header.Get("X-User-ID")
 
+			route := &routeRecorder{}
 			ctx := context.WithValue(r.Context(), RequestIDKey, reqID)
 			ctx = context.WithValue(ctx, UserIDKey, userID)
+			ctx = context.WithValue(ctx, routeRecorderKey, route)
 
 			reqLogger := logger.With(
 				slog.String("request_id", reqID),
@@ -89,15 +130,14 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 
 			duration := time.Since(start).Seconds()
 
-			pathForMetrics := r.URL.Path
-			if r.Pattern != "" {
-				pathForMetrics = r.Pattern
-			} else {
-				pathForMetrics = uuidRegex.ReplaceAllString(pathForMetrics, "{id}")
+			pathForMetrics := route.pattern
+			if pathForMetrics == "" {
+				pathForMetrics = unmatchedRouteLabel
 			}
+			method := methodLabel(r.Method)
 
-			metrics.QPS.WithLabelValues(r.Method, pathForMetrics, strconv.Itoa(rw.status)).Inc()
-			metrics.Latency.WithLabelValues(r.Method, pathForMetrics).Observe(duration)
+			metrics.QPS.WithLabelValues(method, pathForMetrics, strconv.Itoa(rw.status)).Inc()
+			metrics.Latency.WithLabelValues(method, pathForMetrics).Observe(duration)
 		})
 	}
 }

@@ -6,7 +6,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+
+	"go-monolith/internal/api"
 )
+
+// ValidateUserMessage is validateUserMessage for callers outside the package
+// (the Telegram bot), so every entry point enforces the same limit.
+func ValidateUserMessage(content string) error {
+	return validateUserMessage(content)
+}
 
 // validateUserMessage rejects turns the prompt budget cannot carry. The same
 // estimateTokens heuristic as the history budget is used, so "too long" means
@@ -22,6 +30,7 @@ func validateUserMessage(content string) error {
 // request itself and reports false when the caller must stop.
 func readJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodyBytes)
+	api.SetJSONReadDeadline(w)
 
 	err := json.NewDecoder(r.Body).Decode(dst)
 	if err == nil {

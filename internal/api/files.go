@@ -142,7 +142,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 
 		// The file is streamed straight into uploadDir while it is hashed, so the
 		// request body never has to fit in memory.
-		upload, err := a.spoolUpload(w, r, maxUploadBytes)
+		upload, err := a.spoolUpload(w, r, a.uploadLimitBytes())
 		if err != nil {
 			var clientErr *clientError
 			if errors.As(err, &clientErr) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -28,8 +29,15 @@ func (o *Orchestrator) saveUserMessage(ctx context.Context, userID uuid.UUID, se
 }
 
 func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) error {
-	contentToSave := content
-	if contentToSave == "" && len(toolCalls) > 0 {
+	// Raw model output can carry <think> blocks and tool markup that the live
+	// stream hides; they must not end up in the history either.
+	contentToSave := sanitizeAssistantText(content)
+	if contentToSave == "" {
+		if len(toolCalls) == 0 {
+			slog.Warn("assistant answer is empty once hidden reasoning is removed; not stored",
+				"session_id", sessionID)
+			return nil
+		}
 		tcBytes, _ := json.Marshal(toolCalls)
 		contentToSave = fmt.Sprintf("ToolCalls: %s", string(tcBytes))
 	}
