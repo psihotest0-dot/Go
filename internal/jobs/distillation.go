@@ -125,7 +125,25 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 	skipCount := 0
 	failCount := 0
 
+	// A cancelled context (shutdown, job timeout) fails every remaining call, so
+	// keep going would log one error per batch and then report a partial success
+	// that River records as completed. Returning the context error instead lets
+	// River run the job again - on a client stop without using up an attempt -
+	// and the batches already stored are skipped (processedChunkIDs).
+	interrupted := func(batchStart int) error {
+		ctxErr := ctx.Err()
+		if ctxErr == nil {
+			return nil
+		}
+		return fmt.Errorf("distillation of file %s interrupted at chunk %d of %d (stored: %d): %w",
+			file.ID, batchStart, len(rawChunks), successCount, ctxErr)
+	}
+
 	for i := 0; i < len(rawChunks); i += batchSize {
+		if err := interrupted(i); err != nil {
+			return err
+		}
+
 		end := i + batchSize
 		if end > len(rawChunks) {
 			end = len(rawChunks)
@@ -172,6 +190,9 @@ Constraints:
 
 		resp, err := w.llmClient.ChatWithJSONSchema(ctx, req, DistillationSchema{})
 		if err != nil {
+			if ctxErr := interrupted(i); ctxErr != nil {
+				return ctxErr
+			}
 			slog.Error("failed to distill batch", "batch_start", i, "error", err)
 			failCount++
 			continue
@@ -198,6 +219,9 @@ Constraints:
 			// Embed the summary
 			vectors, err := w.embedder.EmbedTexts(ctx, []string{result.Summary}, false)
 			if err != nil || len(vectors) == 0 || len(vectors[0]) != config.VectorDimension {
+				if ctxErr := interrupted(i); ctxErr != nil {
+					return ctxErr
+				}
 				slog.Error("failed to embed distillation summary", "batch_start", i, "error", err)
 				failCount++
 				continue
