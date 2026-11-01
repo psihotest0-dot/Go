@@ -38,7 +38,13 @@ type summaryLLM struct {
 
 func (s *summaryLLM) Chat(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
 	s.mu.Lock()
-	s.prompts = append(s.prompts, req.Messages[0].Content)
+	// "The prompt" is everything the model was shown: the instructions (system)
+	// and the conversation to digest (user).
+	var shown []string
+	for _, m := range req.Messages {
+		shown = append(shown, m.Content)
+	}
+	s.prompts = append(s.prompts, strings.Join(shown, "\n"))
 	s.requests = append(s.requests, req)
 	s.background = append(s.background, llm.IsBackground(ctx))
 	gate, failure := s.gate, s.err
@@ -219,6 +225,14 @@ func TestRollingSummaryRunsAsBackgroundWorkWithoutThinking(t *testing.T) {
 	req := e.model.requests[0]
 	assert.Equal(t, map[string]any{"enable_thinking": false}, req.ChatTemplateKwargs)
 	assert.Positive(t, req.MaxTokens)
+
+	// The instructions are a system message and the conversation a user message:
+	// a chat template without a user turn has nothing to answer.
+	require.Len(t, req.Messages, 2)
+	assert.Equal(t, openai.ChatMessageRoleSystem, req.Messages[0].Role)
+	assert.Equal(t, openai.ChatMessageRoleUser, req.Messages[1].Role)
+	assert.NotContains(t, req.Messages[0].Content, "[#", "the conversation is not part of the instructions")
+	assert.Contains(t, req.Messages[1].Content, "[#0]")
 }
 
 func TestRollingSummarySurvivesARestart(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -100,9 +101,16 @@ func run() error {
 	}
 	logger.Info("loaded config", slog.String("db_url", dbURLForLog))
 
-	prompts.Init("prompts")
-	if err := prompts.GlobalManager.Preload("chat_system.tmpl"); err != nil {
-		return fmt.Errorf("failed to preload critical templates: %w", err)
+	prompts.Init(cfg.PromptsDir)
+	if err := prompts.GlobalManager.Preload(prompts.TemplateNames()...); err != nil {
+		return fmt.Errorf("failed to preload prompt templates: %w", err)
+	}
+	if cfg.PromptsDir != "" {
+		promptsDir, absErr := filepath.Abs(cfg.PromptsDir)
+		if absErr != nil {
+			promptsDir = cfg.PromptsDir
+		}
+		logger.Info("prompt templates: files in PROMPTS_DIR override the built-in ones", "dir", promptsDir)
 	}
 
 	if err := db.RunMigrations(cfg.DatabaseURL); err != nil {

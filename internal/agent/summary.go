@@ -163,12 +163,17 @@ func (o *Orchestrator) generateSummary(key string, userID uuid.UUID, sessionID, 
 		return
 	}
 
-	summaryPrompt, err := prompts.GlobalManager.Render("rolling_summary.tmpl", map[string]interface{}{
+	summaryInstructions, err := prompts.GlobalManager.Render("rolling_summary.tmpl", nil)
+	if err != nil {
+		slog.Error("failed to render rolling summary prompt", "err", err)
+		return
+	}
+	summaryInput, err := prompts.GlobalManager.Render("rolling_summary_input.tmpl", map[string]interface{}{
 		"PreviousSummary": previous,
 		"MessagesText":    text,
 	})
 	if err != nil {
-		slog.Error("failed to render rolling summary prompt", "err", err)
+		slog.Error("failed to render rolling summary input", "err", err)
 		return
 	}
 
@@ -177,7 +182,12 @@ func (o *Orchestrator) generateSummary(key string, userID uuid.UUID, sessionID, 
 	defer sumCancel()
 
 	resp, err := o.llmClient.Chat(sumCtx, openai.ChatCompletionRequest{
-		Messages:  []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: summaryPrompt}},
+		// The instructions are a system message and the conversation to digest is
+		// the user message (a chat template needs a user turn to answer).
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: summaryInstructions},
+			{Role: openai.ChatMessageRoleUser, Content: summaryInput},
+		},
 		MaxTokens: maxSummaryAnswerTokens,
 		// The digest is a plain rewrite. Thinking would spend the whole answer
 		// limit on reasoning and leave the summary empty.

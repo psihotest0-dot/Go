@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -66,6 +67,27 @@ func TestSearchDocumentsToolWithoutUserMessageIsAnArgumentError(t *testing.T) {
 	require.Error(t, err)
 	var argErr *toolArgumentError
 	assert.ErrorAs(t, err, &argErr)
+}
+
+func TestSearchLimitIsCappedAtWhatTheSchemaPromises(t *testing.T) {
+	assert.Equal(t, maxToolSearchResults, searchLimitArg(map[string]interface{}{}), "the default is the cap")
+	assert.Equal(t, maxToolSearchResults, searchLimitArg(map[string]interface{}{"limit": float64(20)}))
+	assert.Equal(t, 2, searchLimitArg(map[string]interface{}{"limit": float64(2)}))
+
+	// The model reads the schema, so it must state the cap that is enforced
+	// (it once promised "max 20" while the registry cut at 5).
+	found := 0
+	for _, tool := range toolDefinitions() {
+		properties, _ := tool.Function.Parameters.(map[string]interface{})["properties"].(map[string]interface{})
+		limit, ok := properties["limit"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		found++
+		assert.Contains(t, limit["description"], strconv.Itoa(maxToolSearchResults), tool.Function.Name)
+		assert.NotContains(t, limit["description"], "20", tool.Function.Name)
+	}
+	assert.Equal(t, 2, found, "search_memories and search_documents take a limit")
 }
 
 func TestIntArgAcceptsTheTypesModelsSend(t *testing.T) {

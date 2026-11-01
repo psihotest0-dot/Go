@@ -122,6 +122,17 @@ func intArg(args map[string]interface{}, name string, fallback int) int {
 	return fallback
 }
 
+// maxToolSearchResults is the most results one search tool call returns, so the
+// answer fits the model's context. It is also the default, and the schema in
+// toolDefinitions tells the model so.
+const maxToolSearchResults = 5
+
+// searchLimitArg reads the optional "limit" of a search tool, capped at
+// maxToolSearchResults.
+func searchLimitArg(args map[string]interface{}) int {
+	return min(intArg(args, "limit", maxToolSearchResults), maxToolSearchResults)
+}
+
 // maxFallbackQueryRunes bounds the user message reused as a search query. The
 // message can be a whole paragraph, while the embedding model expects a short
 // query.
@@ -299,11 +310,7 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 		}, nil
 	}
 
-	limit := intArg(args, "limit", 5)
-	// Enforce hard cap of 5 chunks for LLM context limits
-	if limit > 5 {
-		limit = 5
-	}
+	limit := searchLimitArg(args)
 
 	results, err := r.retrieval.SearchMemories(ctx, userID, query, limit)
 	if err != nil {
@@ -340,11 +347,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		}, nil
 	}
 
-	limit := intArg(args, "limit", 5)
-	// Enforce hard cap of 5 chunks for LLM context limits
-	if limit > 5 {
-		limit = 5
-	}
+	limit := searchLimitArg(args)
 
 	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
 	if err != nil {

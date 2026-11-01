@@ -13,15 +13,21 @@ import (
 	"time"
 )
 
+// The *.tmpl files next to this source are the only copy of the templates; they
+// are compiled into the binary.
+//
 //go:embed *.tmpl
 var defaultTemplates embed.FS
 
 // GlobalManager is the globally accessible instance.
 var GlobalManager *TemplateManager
 
-// Init initializes the global template manager.
-func Init(basePath string) {
-	GlobalManager = NewTemplateManager(basePath)
+// Init initializes the global template manager. overrideDir is optional (the
+// PROMPTS_DIR setting): a template found there wins over the embedded one and is
+// reloaded when the file changes, so a prompt can be tuned without a rebuild.
+// An empty overrideDir means the embedded templates only.
+func Init(overrideDir string) {
+	GlobalManager = NewTemplateManager(overrideDir)
 }
 
 // TemplateManager manages loading and rendering of templates.
@@ -32,13 +38,29 @@ type TemplateManager struct {
 	lastModified map[string]time.Time
 }
 
-// NewTemplateManager creates a new TemplateManager.
+// NewTemplateManager creates a new TemplateManager. basePath is the override
+// directory; empty means the embedded templates only.
 func NewTemplateManager(basePath string) *TemplateManager {
 	return &TemplateManager{
 		basePath:     basePath,
 		templates:    make(map[string]*template.Template),
 		lastModified: make(map[string]time.Time),
 	}
+}
+
+// TemplateNames lists every embedded template, sorted by name.
+func TemplateNames() []string {
+	entries, err := defaultTemplates.ReadDir(".")
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".tmpl") {
+			names = append(names, entry.Name())
+		}
+	}
+	return names
 }
 
 // Preload loads the specified templates, returning an error if any fail to load.
@@ -67,13 +89,19 @@ func (tm *TemplateManager) Render(name string, data interface{}) (string, error)
 }
 
 func (tm *TemplateManager) getTemplate(name string) (*template.Template, error) {
-	filename := filepath.Join(tm.basePath, name)
-
-	// Check if file has been modified on disk
-	info, statErr := os.Stat(filename)
-	var modTime time.Time
-	if statErr == nil {
-		modTime = info.ModTime()
+	// Only look on disk when an override directory is configured; filepath.Join
+	// with an empty base would otherwise read from the working directory.
+	var (
+		filename string
+		modTime  time.Time
+		statErr  = os.ErrNotExist
+	)
+	if tm.basePath != "" {
+		filename = filepath.Join(tm.basePath, name)
+		var info os.FileInfo
+		if info, statErr = os.Stat(filename); statErr == nil {
+			modTime = info.ModTime()
+		}
 	}
 
 	tm.mu.RLock()
@@ -111,7 +139,9 @@ func (tm *TemplateManager) getTemplate(name string) (*template.Template, error) 
 		}
 	} else {
 		// Fallback to embedded
-		slog.Debug("Template not found on disk, using embedded fallback", "file", filename)
+		if tm.basePath != "" {
+			slog.Debug("Template not found in the override directory, using the embedded one", "file", filename)
+		}
 		content, loadErr = defaultTemplates.ReadFile(normalizedName)
 	}
 

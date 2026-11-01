@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -26,6 +27,10 @@ func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 		Content: systemContent,
 	}, nil
 }
+
+// limitDescription is what the model is told about the "limit" argument of the
+// search tools. It names the real cap (maxToolSearchResults), not a larger one.
+var limitDescription = fmt.Sprintf("The number of results to return (default and maximum: %d).", maxToolSearchResults)
 
 func toolDefinitions() []openai.Tool {
 	return []openai.Tool{
@@ -64,7 +69,7 @@ func toolDefinitions() []openai.Tool {
 						},
 						"limit": map[string]interface{}{
 							"type":        "integer",
-							"description": "The maximum number of results to return (default 5, max 20).",
+							"description": limitDescription,
 						},
 					},
 					"required": []string{"query"},
@@ -85,7 +90,7 @@ func toolDefinitions() []openai.Tool {
 						},
 						"limit": map[string]interface{}{
 							"type":        "integer",
-							"description": "The maximum number of results to return (default 5, max 20).",
+							"description": limitDescription,
 						},
 					},
 					"required": []string{"query"},

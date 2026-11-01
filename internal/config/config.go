@@ -37,7 +37,10 @@ const (
 type Config struct {
 	ListenAddr     string
 	MaxUploadBytes int64
-	LLMBaseURL     string
+	// PromptsDir is an optional directory of prompt templates that override the
+	// ones compiled into the binary (internal/prompts). Empty means no override.
+	PromptsDir string
+	LLMBaseURL string
 	// LLMModel pins the model name sent to the LLM server. Empty means the
 	// client asks the server which model it serves.
 	LLMModel string
@@ -155,6 +158,7 @@ func Load() *Config {
 	return &Config{
 		ListenAddr:         listenAddr,
 		MaxUploadBytes:     maxUploadMB << 20,
+		PromptsDir:         strings.TrimSpace(os.Getenv("PROMPTS_DIR")),
 		LLMBaseURL:         os.Getenv("LLM_BASE_URL"),
 		LLMModel:           strings.TrimSpace(os.Getenv("LLM_MODEL")),
 		LLMSlots:           positiveIntEnv("LLM_SLOTS", DefaultLLMSlots),
