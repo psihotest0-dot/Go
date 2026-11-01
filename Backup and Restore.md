@@ -8,6 +8,8 @@
 
 ## 1. Създаване на резервно копие (Backup)
 
+**Windows:** ползвайте `scripts\backup.ps1` (не `backup.sh`) — вж. 1.1; стъпките по-долу са за Linux/macOS.
+
 За да създадете резервно копие на текущата база данни, следвайте тези стъпки:
 
 1. Отворете терминал в основната директория на проекта.
@@ -59,10 +61,10 @@ powershell -ExecutionPolicy Bypass -File scripts\backup-task.ps1 -Remove
 
 ```powershell
 # бърз ежедневен бекъп без кеша (≈ 5 MB), напр. от собствена планирана задача
-powershell -ExecutionPolicy Bypass -File scriptsackup.ps1 -ExcludeCache
+powershell -ExecutionPolicy Bypass -File scripts\backup.ps1 -ExcludeCache
 
 # пълен бекъп извън обичайния график (напр. преди ре-ингест или миграция)
-powershell -ExecutionPolicy Bypass -File scriptsackup.ps1
+powershell -ExecutionPolicy Bypass -File scripts\backup.ps1
 ```
 
 Проверете, че работи:
@@ -84,10 +86,10 @@ Get-ScheduledTaskInfo -TaskName "go-monolith-backup"   # LastTaskResult тряб
 
 ```powershell
 # проверка на най-новия дъмп от нощния бекъп (броят редове може да се различава, ако данните са се променили след дъмпа)
-powershell -ExecutionPolicy Bypass -File scriptserify-restore.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify-restore.ps1
 
 # първо нов дъмп, после проверка — броят редове трябва да съвпада напълно
-powershell -ExecutionPolicy Bypass -File scriptserify-restore.ps1 -Fresh
+powershell -ExecutionPolicy Bypass -File scripts\verify-restore.ps1 -Fresh
 ```
 
 Код на изхода: `0` — възстановяването минава и всички таблици съвпадат; `2` — възстановяването минава, но има различия (очаквано, ако дъмпът е по-стар от данните); друго — възстановяването пада. Таблицата `river_leader` е краткотраен „лиз“ на River и не се сравнява.
@@ -125,7 +127,7 @@ docker compose exec -T db rm -f /tmp/verify.dump
 2. Пуснете скрипта с пътя до дъмпа:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scriptsestore.ps1 "$env:USERPROFILE\go-monolith-backups\postgres_20261031_215229.dump"
+powershell -ExecutionPolicy Bypass -File scripts\restore.ps1 "$env:USERPROFILE\go-monolith-backups\postgres_20261031_215229.dump"
 ```
 
 3. Скриптът **ще поиска да напишете името на базата** (по подразбиране тази от `DATABASE_URL`) — възстановяването ЗАМЕНЯ всичко в нея. Друга целева база: `-Database app_test` (с `-Create`, ако още не съществува).
@@ -156,7 +158,7 @@ powershell -ExecutionPolicy Bypass -File scriptsestore.ps1 "$env:USERPROFILE\go
 ## 4. Къде живее базата (Docker том)
 
 * Данните на PostgreSQL са в именувания том `go_pgdata` (`docker-compose.override.yml`). Името е зададено изрично (`name: go_pgdata`), за да не зависи от името на папката: преименувано или наново клонирано репо не започва тихо с празна база.
-* `docker compose up -d` (включително пресъздаване на контейнера при смяна на настройки или образ) **не губи** данните. `docker compose down` също ги пази, а **`docker compose down -v` изтрива тома** — не го пускайте без пресен бекъп (`scriptsackup.ps1`) и без `scriptserify-restore.ps1 -Fresh`.
+* `docker compose up -d` (включително пресъздаване на контейнера при смяна на настройки или образ) **не губи** данните. `docker compose down` също ги пази, а **`docker compose down -v` изтрива тома** — не го пускайте без пресен бекъп (`scripts\backup.ps1`) и без `scripts\verify-restore.ps1 -Fresh`.
 * Не пускайте `docker volume prune`, докато не сте проверили какво ще изтрие: освен празните осиротели тома, Docker би изтрил и всеки том, който в момента няма контейнер.
 * Настройките на PostgreSQL (`shared_buffers`, `work_mem`, `maintenance_work_mem`, `effective_cache_size`, `max_parallel_workers_per_gather`) са в `command:` на услугата `db`; `shm_size: 1gb` е нужен за паралелните заявки. Проверка: `docker compose exec db psql -U postgres -c "SHOW shared_buffers"`.
 * Портовете на `db`, `embedder`, Prometheus и Grafana са публикувани само на `127.0.0.1`. Паролата на Grafana е в `.env` (`GRAFANA_ADMIN_PASSWORD`).
@@ -178,4 +180,6 @@ COMMIT;
 ## Допълнителни бележки
 * **Сигурност:** Пазете `.dump` файловете и `.env` файла на сигурно място, тъй като те съдържат цялата ви лична информация, както и API ключовете ви.
 * **Индекси:** HNSW индексите не се свиват сами след масово изтриване или ре-ингест. `scripts/reindex.sh` прави `REINDEX INDEX CONCURRENTLY` на `idx_memories_embedding`, `idx_document_chunks_raw_embedding` и `idx_document_chunks_concept_embedding` (възстановяването от дъмп също ги изгражда наново, компактни).
+* **Миграции при старт.** Бекендът прилага чакащите миграции сам (`AUTO_MIGRATE=true`, по подразбиране). Преди промяна на схемата върху живата база пуснете `scripts\backup.ps1`, а за пълен контрол сложете `AUTO_MIGRATE=false` в `.env` — тогава старт с чакаща миграция спира с указание, и я прилагате ръчно с `go run ./cmd/migrate` (`-status` само показва какво чака).
+* **Смяна на модела за вектори** изисква да се преизчислят всички вектори: спрете бекенда, направете пълен бекъп и пуснете `go run ./cmd/reembed -force` (спомени и chunks; оригиналните файлове не са нужни). Кешът на векторите е с ключ от модела и текста и губи записите, неползвани 30 дни. За ново извличане на текста от `storage\` ползвайте `go run ./cmd/reingest -list`/`-file`/`-all`.
 * **Автоматизация:** Можете да настроите `cron` задача (за Linux/macOS), която да изпълнява `./scripts/backup.sh` автоматично (например всеки ден), за да имате винаги актуално резервно копие.

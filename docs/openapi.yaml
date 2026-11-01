@@ -1,13 +1,29 @@
 openapi: 3.0.3
 info:
-  title: API API
+  title: Agent API & Memory Backend
   version: 1.0.0
+  description: >-
+    HTTP API of the go-monolith backend. Every route except `/healthz` and
+    `/metrics` is called on behalf of a user named by the `X-User-ID` header (a
+    UUID; the user is created on first use). There is no token: the server
+    listens on 127.0.0.1 unless `LISTEN_ADDR` says otherwise.
+
+
+    Errors of the plain routes are `text/plain` messages. Not found is always
+    404, also for something that belongs to another user, so the API does not
+    reveal which ids exist.
+
+
+    The Flet client keeps a copy of this file in its own `docs/openapi.yaml`;
+    change both together.
 servers:
 - url: http://localhost:8080
+  description: Default LISTEN_ADDR is 127.0.0.1:8080
 paths:
   /healthz:
     get:
       summary: Health check
+      description: Pings the database.
       responses:
         '200':
           description: OK
@@ -16,9 +32,17 @@ paths:
               schema:
                 type: string
                 example: OK
+        '503':
+          description: The database does not answer
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Service Unavailable
   /metrics:
     get:
       summary: Prometheus metrics
+      description: Unauthenticated; keep the server on loopback or behind a firewall.
       responses:
         '200':
           description: OK
@@ -26,12 +50,7 @@ paths:
     post:
       summary: Create a new message
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -45,34 +64,34 @@ paths:
               properties:
                 session_id:
                   type: string
+                  maxLength: 128
                 role:
                   type: string
+                  enum: [user, assistant, system]
                 content:
                   type: string
+                  description: Not blank, at most 32000 bytes.
       responses:
-        '200':
+        '201':
           description: Message created
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Message'
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
     get:
       summary: Get messages for a session
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/UserId'
       - name: session_id
         in: query
         required: false
@@ -98,7 +117,8 @@ paths:
         '200':
           description: >-
             List of messages, oldest first, so the array can be rendered as a
-            transcript from top to bottom.
+            transcript from top to bottom. An answer that used documents or
+            memories carries them in `sources`.
           content:
             application/json:
               schema:
@@ -106,23 +126,18 @@ paths:
                 items:
                   $ref: '#/components/schemas/Message'
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
   /memories:
     post:
       summary: Create a new memory
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -131,11 +146,14 @@ paths:
               type: object
               required:
               - content
+              - importance
               properties:
                 content:
                   type: string
+                  description: Not blank, at most 32000 bytes.
                 status:
                   type: string
+                  enum: [candidate, active, superseded]
                   default: candidate
                 source_message_id:
                   type: string
@@ -143,6 +161,9 @@ paths:
                   format: uuid
                 importance:
                   type: integer
+                  minimum: 1
+                  maximum: 10
+                  description: 1 = trivia, 10 = critical.
                 metadata:
                   type: object
                   nullable: true
@@ -154,31 +175,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/Memory'
         '409':
-          description: Memory already exists
+          description: A memory with the same content exists; it is returned
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Memory'
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
     get:
-      summary: Get all memories for a user
+      summary: Get the memories of a user
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
+      - $ref: '#/components/parameters/UserId'
+      - name: status
+        in: query
+        required: false
+        description: Only memories in this status.
         schema:
           type: string
-          format: uuid
+          enum: [candidate, active, superseded]
       responses:
         '200':
-          description: List of memories
+          description: List of memories (blank ones are left out)
           content:
             application/json:
               schema:
@@ -186,27 +211,20 @@ paths:
                 items:
                   $ref: '#/components/schemas/Memory'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
   /memories/{id}:
     put:
       summary: Update a memory
+      description: >-
+        `metadata` is kept as it is when the request does not send it, so an
+        edit of the text does not lose fields such as `fact_key`.
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/MemoryId'
+      - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -222,8 +240,11 @@ paths:
                   type: string
                 status:
                   type: string
+                  enum: [candidate, active, superseded]
                 importance:
                   type: integer
+                  minimum: 1
+                  maximum: 10
                 metadata:
                   type: object
                   nullable: true
@@ -235,53 +256,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/Memory'
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          description: Another memory of the user already has this content
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
     delete:
       summary: Delete a memory
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/MemoryId'
+      - $ref: '#/components/parameters/UserId'
       responses:
         '204':
           description: Memory deleted
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
   /v1/files:
     description: >-
-      Files are served under /v1/files and, because the bundled chat UI calls
-      the unprefixed paths, under /files as well. Both prefixes behave
-      identically.
+      Files are served under `/v1/files` and, because the chat clients call the
+      unprefixed paths, under `/files` as well. Both prefixes behave
+      identically (the `/files...` paths below are references to these).
     post:
       summary: Upload a file
+      description: >-
+        The file is stored and an ingest job is queued; the answer does not wait
+        for it. The size limit is 100 MB (`MAX_UPLOAD_MB`). Any file is
+        accepted here: the format is judged by the ingest job (MIME type sniffed
+        from the first bytes, or the file extension), and a file it cannot read
+        ends in status `failed`.
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -302,28 +322,33 @@ paths:
               schema:
                 $ref: '#/components/schemas/IngestedFile'
         '409':
-          description: File with same hash already exists
+          description: A file with the same hash already exists; it is returned
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/IngestedFile'
         '400':
-          description: Bad request
+          description: Not a multipart form, no `file` part, or an empty file
+          content:
+            text/plain:
+              schema:
+                type: string
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          description: The file is larger than the upload limit (`file too large`)
+          content:
+            text/plain:
+              schema:
+                type: string
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
     get:
       summary: Get all files for a user
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/UserId'
       responses:
         '200':
           description: >-
@@ -336,27 +361,19 @@ paths:
                 items:
                   $ref: '#/components/schemas/IngestedFile'
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
+  /files:
+    $ref: '#/paths/~1v1~1files'
   /v1/files/{id}:
     get:
       summary: Get a single file with its embedding status
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/UserId'
       responses:
         '200':
           description: File metadata including chunk_count and embedding_status
@@ -365,63 +382,45 @@ paths:
               schema:
                 $ref: '#/components/schemas/IngestedFile'
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
-        '403':
-          description: Forbidden
+          $ref: '#/components/responses/Unauthorized'
         '404':
-          description: Not found
+          $ref: '#/components/responses/NotFound'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
     delete:
       summary: Delete a file
+      description: >-
+        A soft delete: the file no longer shows in lists or in search (and the
+        same file can be uploaded again), but its row, its chunks and the stored
+        original are kept, so a mistake can be undone.
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/UserId'
       responses:
         '204':
           description: File deleted
         '400':
-          description: Bad request
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Unauthorized
-        '403':
-          description: Forbidden
+          $ref: '#/components/responses/Unauthorized'
         '404':
-          description: Not found
+          $ref: '#/components/responses/NotFound'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
+  /files/{id}:
+    $ref: '#/paths/~1v1~1files~1%7Bid%7D'
   /v1/files/{id}/category:
     patch:
       summary: Override the category of a file
       parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/FileId'
+      - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -432,7 +431,7 @@ paths:
               - category
               properties:
                 category:
-                  type: string
+                  $ref: '#/components/schemas/FileCategory'
       responses:
         '200':
           description: Updated file metadata
@@ -441,27 +440,54 @@ paths:
               schema:
                 $ref: '#/components/schemas/IngestedFile'
         '400':
-          description: Bad request
+          description: Invalid id, or a category that is not in the list
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: 'category must be one of: medicine, economics, programming, law, psychology, literature, general'
         '401':
-          description: Unauthorized
-        '403':
-          description: Forbidden
+          $ref: '#/components/responses/Unauthorized'
         '404':
-          description: Not found
+          $ref: '#/components/responses/NotFound'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
+  /files/{id}/category:
+    $ref: '#/paths/~1v1~1files~1%7Bid%7D~1category'
   /chat/stream:
     post:
       summary: Stream chat messages
+      description: >-
+        Stores the user message, answers with a Server-Sent Events stream and
+        stores the finished answer. Frames, in the order they arrive:
+
+
+        * `event: sources` - once, first: a JSON array of `SourceInfo` (the
+          documents and memories the answer is based on; `[]` when none);
+
+        * `data: {"reasoning_content": "..."}` - the model's reasoning, only when
+          `LLM_ENABLE_THINKING` is on (clients normally hide it);
+
+        * `data: {"content": "..."}` - pieces of the answer, with `<think>`
+          blocks and tool-call markup already removed;
+
+        * `event: proposals` - once, before the end, only when the model asked
+          to save a rule or a memory: a JSON array of `Proposal`. Nothing is
+          saved until the user decides (`/proposals/{id}/approve`);
+
+        * `data: [DONE]` - the end of a good answer;
+
+        * `event: error` with `{"error": "..."}` - the generation failed; no
+          `[DONE]` follows and the answer is not stored. The message carries a
+          `request_id` to find the details in the log.
+
+
+        Failures before the first frame are ordinary HTTP errors. A question
+        that got no answer stays in the history; `/chat/regenerate` answers it.
       parameters:
-      - name: X-User-ID
-        in: header
-        required: true
-        schema:
-          type: string
-          format: uuid
+      - $ref: '#/components/parameters/UserId'
       requestBody:
         required: true
         content:
@@ -476,22 +502,267 @@ paths:
                   type: string
                 content:
                   type: string
+                  description: At most 4000 tokens (estimated).
       responses:
         '200':
-          description: Stream of responses
+          description: Stream of events
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: sources
+                data: [{"chunk_id":"…","file_name":"book.pdf","content_snippet":"…","score":87.5,"score_type":"rrf","source_type":"text"}]
+
+                data: {"content":"The Danube "}
+
+                data: {"content":"is the border."}
+
+                data: [DONE]
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /chat/regenerate:
+    post:
+      summary: Regenerate the last answer of a session
+      description: >-
+        Answers the last user message of the session again, with the same
+        stream as `/chat/stream` (see there for the frames). The previous
+        answer is left out of the prompt, and replaced only when the new one is
+        complete; if the generation fails the old answer stays.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - session_id
+              properties:
+                session_id:
+                  type: string
+      responses:
+        '200':
+          description: Stream of events, as for `/chat/stream`
           content:
             text/event-stream:
               schema:
                 type: string
         '400':
-          description: Bad request
+          description: No `session_id`, or the session has no user message to answer
+          content:
+            text/plain:
+              schema:
+                type: string
         '401':
-          description: Unauthorized
+          $ref: '#/components/responses/Unauthorized'
         '405':
-          description: Method not allowed
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
         '500':
-          description: Internal server error
+          $ref: '#/components/responses/InternalError'
+  /proposals:
+    get:
+      summary: Proposals that wait for the user
+      description: >-
+        What the model asked to save (a global rule or a memory) is kept here
+        until the user approves or rejects it. A proposal that nobody answers
+        expires after 14 days.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: Open proposals of the user
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Proposal'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /proposals/{id}/approve:
+    post:
+      summary: Apply a proposal
+      description: Saves the rule or the memory the proposal describes.
+      parameters:
+      - $ref: '#/components/parameters/ProposalId'
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The proposal, now `approved`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The proposal has been decided already
+          content:
+            text/plain:
+              schema:
+                type: string
+        '422':
+          description: >-
+            The user has 20 global rules already. The proposal stays open;
+            delete a rule (`DELETE /rules/{id}`) and approve again.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /proposals/{id}/reject:
+    post:
+      summary: Drop a proposal
+      parameters:
+      - $ref: '#/components/parameters/ProposalId'
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The proposal, now `rejected`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proposal'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The proposal has been decided already
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rules:
+    get:
+      summary: Global rules of the user
+      description: >-
+        Rules are placed first in the system prompt of every session. They are
+        created only by approving a proposal, never directly.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The rules, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Rule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /rules/{id}:
+    delete:
+      summary: Delete a global rule
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 1
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: Rule deleted
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
+  parameters:
+    UserId:
+      name: X-User-ID
+      in: header
+      required: true
+      description: >-
+        The user. A missing header is 401; a value that is not a UUID is 400.
+      schema:
+        type: string
+        format: uuid
+    MemoryId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    FileId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProposalId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+  responses:
+    BadRequest:
+      description: Bad request (a malformed id or body, or a value out of range)
+      content:
+        text/plain:
+          schema:
+            type: string
+    Unauthorized:
+      description: The `X-User-ID` header is missing
+      content:
+        text/plain:
+          schema:
+            type: string
+    NotFound:
+      description: >-
+        There is no such item for this user. The same answer is given for an id
+        that belongs to someone else.
+      content:
+        text/plain:
+          schema:
+            type: string
+    MethodNotAllowed:
+      description: Method not allowed
+    PayloadTooLarge:
+      description: The request body is larger than 1 MiB
+      content:
+        text/plain:
+          schema:
+            type: string
+    InternalError:
+      description: Internal server error (the cause is in the server log)
   schemas:
     Message:
       type: object
@@ -506,12 +777,42 @@ components:
           type: string
         role:
           type: string
+          enum: [user, assistant, system]
         content:
           type: string
         created_at:
           type: string
           format: date-time
           nullable: true
+        sources:
+          type: array
+          description: >-
+            Only on answers that used documents or memories: what they were
+            based on, as it was shown while streaming.
+          items:
+            $ref: '#/components/schemas/SourceInfo'
+    SourceInfo:
+      type: object
+      properties:
+        chunk_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        page_number:
+          type: integer
+        content_snippet:
+          type: string
+        score:
+          type: number
+          format: double
+        score_type:
+          type: string
+          description: How `score` is measured; absent on some sources.
+          enum: [rrf, cosine]
+        source_type:
+          type: string
+          enum: [text, ocr, concept, memory]
     Memory:
       type: object
       properties:
@@ -525,24 +826,18 @@ components:
           type: string
         status:
           type: string
-        embedding:
-          type: array
-          items:
-            type: number
-            format: float
-        embedding_model:
-          type: string
+          enum: [candidate, active, superseded]
         source_message_id:
           type: string
           format: uuid
           nullable: true
         importance:
           type: integer
+          minimum: 1
+          maximum: 10
         metadata:
           type: object
           nullable: true
-        content_hash:
-          type: string
         created_at:
           type: string
           format: date-time
@@ -555,6 +850,16 @@ components:
           type: string
           format: date-time
           nullable: true
+    FileCategory:
+      type: string
+      enum:
+        - medicine
+        - economics
+        - programming
+        - law
+        - psychology
+        - literature
+        - general
     IngestedFile:
       type: object
       properties:
@@ -566,16 +871,15 @@ components:
           format: uuid
         file_name:
           type: string
-        file_hash:
-          type: string
         mime_type:
           type: string
         file_size:
           type: integer
+          format: int64
         status:
           type: string
-        local_path:
-          type: string
+          description: State of the ingest job.
+          enum: [pending, processing, completed, failed]
         created_at:
           type: string
           format: date-time
@@ -585,9 +889,10 @@ components:
           format: date-time
           nullable: true
         category:
-          type: string
+          $ref: '#/components/schemas/FileCategory'
         manual_override:
           type: boolean
+          description: True when the category was set by the user, not chosen automatically.
         chunk_count:
           type: integer
           format: int64
@@ -611,3 +916,62 @@ components:
             - completed
             - failed
             - empty
+    Proposal:
+      type: object
+      description: >-
+        Something the model asked to save, waiting for the user. A rule has
+        `key` and `value`; a memory has `content` and `importance`.
+      properties:
+        id:
+          type: integer
+          format: int64
+        kind:
+          type: string
+          enum: [save_global_rule, create_memory]
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        session_id:
+          type: string
+        summary:
+          type: string
+          description: One line, ready to show to the user (in Bulgarian).
+        key:
+          type: string
+          description: Rules only (at most 64 characters).
+        value:
+          type: string
+          description: Rules only (at most 400 characters).
+        content:
+          type: string
+          description: Memories only (at most 1000 characters).
+        importance:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Memories only.
+        external_sources:
+          type: array
+          description: >-
+            The tools whose results (web pages, documents) were read in the turn
+            that made the proposal. The text may have come from there, so the
+            user should check it; empty means only the conversation.
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+    Rule:
+      type: object
+      properties:
+        id:
+          type: integer
+        key:
+          type: string
+        value:
+          type: string
+        enabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
