@@ -1,4 +1,8 @@
-FROM python:3.11-slim
+# Pinned by digest (Python 3.11.18): a rebuild months later starts from the same
+# base the versions in requirements.txt were tested on. To move to a newer base,
+# replace the digest (`docker buildx imagetools inspect python:3.11-slim`), run the
+# tests in the new image and check that requirements.txt still installs.
+FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 WORKDIR /app
 
@@ -8,15 +12,18 @@ ENV HF_HOME=/opt/hf-cache
 
 COPY requirements.txt .
 
+# Every version is pinned in requirements.txt, torch is the CPU-only build.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Create an initial script to download the model at build time
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small', device='cpu')"
-
 # The service does not need root: it listens on a high port and only reads the
-# model and the code.
+# model and the code. The cache directory is created for the service user before
+# the download, so the 500 MB of the model are not copied again by a chown.
 RUN useradd --system --uid 10001 --no-create-home embedder
-RUN chown -R embedder:embedder /opt/hf-cache
+RUN mkdir -p /opt/hf-cache && chown embedder:embedder /opt/hf-cache
+USER embedder
+
+# Download the model at build time
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small', device='cpu')"
 
 COPY . .
 
@@ -25,8 +32,6 @@ ENV CUDA_VISIBLE_DEVICES="-1"
 # The model is in the image: never go to the internet at start (the hub check would
 # slow the start down and fail without a connection).
 ENV HF_HUB_OFFLINE=1
-
-USER embedder
 
 # The model takes a while to load, hence the long start period. /health answers
 # 503 until it is loaded.

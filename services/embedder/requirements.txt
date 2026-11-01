@@ -1,6 +1,74 @@
-fastapi>=0.100.0
-uvicorn>=0.23.0
-sentence-transformers>=2.2.2
-pydantic>=2.0.0
-pytest>=7.4.0
-httpx>=0.24.1
+# Every package is pinned, the transitive ones too, to the versions the embedder
+# was built and tested with (Python 3.11): two builds made months apart give the
+# same service. The file is a `pip freeze` of the tested image, minus the CUDA
+# packages.
+#
+# torch comes from the CPU-only index (the "+cpu" version). The wheel PyPI serves
+# for Linux brings about 5 GB of CUDA libraries (nvidia-*, triton) that this
+# service never uses: it runs with CUDA_VISIBLE_DEVICES=-1. Because the pin names
+# a local version ("+cpu"), pip can only take it from this index.
+#
+# To update: in a clean Python 3.11 virtualenv install the "Direct" packages below
+# without versions (`--extra-index-url` as here, `torch+cpu`), run
+# `python -m pytest test_main.py`, write the new `pip freeze` here (without
+# CUDA packages), and rebuild the image. services/embedder/main.py must keep
+# MODEL_NAME and DIMENSION equal to config.DefaultEmbedModel / VectorDimension.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Direct
+fastapi==0.162.0
+uvicorn==0.54.0
+sentence-transformers==6.2.0
+pydantic==2.14.2
+pytest==9.2.0
+httpx==0.28.1
+torch==2.15.0+cpu
+
+# Transitive
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.10.23
+click==8.5.0
+cloudpickle==3.1.2
+filelock==4.2.6
+fsspec==2026.9.0
+h11==0.16.0
+hf-xet==1.8.0
+httpcore==1.0.9
+httpcore2==2.16.0
+httpx2==2.16.0
+huggingface_hub==2.4.0
+idna==3.20
+iniconfig==2.3.1
+Jinja2==3.1.6
+joblib==1.6.0
+markdown-it-py==4.2.0
+MarkupSafe==3.0.4
+mdurl==0.1.2
+mpmath==1.3.0
+narwhals==2.28.0
+networkx==3.6.1
+numpy==2.4.6
+opentelemetry-api==1.45.2
+packaging==26.3
+pluggy==1.7.0
+pydantic_core==2.50.2
+Pygments==2.21.0
+PyYAML==6.0.3
+regex==2026.9.29
+rich==15.0.0
+safetensors==0.8.0
+scikit-learn==1.9.1
+scipy==1.17.1
+shellingham==1.5.4
+starlette==1.10.0
+sympy==1.14.0
+threadpoolctl==3.7.0
+tokenizers==0.23.3
+tqdm==4.70.1
+transformers==5.22.1
+truststore==0.10.5
+typer==0.27.3
+typing_extensions==4.16.0
+typing-inspection==0.4.4
