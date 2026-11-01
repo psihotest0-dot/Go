@@ -52,7 +52,7 @@ func run() error {
 	}
 	defer database.Close()
 
-	embedder := llm.NewHTTPEmbedder(database)
+	embedder := llm.NewHTTPEmbedder(database).WithTimeout(cfg.EmbedderTimeout)
 	// Refuse to write vectors of the wrong model before touching a single row.
 	if err := embedder.CheckModel(ctx); err != nil {
 		return err

@@ -1,38 +1,61 @@
 import os
-import sys
 import threading
+from contextlib import asynccontextmanager
+from typing import List
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
-from typing import List
 from sentence_transformers import SentenceTransformer
 
-# Model configuration
+# Model configuration. MODEL_NAME and DIMENSION must match config.DefaultEmbedModel
+# and config.VectorDimension in the Go backend, which refuses any other answer.
 MODEL_NAME = "intfloat/multilingual-e5-small"
+DIMENSION = 384
 MAX_BATCH_SIZE = 64
 
 # Force CPU only
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-app = FastAPI(title="CPU Embedding Service")
-
 # Global variable to hold the model
 model = None
 _model_lock = threading.Lock()
 
-@app.on_event("startup")
+
+def embedding_dimension(loaded_model) -> int:
+    """Size of the vectors of a loaded model.
+
+    sentence-transformers renamed the method; the old name still works but warns
+    (FutureWarning), so the new one is preferred when it exists.
+    """
+    getter = getattr(loaded_model, "get_embedding_dimension", None)
+    if getter is None:
+        getter = loaded_model.get_sentence_embedding_dimension
+    return getter()
+
+
 def load_model():
     global model
     print(f"Loading model {MODEL_NAME} on CPU...")
     # Initialize the model on CPU
-    model = SentenceTransformer(MODEL_NAME, device="cpu")
+    loaded = SentenceTransformer(MODEL_NAME, device="cpu")
 
-    dim = model.get_sentence_embedding_dimension()
+    dim = embedding_dimension(loaded)
     print(f"Model loaded. Dimension: {dim}")
 
-    # Check if dimension is exactly 384
-    if dim != 384:
-        print(f"Error: Model dimension is {dim}, expected 384. Exiting.")
-        sys.exit(1)
+    # The database columns are vector(384): a different size can never be stored.
+    if dim != DIMENSION:
+        raise RuntimeError(f"Model dimension is {dim}, expected {DIMENSION}.")
+    model = loaded
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    load_model()
+    yield
+
+
+app = FastAPI(title="CPU Embedding Service", lifespan=lifespan)
+
 
 class EmbedRequest(BaseModel):
     texts: List[str] = Field(
@@ -51,7 +74,10 @@ class EmbedRequest(BaseModel):
 @app.post("/embed")
 def embed(request: EmbedRequest):
     if not request.texts:
-        return {"model": MODEL_NAME, "dim": 384, "vectors": []}
+        return {"model": MODEL_NAME, "dim": DIMENSION, "vectors": []}
+
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
 
     # Process in batches
     vectors = []
@@ -67,7 +93,7 @@ def embed(request: EmbedRequest):
 
     return {
         "model": MODEL_NAME,
-        "dim": 384,
+        "dim": DIMENSION,
         "vectors": vectors
     }
 
@@ -79,5 +105,5 @@ def health():
     return {
         "status": "ok",
         "model": MODEL_NAME,
-        "dim": model.get_sentence_embedding_dimension()
+        "dim": embedding_dimension(model)
     }

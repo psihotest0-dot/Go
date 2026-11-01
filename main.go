@@ -129,7 +129,7 @@ func run() error {
 	defer database.Close()
 
 	llmClient := llm.NewLemonadeClient()
-	embedder := llm.NewHTTPEmbedder(database)
+	embedder := llm.NewHTTPEmbedder(database).WithTimeout(cfg.EmbedderTimeout)
 	// A wrong model is loud here and refused in EmbedTexts; an embedder that is
 	// merely not up yet is not fatal, the backend retries on every request.
 	if err := embedder.CheckModel(ctx); err != nil {

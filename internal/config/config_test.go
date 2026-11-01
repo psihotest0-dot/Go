@@ -3,6 +3,7 @@ package config
 import (
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestLoadTelegramAllowedChatIDs(t *testing.T) {
@@ -176,6 +177,28 @@ func TestLoadLLMEnableThinking(t *testing.T) {
 			t.Setenv("LLM_ENABLE_THINKING", tt.env)
 			if got := Load().LLMEnableThinking; got != tt.want {
 				t.Fatalf("LLMEnableThinking = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadEmbedderTimeout(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want time.Duration
+	}{
+		{name: "default", env: "", want: 30 * time.Second},
+		{name: "explicit", env: "90", want: 90 * time.Second},
+		{name: "zero is ignored", env: "0", want: 30 * time.Second},
+		{name: "negative is ignored", env: "-5", want: 30 * time.Second},
+		{name: "not a number is ignored", env: "soon", want: 30 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("EMBEDDER_TIMEOUT_SECONDS", tt.env)
+			if got := Load().EmbedderTimeout; got != tt.want {
+				t.Fatalf("EmbedderTimeout = %v, want %v", got, tt.want)
 			}
 		})
 	}

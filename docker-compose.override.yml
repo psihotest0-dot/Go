@@ -12,6 +12,14 @@ services:
       # Docker makes a new anonymous volume per container and the old one is
       # orphaned - see ACTION_PLAN.md, task 17.)
       - pgdata:/var/lib/postgresql/data
+    # `docker compose ps` / `up --wait` report the database as healthy only when it
+    # accepts connections. (The embedder has its own HEALTHCHECK in its Dockerfile.)
+    # Nothing in this file depends on either: the backend runs on the host.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     # Docker's default /dev/shm is 64 MB, too little for parallel queries with
     # work_mem = 32MB; they fail with "could not resize shared memory segment".
     shm_size: 1gb

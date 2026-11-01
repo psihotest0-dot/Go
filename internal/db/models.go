@@ -37,10 +37,11 @@ type DocumentChunk struct {
 }
 
 type EmbeddingCache struct {
-	ID          uuid.UUID       `json:"id"`
-	ContentHash string          `json:"content_hash"`
-	Embedding   pgvector.Vector `json:"embedding"`
-	CreatedAt   sql.NullTime    `json:"created_at"`
+	ID             uuid.UUID       `json:"id"`
+	ContentHash    string          `json:"content_hash"`
+	Embedding      pgvector.Vector `json:"embedding"`
+	CreatedAt      sql.NullTime    `json:"created_at"`
+	LastAccessedAt time.Time       `json:"last_accessed_at"`
 }
 
 type GlobalRule struct {

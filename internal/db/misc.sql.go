@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/sqlc-dev/pqtype"
 )
@@ -48,7 +49,7 @@ func (q *Queries) CreateAgentTrace(ctx context.Context, arg CreateAgentTracePara
 const createEmbeddingCache = `-- name: CreateEmbeddingCache :one
 INSERT INTO embedding_cache (content_hash, embedding)
 VALUES ($1, $2)
-RETURNING id, content_hash, embedding, created_at
+RETURNING id, content_hash, embedding, created_at, last_accessed_at
 `
 
 type CreateEmbeddingCacheParams struct {
@@ -64,14 +65,36 @@ func (q *Queries) CreateEmbeddingCache(ctx context.Context, arg CreateEmbeddingC
 		&i.ContentHash,
 		&i.Embedding,
 		&i.CreatedAt,
+		&i.LastAccessedAt,
 	)
 	return i, err
+}
+
+const createEmbeddingCacheBatch = `-- name: CreateEmbeddingCacheBatch :exec
+INSERT INTO embedding_cache (content_hash, embedding)
+SELECT h.content_hash, e.embedding::vector(384)
+FROM unnest($1::text[]) WITH ORDINALITY AS h(content_hash, n)
+JOIN unnest($2::text[]) WITH ORDINALITY AS e(embedding, n) ON e.n = h.n
+ON CONFLICT (content_hash) DO NOTHING
+`
+
+type CreateEmbeddingCacheBatchParams struct {
+	Hashes     []string `json:"hashes"`
+	Embeddings []string `json:"embeddings"`
+}
+
+// One write for a whole batch; an entry that exists already (a concurrent
+// writer, or the same text twice) is left as it is. The vectors come as their
+// text form ("[0.1,0.2,...]").
+func (q *Queries) CreateEmbeddingCacheBatch(ctx context.Context, arg CreateEmbeddingCacheBatchParams) error {
+	_, err := q.db.ExecContext(ctx, createEmbeddingCacheBatch, pq.Array(arg.Hashes), pq.Array(arg.Embeddings))
+	return err
 }
 
 const deleteOldEmbeddingCache = `-- name: DeleteOldEmbeddingCache :execrows
 WITH deleted AS (
     SELECT id FROM embedding_cache
-    WHERE created_at < NOW() - INTERVAL '30 days'
+    WHERE last_accessed_at < NOW() - INTERVAL '30 days'
     LIMIT 1000
     FOR UPDATE SKIP LOCKED
 )
@@ -88,7 +111,7 @@ func (q *Queries) DeleteOldEmbeddingCache(ctx context.Context) (int64, error) {
 }
 
 const getEmbeddingCacheByHash = `-- name: GetEmbeddingCacheByHash :one
-SELECT id, content_hash, embedding, created_at FROM embedding_cache WHERE content_hash = $1
+SELECT id, content_hash, embedding, created_at, last_accessed_at FROM embedding_cache WHERE content_hash = $1
 `
 
 func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash string) (EmbeddingCache, error) {
@@ -99,8 +122,42 @@ func (q *Queries) GetEmbeddingCacheByHash(ctx context.Context, contentHash strin
 		&i.ContentHash,
 		&i.Embedding,
 		&i.CreatedAt,
+		&i.LastAccessedAt,
 	)
 	return i, err
+}
+
+const getEmbeddingCacheByHashes = `-- name: GetEmbeddingCacheByHashes :many
+SELECT content_hash, embedding FROM embedding_cache WHERE content_hash = ANY($1::text[])
+`
+
+type GetEmbeddingCacheByHashesRow struct {
+	ContentHash string          `json:"content_hash"`
+	Embedding   pgvector.Vector `json:"embedding"`
+}
+
+// One read for a whole batch of texts.
+func (q *Queries) GetEmbeddingCacheByHashes(ctx context.Context, hashes []string) ([]GetEmbeddingCacheByHashesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getEmbeddingCacheByHashes, pq.Array(hashes))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetEmbeddingCacheByHashesRow{}
+	for rows.Next() {
+		var i GetEmbeddingCacheByHashesRow
+		if err := rows.Scan(&i.ContentHash, &i.Embedding); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getGlobalRules = `-- name: GetGlobalRules :many
@@ -145,5 +202,19 @@ type SaveGlobalRuleParams struct {
 
 func (q *Queries) SaveGlobalRule(ctx context.Context, arg SaveGlobalRuleParams) error {
 	_, err := q.db.ExecContext(ctx, saveGlobalRule, arg.UserID, arg.Key, arg.Value)
+	return err
+}
+
+const touchEmbeddingCache = `-- name: TouchEmbeddingCache :exec
+UPDATE embedding_cache
+SET last_accessed_at = now()
+WHERE content_hash = ANY($1::text[])
+  AND last_accessed_at < now() - INTERVAL '1 day'
+`
+
+// Renews the last use of entries that were used again. Entries touched within the
+// last day are skipped, so a hot entry costs one write a day, not one per use.
+func (q *Queries) TouchEmbeddingCache(ctx context.Context, hashes []string) error {
+	_, err := q.db.ExecContext(ctx, touchEmbeddingCache, pq.Array(hashes))
 	return err
 }

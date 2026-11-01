@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -33,6 +34,10 @@ const (
 	DefaultLLMSlots           = 2
 	DefaultLLMBackgroundSlots = 1
 )
+
+// DefaultEmbedderTimeout is the limit of one call to the embedding service. A
+// batch of 64 texts takes 1-3 s on an idle CPU, so this is a wide margin.
+const DefaultEmbedderTimeout = 30 * time.Second
 
 type Config struct {
 	ListenAddr     string
@@ -63,6 +68,9 @@ type Config struct {
 	// is on by default because that is what the model does when asked nothing.
 	LLMEnableThinking bool
 	EmbedderURL       string
+	// EmbedderTimeout bounds one call to the embedding service, with its cache reads
+	// and writes (EMBEDDER_TIMEOUT_SECONDS).
+	EmbedderTimeout time.Duration
 	EmbedModel        string
 	DatabaseURL       string
 	TelegramBotToken  string
@@ -173,6 +181,7 @@ func Load() *Config {
 		LLMEnableThinking:      boolEnv("LLM_ENABLE_THINKING", true),
 
 		EmbedderURL:        os.Getenv("EMBEDDER_URL"),
+		EmbedderTimeout:    time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
 		EmbedModel:         os.Getenv("EMBED_MODEL"),
 		DatabaseURL:        dbURL,
 		TelegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),

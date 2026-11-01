@@ -13,7 +13,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/lib/pq"
 	pgvector "github.com/pgvector/pgvector-go"
 
 	"go-monolith/internal/config"
@@ -30,40 +29,36 @@ type HTTPEmbedder struct {
 	baseURL string
 	db      *db.Database
 	client  *http.Client
+	// timeout bounds one EmbedTexts call as a whole: the cache read, the request to
+	// the embedding service and the cache write.
+	timeout time.Duration
 }
 
+// NewHTTPEmbedder creates the client of the embedding service named by
+// EMBEDDER_URL. It does not wait for the service: a service that is not up yet
+// is reported by CheckModel (the callers log it) and by the first EmbedTexts.
 func NewHTTPEmbedder(database *db.Database) *HTTPEmbedder {
 	baseURL := os.Getenv("EMBEDDER_URL")
 	if baseURL == "" {
 		baseURL = "http://localhost:8000"
 	}
 
-	client := &http.Client{}
-
-	// Wait for embedder to be ready with retries
-	ready := false
-	for i := 0; i < 3; i++ {
-		resp, err := client.Get(baseURL + "/health")
-		if err == nil && resp.StatusCode == 200 {
-			resp.Body.Close()
-			ready = true
-			break
-		}
-		if resp != nil {
-			resp.Body.Close()
-		}
-		time.Sleep(1 * time.Second)
-	}
-
-	if !ready {
-		// Just log or ignore, the actual EmbedTexts will fail later if it's still down.
-	}
-
 	return &HTTPEmbedder{
 		baseURL: baseURL,
 		db:      database,
-		client:  client,
+		client:  &http.Client{},
+		timeout: config.DefaultEmbedderTimeout,
 	}
+}
+
+// WithTimeout sets the limit of one EmbedTexts call (config.EmbedderTimeout). A
+// slow CPU, or the OCR and the model running at the same time, can need more
+// than the default for a batch of long texts.
+func (c *HTTPEmbedder) WithTimeout(d time.Duration) *HTTPEmbedder {
+	if d > 0 {
+		c.timeout = d
+	}
+	return c
 }
 
 type EmbedRequest struct {
@@ -136,7 +131,7 @@ func checkEmbedResponse(r EmbedResponse) error {
 }
 
 func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	start := time.Now()
@@ -148,91 +143,130 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery b
 		return nil, nil
 	}
 
-	prefixedTexts := make([]string, len(texts))
 	prefix := "passage: "
 	if isQuery {
 		prefix = "query: "
 	}
+	prefixed := make([]string, len(texts))
+	keys := make([]string, len(texts))
 	for i, text := range texts {
-		prefixedTexts[i] = prefix + text
+		prefixed[i] = prefix + text
+		keys[i] = cacheKey(config.DefaultEmbedModel, prefixed[i])
 	}
 
-	resultVectors := make([][]float32, len(texts))
-	textsToEmbed := []string{}
-	indicesToEmbed := []int{}
+	// 1. One cache read for the whole batch.
+	cached := c.readCache(ctx, keys)
 
-	// 1. Check cache for each prefixed text
-	for i, text := range prefixedTexts {
-		h := cacheKey(config.DefaultEmbedModel, text)
-		cached, err := c.db.Queries.GetEmbeddingCacheByHash(ctx, h)
-		if err == nil {
-			// Found in cache
+	resultVectors := make([][]float32, len(texts))
+	// The same text twice in a batch is embedded once.
+	var missKeys, missTexts []string
+	missIndices := map[string][]int{}
+	var hitKeys []string
+	for i, key := range keys {
+		if vec, ok := cached[key]; ok {
 			metrics.CacheHits.Inc()
-			resultVectors[i] = cached.Embedding.Slice()
+			resultVectors[i] = vec
+			hitKeys = append(hitKeys, key)
 			continue
 		}
 
 		metrics.CacheMisses.Inc()
-		textsToEmbed = append(textsToEmbed, text)
-		indicesToEmbed = append(indicesToEmbed, i)
+		if _, seen := missIndices[key]; !seen {
+			missKeys = append(missKeys, key)
+			missTexts = append(missTexts, prefixed[i])
+		}
+		missIndices[key] = append(missIndices[key], i)
 	}
 
-	// 2. Request embeddings for non-cached texts
-	if len(textsToEmbed) > 0 {
-		reqBody := EmbedRequest{Texts: textsToEmbed}
-		jsonBody, _ := json.Marshal(reqBody)
+	// Entries that were used again stay in the cache (see the cleaning by last use).
+	if len(hitKeys) > 0 {
+		if err := c.db.Queries.TouchEmbeddingCache(ctx, hitKeys); err != nil {
+			slog.Warn("Failed to renew embedding cache entries", "error", err)
+		}
+	}
 
-		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/embed", bytes.NewBuffer(jsonBody))
+	// 2. Request embeddings for the texts that are not cached.
+	if len(missTexts) > 0 {
+		vectors, err := c.embedRemote(ctx, missTexts)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := c.client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("embed request failed: %w", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("embed service returned status %d", resp.StatusCode)
-		}
-
-		var embedResp EmbedResponse
-		if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
-			return nil, fmt.Errorf("failed to decode response: %w", err)
-		}
-		if err := checkEmbedResponse(embedResp); err != nil {
-			// Neither the vectors nor the cache may take anything from this answer.
 			return nil, err
 		}
 
-		if len(embedResp.Vectors) != len(textsToEmbed) {
-			return nil, fmt.Errorf("returned vectors count %d does not match request %d", len(embedResp.Vectors), len(textsToEmbed))
-		}
-
-		// Update cache and result
-		for i, vec := range embedResp.Vectors {
-			origIdx := indicesToEmbed[i]
-			resultVectors[origIdx] = vec
-
-			h := cacheKey(config.DefaultEmbedModel, textsToEmbed[i])
-			pgVec := pgvector.NewVector(vec)
-
-			_, cacheErr := c.db.Queries.CreateEmbeddingCache(ctx, db.CreateEmbeddingCacheParams{
-				ContentHash: h,
-				Embedding:   pgVec,
-			})
-			if cacheErr != nil {
-				var pqErr *pq.Error
-				if errors.As(cacheErr, &pqErr) && pqErr.Code == "23505" {
-					// Ignore unique constraint violation from concurrent writes
-				} else {
-					slog.Warn("Failed to cache embedding", "error", cacheErr, "hash", h)
-				}
+		for i, key := range missKeys {
+			for _, idx := range missIndices[key] {
+				resultVectors[idx] = vectors[i]
 			}
 		}
+		c.writeCache(ctx, missKeys, vectors)
 	}
 
 	return resultVectors, nil
+}
+
+// readCache looks the keys up in one query. A failing cache is a slower answer,
+// not a failed one, so an error is logged and every text counts as a miss.
+func (c *HTTPEmbedder) readCache(ctx context.Context, keys []string) map[string][]float32 {
+	rows, err := c.db.Queries.GetEmbeddingCacheByHashes(ctx, keys)
+	if err != nil {
+		slog.Warn("Failed to read the embedding cache", "error", err)
+		return nil
+	}
+
+	found := make(map[string][]float32, len(rows))
+	for _, row := range rows {
+		found[row.ContentHash] = row.Embedding.Slice()
+	}
+	return found
+}
+
+// embedRemote asks the embedding service for the vectors of texts and refuses an
+// answer from the wrong model.
+func (c *HTTPEmbedder) embedRemote(ctx context.Context, texts []string) ([][]float32, error) {
+	jsonBody, _ := json.Marshal(EmbedRequest{Texts: texts})
+
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/embed", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("embed request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("embed service returned status %d", resp.StatusCode)
+	}
+
+	var embedResp EmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	if err := checkEmbedResponse(embedResp); err != nil {
+		// Neither the vectors nor the cache may take anything from this answer.
+		return nil, err
+	}
+
+	if len(embedResp.Vectors) != len(texts) {
+		return nil, fmt.Errorf("returned vectors count %d does not match request %d", len(embedResp.Vectors), len(texts))
+	}
+	return embedResp.Vectors, nil
+}
+
+// writeCache stores the new vectors with one statement. The answer is already in
+// hand, so a failure is only logged.
+func (c *HTTPEmbedder) writeCache(ctx context.Context, keys []string, vectors [][]float32) {
+	literals := make([]string, len(vectors))
+	for i, vec := range vectors {
+		literals[i] = pgvector.NewVector(vec).String()
+	}
+
+	if err := c.db.Queries.CreateEmbeddingCacheBatch(ctx, db.CreateEmbeddingCacheBatchParams{
+		Hashes:     keys,
+		Embeddings: literals,
+	}); err != nil {
+		slog.Warn("Failed to cache embeddings", "error", err, "entries", len(keys))
+	}
 }

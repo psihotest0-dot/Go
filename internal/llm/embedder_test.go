@@ -37,6 +37,13 @@ type fakeEmbedderService struct {
 	embeds  atomic.Int32 // calls to /embed
 	status  int          // /health status, 200 when 0
 	vectors int          // how many vectors to answer with, len(texts) when 0
+	// valueFor, when set, gives the value of the vector of each text (the text as
+	// received, with its "passage: " prefix) instead of value.
+	valueFor func(text string) float32
+	// vectorLen, when set, is the length of the vectors sent, whatever dim says.
+	vectorLen int
+	// lastTexts are the texts of the latest /embed request.
+	lastTexts []string
 }
 
 func newFakeEmbedderService(t *testing.T) *fakeEmbedderService {
@@ -54,13 +61,21 @@ func newFakeEmbedderService(t *testing.T) *fakeEmbedderService {
 		f.embeds.Add(1)
 		var req EmbedRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		f.lastTexts = req.Texts
 		n := len(req.Texts)
 		if f.vectors != 0 {
 			n = f.vectors
 		}
 		vectors := make([][]float32, n)
 		for i := range vectors {
-			vectors[i] = constVector(f.value)
+			value := f.value
+			if f.valueFor != nil && i < len(req.Texts) {
+				value = f.valueFor(req.Texts[i])
+			}
+			vectors[i] = constVector(value)
+			if f.vectorLen != 0 {
+				vectors[i] = vectors[i][:f.vectorLen]
+			}
 		}
 		_ = json.NewEncoder(w).Encode(EmbedResponse{Model: f.model, Dim: f.dim, Vectors: vectors})
 	})
@@ -69,11 +84,23 @@ func newFakeEmbedderService(t *testing.T) *fakeEmbedderService {
 	return f
 }
 
-func newTestEmbedder(t *testing.T, f *fakeEmbedderService) (*HTTPEmbedder, *db.Database) {
+// connectTestDB opens the disposable test database with every migration applied.
+// db.RunMigrations resolves "migrations" relative to the working directory, so
+// the test moves to the module root first.
+func connectTestDB(t *testing.T) *db.Database {
 	t.Helper()
-	database, err := db.Connect(context.Background(), dbtest.ConnString(t))
+	connString := dbtest.ConnString(t)
+	t.Chdir("../..")
+	require.NoError(t, db.RunMigrations(connString))
+	database, err := db.Connect(context.Background(), connString)
 	require.NoError(t, err)
 	t.Cleanup(database.Close)
+	return database
+}
+
+func newTestEmbedder(t *testing.T, f *fakeEmbedderService) (*HTTPEmbedder, *db.Database) {
+	t.Helper()
+	database := connectTestDB(t)
 	t.Setenv("EMBEDDER_URL", f.URL)
 	return NewHTTPEmbedder(database), database
 }
