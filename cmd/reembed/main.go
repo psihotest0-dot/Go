@@ -75,7 +75,7 @@ func run() error {
 			return err
 		}
 	}
-	logger.Info("re-embedding complete; rebuild the vector indexes (REINDEX INDEX CONCURRENTLY idx_document_chunks_embedding, idx_memories_embedding)")
+	logger.Info("re-embedding complete; rebuild the vector indexes (REINDEX INDEX CONCURRENTLY idx_document_chunks_raw_embedding, idx_document_chunks_concept_embedding, idx_memories_embedding)")
 	return nil
 }
 

@@ -482,6 +482,7 @@ WITH nearest AS (
     SELECT c.id, c.file_id, c.user_id, c.chunk_type, c.text, c.metadata,
            (c.embedding <=> $4) AS distance
     FROM document_chunks c
+    WHERE c.chunk_type = 'concept_summary'
     ORDER BY c.embedding <=> $4
     LIMIT $5
 )
@@ -518,15 +519,18 @@ type SearchConceptChunksRow struct {
 // a transaction that has set hnsw.ef_search (db.Database.WithSearchSettings);
 // without it the HNSW scan returns 40 rows, not the candidates asked for.
 //
-// Vector side: "ORDER BY embedding <=> $v LIMIT n" on the bare table is the one
-// form the HNSW index can serve (5 ms on 250 000 chunks, against 20 s for a scan
-// that filtered and ranked every row). pgvector 0.5 applies WHERE clauses after
-// the index scan, so the user, status and type filters are applied to the n
-// nearest rows, not before them; n is large enough that this does not matter for
-// one user's library.
+// Vector side: "WHERE chunk_type = '...' ORDER BY embedding <=> $v LIMIT n" is the
+// form the HNSW indexes serve (5 ms on 250 000 chunks, against 20 s for a scan
+// that filtered and ranked every row). There is one partial index per chunk type
+// (migration 00022), and the WHERE clause must repeat its predicate for the
+// planner to use it. pgvector 0.5 applies every other filter (user, file status)
+// after the index scan, to the n nearest rows of that type; n is large enough
+// that this does not matter for one user's library.
 //
-// Text side: PostgreSQL full-text search over to_tsvector('simple', text), served
-// by a GIN index (migration 00020). ts_query is built by the caller
+// Text side: PostgreSQL full-text search over the raw chunks, to_tsvector('simple',
+// text), served by a GIN index (migration 00020). Concept summaries are left out,
+// as on the vector side: they have their own search, and their text (English, and
+// matching the English themes that widen the query) is not the book's. ts_query is built by the caller
 // (retrieval.lexicalQuery): the significant words of the question as prefixes
 // ("столиц:* & българ:*"), which stands in for Bulgarian stemming. An empty
 // ts_query matches nothing. Trigram matching (word_similarity with "<%") was
@@ -572,6 +576,7 @@ WITH nearest AS (
     SELECT c.id, c.file_id, c.user_id, c.chunk_type,
            (c.embedding <=> $5) AS distance
     FROM document_chunks c
+    WHERE c.chunk_type = 'raw_text'
     ORDER BY c.embedding <=> $5
     LIMIT $6
 ),
@@ -605,6 +610,7 @@ text_matches AS (
     WHERE c.user_id = $3
       AND f.status = 'completed'
       AND f.deleted_at IS NULL
+      AND c.chunk_type = 'raw_text'
       AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF($8::text, ''))
 ),
 chunk_text_search AS (
@@ -707,6 +713,7 @@ JOIN ingested_files f ON c.file_id = f.id
 WHERE c.user_id = $2
   AND f.status = 'completed'
   AND f.deleted_at IS NULL
+  AND c.chunk_type = 'raw_text'
   AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF($1::text, ''))
 ORDER BY score DESC
 LIMIT $3

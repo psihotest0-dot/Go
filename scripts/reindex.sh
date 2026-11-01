@@ -6,9 +6,9 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
     exit 1
 fi
 
-# Both HNSW indexes. Run it after bulk deletes or a big re-ingest: HNSW does not
+# The HNSW indexes. Run it after bulk deletes or a big re-ingest: HNSW does not
 # shrink on its own (99 MB for 216 rows was seen on 2026-10-31).
-for index in idx_memories_embedding idx_document_chunks_embedding; do
+for index in idx_memories_embedding idx_document_chunks_raw_embedding idx_document_chunks_concept_embedding; do
     echo "Reindexing $index concurrently..."
     psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "REINDEX INDEX CONCURRENTLY $index;"
 done

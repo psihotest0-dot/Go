@@ -28,13 +28,23 @@ const (
 	// categoryBoostAmount is the score bonus given to chunks of the boosted category.
 	categoryBoostAmount = 0.08
 
-	// chunkMaxDistance and conceptMaxDistance are the cosine distances beyond
-	// which a chunk or a concept summary is not a vector match. They are the
-	// values the queries always had; E5 puts even unrelated texts at a distance
-	// of 0.2-0.3, so they filter little, and task 32 of ACTION_PLAN.md
-	// replaces them with values measured on the real library.
-	chunkMaxDistance   = 0.45
-	conceptMaxDistance = 0.40
+	// chunkMaxDistance is the cosine distance beyond which a raw chunk is not a
+	// vector match for the question. Measured on 2026-11-01 with E5-small on four
+	// books (5 076 chunks): the nearest relevant chunk of 20 questions was at
+	// 0.100-0.174 (median 0.129), the nearest chunk of 8 questions that the books
+	// do not cover at 0.168-0.236 (median 0.205). 0.20 keeps every relevant one with
+	// a margin and drops the four farthest unrelated questions; the old 0.45
+	// dropped nothing. Re-measure after a change of model.
+	chunkMaxDistance = 0.20
+
+	// conceptMaxDistance is the same for concept summaries. They are written in
+	// English, so a Bulgarian question is farther from them: the nearest summary
+	// was at 0.167-0.250 (median 0.200) for the 20 questions the books cover and at
+	// 0.236-0.298 (median 0.270) for the 8 they do not. The two ranges overlap a
+	// little, so 0.25 cannot separate them cleanly, but it keeps every summary of a
+	// covered question and drops most of the rest; the old 0.40 returned three
+	// unrelated summaries for a question about the capital of France.
+	conceptMaxDistance = 0.25
 
 	// conceptMatchCount is how many concept summaries a search may return.
 	conceptMatchCount = 3

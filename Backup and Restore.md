@@ -177,5 +177,5 @@ COMMIT;
 
 ## Допълнителни бележки
 * **Сигурност:** Пазете `.dump` файловете и `.env` файла на сигурно място, тъй като те съдържат цялата ви лична информация, както и API ключовете ви.
-* **Индекси:** HNSW индексите не се свиват сами след масово изтриване или ре-ингест. `scripts/reindex.sh` прави `REINDEX INDEX CONCURRENTLY` на `idx_memories_embedding` и `idx_document_chunks_embedding` (възстановяването от дъмп също ги изгражда наново, компактни).
+* **Индекси:** HNSW индексите не се свиват сами след масово изтриване или ре-ингест. `scripts/reindex.sh` прави `REINDEX INDEX CONCURRENTLY` на `idx_memories_embedding`, `idx_document_chunks_raw_embedding` и `idx_document_chunks_concept_embedding` (възстановяването от дъмп също ги изгражда наново, компактни).
 * **Автоматизация:** Можете да настроите `cron` задача (за Linux/macOS), която да изпълнява `./scripts/backup.sh` автоматично (например всеки ден), за да имате винаги актуално резервно копие.

@@ -225,3 +225,25 @@ func TestConceptSearch(t *testing.T) {
 	assert.NotEqual(t, raw, rows[0].ID)
 	assert.InDelta(t, 0.0, rows[0].Distance, 1e-6)
 }
+
+// A concept summary is not part of the book: the model writes it in English and
+// its themes are English, so a text search that included it returned English
+// summaries as if they were passages of the book. Only raw chunks match by text.
+func TestTextSearchIgnoresConceptSummaries(t *testing.T) {
+	e := newSearchEnv(t)
+	file := e.file(t, e.user.ID, "geo.txt", "completed", "general")
+	raw := e.chunk(t, e.user.ID, file, 0, danube, "raw_text", unitVec(1))
+	e.chunk(t, e.user.ID, file, 1, "Резюме: река Дунав, граница между държави", "concept_summary", unitVec(2))
+
+	rows := e.hybrid(t, "река:* & дуна:*", unitVec(0), 5)
+	require.Len(t, rows, 1, "the summary matched by text")
+	assert.Equal(t, raw, rows[0].ID)
+
+	var textOnly []db.SearchTextChunksRow
+	require.NoError(t, e.d.WithSearchSettings(e.ctx, func(q *db.Queries) (err error) {
+		textOnly, err = q.SearchTextChunks(e.ctx, db.SearchTextChunksParams{UserID: e.user.ID, TsQuery: "река:* & дуна:*", MatchCount: 5})
+		return err
+	}))
+	require.Len(t, textOnly, 1)
+	assert.Equal(t, raw, textOnly[0].ID)
+}
