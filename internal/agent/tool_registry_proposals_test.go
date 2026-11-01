@@ -188,7 +188,7 @@ func TestRuleProposedAfterReadingAWebPageCarriesItsOrigin(t *testing.T) {
 	assert.Empty(t, e.rules(t))
 }
 
-func TestCreateMemoryIsDirectWhenTheTurnReadNothingExternal(t *testing.T) {
+func TestCreateMemoryIsSavedAtOnce(t *testing.T) {
 	e := newToolEnv(t)
 	ctx, turn := e.turn("sess", false)
 
@@ -199,41 +199,46 @@ func TestCreateMemoryIsDirectWhenTheTurnReadNothingExternal(t *testing.T) {
 	mems := e.memories(t)
 	require.Len(t, mems, 1)
 	assert.Equal(t, "Казва се Иван", mems[0].Content)
+	assert.Equal(t, "active", mems[0].Status)
 	assert.EqualValues(t, 8, mems[0].Importance)
-	assert.Empty(t, e.pending(t))
+	assert.False(t, mems[0].Metadata.Valid, "a plain remark of the user needs no mark")
+	assert.Empty(t, e.pending(t), "what to remember is the model's call: no confirmation")
 	assert.Empty(t, turn.madeProposals())
 }
 
-func TestCreateMemoryBecomesAProposalAfterExternalText(t *testing.T) {
+// A memory is the model's decision even after it read something, but it is marked
+// with where the text came from, so a doubtful one can be found and removed.
+func TestCreateMemoryAfterExternalTextIsSavedAndMarked(t *testing.T) {
 	tests := []struct {
 		name  string
-		setup func(t *testing.T, e *toolEnv) (context.Context, *turnState)
+		setup func(t *testing.T, e *toolEnv) context.Context
 		want  string
 	}{
 		{
 			name: "web search",
-			setup: func(t *testing.T, e *toolEnv) (context.Context, *turnState) {
-				ctx, turn := e.turn("s", false)
+			setup: func(t *testing.T, e *toolEnv) context.Context {
+				ctx, _ := e.turn("s", false)
 				_, err := e.reg.ExecuteTool(ctx, "web_search", map[string]interface{}{"query": "времето"})
 				require.NoError(t, err)
-				return ctx, turn
+				return ctx
 			},
 			want: sourceWebSearch,
 		},
 		{
 			name: "web fetch",
-			setup: func(t *testing.T, e *toolEnv) (context.Context, *turnState) {
-				ctx, turn := e.turn("s", false)
+			setup: func(t *testing.T, e *toolEnv) context.Context {
+				ctx, _ := e.turn("s", false)
 				_, err := e.reg.ExecuteTool(ctx, "web_fetch", map[string]interface{}{"url": "https://example.com"})
 				require.NoError(t, err)
-				return ctx, turn
+				return ctx
 			},
 			want: sourceWebFetch,
 		},
 		{
 			name: "document text already in the prompt",
-			setup: func(t *testing.T, e *toolEnv) (context.Context, *turnState) {
-				return e.turn("s", true)
+			setup: func(t *testing.T, e *toolEnv) context.Context {
+				ctx, _ := e.turn("s", true)
+				return ctx
 			},
 			want: sourceRetrievedDocuments,
 		},
@@ -241,22 +246,28 @@ func TestCreateMemoryBecomesAProposalAfterExternalText(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newToolEnv(t)
-			ctx, turn := tc.setup(t, e)
+			ctx := tc.setup(t, e)
 
 			res, err := e.reg.ExecuteTool(ctx, "create_memory", map[string]interface{}{"content": "Обича дурианът"})
 			require.NoError(t, err)
 
-			assert.Equal(t, "pending_approval", resultMap(t, res)["status"])
-			assert.Empty(t, e.memories(t), "text from outside must not write memory by itself")
-			pending := e.pending(t)
-			require.Len(t, pending, 1)
-			assert.Equal(t, []string{tc.want}, pending[0].ExternalSources)
-			assert.Len(t, turn.madeProposals(), 1)
+			assert.Equal(t, "success", resultMap(t, res)["status"])
+			assert.Empty(t, e.pending(t))
+			mems := e.memories(t)
+			require.Len(t, mems, 1)
+			var metadata struct {
+				Source          string   `json:"source"`
+				ExternalSources []string `json:"external_sources"`
+			}
+			require.True(t, mems[0].Metadata.Valid)
+			require.NoError(t, json.Unmarshal(mems[0].Metadata.RawMessage, &metadata))
+			assert.Equal(t, "chat_tool", metadata.Source)
+			assert.Equal(t, []string{tc.want}, metadata.ExternalSources)
 		})
 	}
 }
 
-func TestSearchingDocumentsWithoutResultsDoesNotGateMemory(t *testing.T) {
+func TestSearchingDocumentsWithoutResultsLeavesTheTurnClean(t *testing.T) {
 	e := newToolEnv(t)
 	ctx, turn := e.turn("s", false)
 
@@ -267,7 +278,9 @@ func TestSearchingDocumentsWithoutResultsDoesNotGateMemory(t *testing.T) {
 
 	_, err = e.reg.ExecuteTool(ctx, "create_memory", map[string]interface{}{"content": "Плаща наем в началото на месеца"})
 	require.NoError(t, err)
-	assert.Len(t, e.memories(t), 1)
+	mems := e.memories(t)
+	require.Len(t, mems, 1)
+	assert.False(t, mems[0].Metadata.Valid)
 }
 
 func TestFailedWebCallDoesNotMarkTheTurn(t *testing.T) {

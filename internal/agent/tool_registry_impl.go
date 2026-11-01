@@ -253,9 +253,11 @@ func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID 
 	return pendingApprovalResult(p), nil
 }
 
-// executeCreateMemory saves the fact when the turn read nothing but the
-// conversation. After the turn read a web page or a document, the same call is a
-// proposal: that text could have told the model what to remember.
+// executeCreateMemory saves the fact. What to remember is the model's decision,
+// as it is for a person in a conversation; unlike a global rule it is not held
+// for the user's confirmation. When the turn had read a web page or a document,
+// the memory is marked with where that text came from, so a doubtful one can be
+// found and removed later.
 func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
 	content, ok := stringArg(args, "content")
 	if !ok {
@@ -271,18 +273,14 @@ func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uu
 		return nil, proposalError("create_memory", err)
 	}
 
-	turn := turnFrom(ctx)
-	if external := turn.externalSources(); len(external) > 0 {
-		p, err := r.proposals.ProposeMemory(ctx, userID, turn.session(), memory.Content, memory.Importance, external)
-		if err != nil {
-			return nil, proposalError("create_memory", err)
-		}
-		turn.addProposal(p)
-		return pendingApprovalResult(p), nil
+	var metadata pqtype.NullRawMessage
+	if external := turnFrom(ctx).externalSources(); len(external) > 0 {
+		raw, _ := json.Marshal(map[string]any{"source": "chat_tool", "external_sources": external})
+		metadata = pqtype.NullRawMessage{RawMessage: raw, Valid: true}
 	}
 
 	// Always save as "active" to avoid conflicts, letting the background worker consolidate.
-	mem, err := r.retrieval.CreateMemory(ctx, userID, memory.Content, memory.Importance, "active", pqtype.NullRawMessage{})
+	mem, err := r.retrieval.CreateMemory(ctx, userID, memory.Content, memory.Importance, "active", metadata)
 	if err != nil {
 		if errors.Is(err, db.ErrMemoryExists) {
 			// If it's the exact same content, we can just return success
