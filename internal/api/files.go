@@ -199,9 +199,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		if riverClient != nil {
 			_, jobErr := riverClient.Insert(r.Context(), jobs.IngestFileArgs{
 				FileID: ingestedFile.ID,
-			}, &river.InsertOpts{
-				Queue: "ingest",
-			})
+			}, jobs.IngestInsertOpts())
 			if jobErr != nil {
 				// Without the job nothing would ever process the file, and a row
 				// left in "pending" would make the client wait forever. Roll the

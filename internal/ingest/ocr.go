@@ -94,7 +94,12 @@ func (e *ImageOCRExtractor) Extract(ctx context.Context, r io.Reader) (string, e
 		return "", err
 	}
 	defer release()
-	return runTesseract(ctx, r, false)
+	text, err := runTesseract(ctx, r, false)
+	if err != nil {
+		return "", err
+	}
+	// A scanned page is full of words broken at the end of a line.
+	return JoinHyphenated(text), nil
 }
 
 // runTesseract reads an image from r and returns the recognised text. With

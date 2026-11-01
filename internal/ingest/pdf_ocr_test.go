@@ -327,3 +327,36 @@ func TestPDFEncrypted(t *testing.T) {
 		}
 	})
 }
+
+// Words broken at the end of a line are stitched back together over the whole
+// document: a break on one page is settled by a word on another, and the pages
+// saved for a resumed run stay as they were recognised.
+func TestPDFTextHasItsBrokenWordsJoined(t *testing.T) {
+	pages := map[int]string{
+		1: "Железни свързани гривни на арестувани или зат-\nворници. Той беше по-\nголям от брат си.",
+		2: "Затворници и белетристи-\nчески жанрове. Вятър от северо-\nзапад. Северо-запад е посока.",
+	}
+	dir := t.TempDir()
+	ctx := WithCheckpointDir(context.Background(), dir)
+	t.Setenv("OCR_CONCURRENCY", "4")
+	e := pdfWithFakeOCR(t, 2, func(ctx context.Context, page int) (string, error) { return pages[page], nil })
+
+	text, err := e.Extract(ctx, bytes.NewReader(blankPagesPDF(2)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"арестувани или затворници.", "по-голям от брат си", "белетристически жанрове", "от северо-запад."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q is missing from:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "-\n") {
+		t.Errorf("a break was left:\n%s", text)
+	}
+
+	// The checkpoint keeps the raw recognised text.
+	saved, ok := newPageStore(dir, e.dpi).Get(1)
+	if !ok || !strings.Contains(saved, "зат-\nворници") {
+		t.Errorf("the saved page was changed: %q", saved)
+	}
+}

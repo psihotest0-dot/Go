@@ -281,7 +281,10 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 		}
 	}
 
-	text := strings.TrimSpace(finalBuf.String())
+	// Words broken across lines (native text and OCR alike) are stitched together
+	// over the whole document, so that the rest of the book can settle the
+	// ambiguous breaks. The pages saved in the checkpoint stay as recognised.
+	text := strings.TrimSpace(JoinHyphenated(finalBuf.String()))
 	if text == "" {
 		// An empty result must not look like a successful ingest with zero chunks.
 		if ocr.lastErr != nil {
