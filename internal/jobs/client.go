@@ -28,7 +28,7 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 		Queues: map[string]river.QueueConfig{
 			"default":      {MaxWorkers: 1},
 			"ingest":       {MaxWorkers: 1},
-			"distillation": {MaxWorkers: 2},
+			"distillation": {MaxWorkers: 1}, // background LLM work gets one model slot anyway
 			"memory":       {MaxWorkers: 1},
 			"maintenance":  {MaxWorkers: 1},
 		},

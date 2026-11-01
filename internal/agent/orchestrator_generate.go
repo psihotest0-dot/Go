@@ -23,9 +23,6 @@ const (
 	// from the model, so this also caps the slice built while merging deltas.
 	maxToolCalls = 8
 
-	// maxToolResultChars caps what one tool result contributes to the prompt.
-	maxToolResultChars = 8192
-
 	// maxLoggedToolArgsRunes caps how much of an unusable argument payload is
 	// written to the log. The full value is model output and can be huge, while
 	// a short prefix is enough to see what went wrong.
@@ -43,6 +40,45 @@ type streamResult struct {
 	toolCalls []openai.ToolCall
 }
 
+// chatRequest builds one chat completion request with the answer limit and the
+// thinking switch of the configured budgets.
+func (o *Orchestrator) chatRequest(messages []openai.ChatCompletionMessage, tools []openai.Tool) openai.ChatCompletionRequest {
+	limits := o.limits()
+	return openai.ChatCompletionRequest{
+		Messages:  messages,
+		Stream:    true,
+		Tools:     tools,
+		MaxTokens: limits.answerTokens,
+		// Sent explicitly so the behaviour does not depend on how the model
+		// server was started.
+		ChatTemplateKwargs: map[string]any{"enable_thinking": limits.thinking},
+	}
+}
+
+// logUsage reports what a finished completion really cost next to the estimate
+// the budgets were planned with, so the estimates can be checked and the
+// budgets tuned. usage is nil when the server did not report any.
+func (o *Orchestrator) logUsage(req openai.ChatCompletionRequest, usage *openai.Usage, finishReason openai.FinishReason) {
+	limits := o.limits()
+	attrs := []any{
+		"estimated_prompt_tokens", estimatePromptTokens(req.Messages, req.Tools),
+		"context_tokens", limits.contextTokens,
+		"answer_budget", limits.answerTokens,
+		"finish_reason", string(finishReason),
+	}
+	if usage != nil {
+		attrs = append(attrs,
+			"prompt_tokens", usage.PromptTokens,
+			"completion_tokens", usage.CompletionTokens)
+	}
+	slog.Info("LLM completion finished", attrs...)
+
+	if finishReason == openai.FinishReasonLength {
+		slog.Warn("LLM answer was cut at the token limit; raise LLM_ANSWER_TOKENS or turn thinking off (LLM_ENABLE_THINKING=false)",
+			"answer_budget", limits.answerTokens)
+	}
+}
+
 // streamOnce runs one streaming completion and collects text, reasoning and tool
 // call deltas. Provider, network and callback errors are all returned: a
 // truncated answer must never look like a finished one.
@@ -55,6 +91,8 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 
 	var content, reasoning strings.Builder
 	var toolCalls []openai.ToolCall
+	var usage *openai.Usage
+	var finishReason openai.FinishReason
 
 	snapshot := func() streamResult {
 		return streamResult{
@@ -67,13 +105,21 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 	for {
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
+			o.logUsage(req, usage, finishReason)
 			break
 		}
 		if recvErr != nil {
 			return snapshot(), recvErr
 		}
+		// The usage arrives in a final chunk that has no choices.
+		if resp.Usage != nil {
+			usage = resp.Usage
+		}
 		if len(resp.Choices) == 0 {
 			continue
+		}
+		if reason := resp.Choices[0].FinishReason; reason != "" {
+			finishReason = reason
 		}
 
 		delta := resp.Choices[0].Delta
@@ -135,11 +181,13 @@ func mergeToolCallDeltas(calls *[]openai.ToolCall, deltas []openai.ToolCall) {
 }
 
 // executeToolCalls runs every requested tool and returns the tool messages the
-// API expects: one per call, in the order the model asked for them.
-func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.ToolCall) []openai.ChatCompletionMessage {
-	messages := make([]openai.ChatCompletionMessage, 0, len(calls))
+// API expects: one per call, in the order the model asked for them. Together the
+// results may use at most budgetTokens; larger ones are cut so that every call
+// still gets an answer.
+func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.ToolCall, budgetTokens int) []openai.ChatCompletionMessage {
+	contents := make([]string, len(calls))
 
-	for _, tc := range calls {
+	for i, tc := range calls {
 		var content string
 
 		if tc.Function.Name == "" {
@@ -189,10 +237,28 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 						content = fmt.Sprintf("Error: %v", marshalErr)
 						break
 					}
-					content = truncateRunes(string(resBytes), maxToolResultChars)
+					content = string(resBytes)
 					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
 				}
 			}
+		}
+
+		contents[i] = content
+	}
+
+	sizes := make([]int, len(contents))
+	for i, content := range contents {
+		sizes[i] = estimateTokens(content)
+	}
+	allowed := allocateTokens(sizes, budgetTokens)
+
+	messages := make([]openai.ChatCompletionMessage, 0, len(calls))
+	for i, tc := range calls {
+		content := contents[i]
+		if sizes[i] > allowed[i] {
+			slog.Warn("tool result cut to fit the context window",
+				"tool", tc.Function.Name, "result_tokens", sizes[i], "allowed_tokens", allowed[i], "round_budget", budgetTokens)
+			content = fitToolResult(content, allowed[i])
 		}
 
 		messages = append(messages, openai.ChatCompletionMessage{
@@ -223,11 +289,7 @@ func (o *Orchestrator) generateResponse(
 
 	toolRounds := 0
 	for {
-		result, err := o.streamOnce(ctx, openai.ChatCompletionRequest{
-			Messages: messages,
-			Stream:   true,
-			Tools:    tools,
-		}, onDelta)
+		result, err := o.streamOnce(ctx, o.chatRequest(messages, tools), onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {
@@ -252,7 +314,11 @@ func (o *Orchestrator) generateResponse(
 			Content:   result.content,
 			ToolCalls: result.toolCalls,
 		})
-		messages = append(messages, o.executeToolCalls(ctx, result.toolCalls)...)
+		// The room left for the results is measured on the conversation as it
+		// stands now, including the tool calls just appended and the results of
+		// an earlier round.
+		toolBudget := o.limits().toolBudget(messages, tools)
+		messages = append(messages, o.executeToolCalls(ctx, result.toolCalls, toolBudget)...)
 	}
 
 	// The model asked for tools but never produced prose. Ask again with tools
@@ -260,10 +326,7 @@ func (o *Orchestrator) generateResponse(
 	// the conversation, so nothing is repeated here: an earlier version appended
 	// them a second time, which doubled the prompt of the final call.
 	if strings.TrimSpace(assistantContent.String()) == "" {
-		result, err := o.streamOnce(ctx, openai.ChatCompletionRequest{
-			Messages: messages,
-			Stream:   true,
-		}, onDelta)
+		result, err := o.streamOnce(ctx, o.chatRequest(messages, nil), onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {

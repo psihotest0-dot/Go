@@ -119,7 +119,7 @@ func (cm *ContextManager) Chat(ctx context.Context, req openai.ChatCompletionReq
 	return cm.client.Chat(ctx, req)
 }
 
-func (cm *ContextManager) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+func (cm *ContextManager) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (Stream, error) {
 	req.Messages = cm.pruneHistory(req.Messages)
 	return cm.client.ChatStream(ctx, req)
 }

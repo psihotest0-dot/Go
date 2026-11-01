@@ -91,7 +91,7 @@ func (m *MockLLM) Chat(ctx context.Context, req openai.ChatCompletionRequest) (o
 // ChatStream records the request and uses the mock round tripper to simulate a
 // stream. StreamScript selects the chunks per call so multi-round conversations
 // can be tested; the last scripted entry is reused for further calls.
-func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (Stream, error) {
 	m.LastRequest = req
 	m.Requests = append(m.Requests, req)
 
@@ -122,10 +122,16 @@ func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionReque
 	client := openai.NewClientWithConfig(config)
 
 	// Since we mock the round tripper, we can just call the client normally
-	return client.CreateChatCompletionStream(context.Background(), openai.ChatCompletionRequest{
+	stream, err := client.CreateChatCompletionStream(context.Background(), openai.ChatCompletionRequest{
 		Model:  "mock",
 		Stream: true,
 	})
+	if err != nil {
+		// Returning the nil *ChatCompletionStream directly would give a non-nil
+		// Stream interface wrapping a nil pointer.
+		return nil, err
+	}
+	return stream, nil
 }
 
 // ChatWithJSONSchema records the request and schema, and returns the configured response or error.

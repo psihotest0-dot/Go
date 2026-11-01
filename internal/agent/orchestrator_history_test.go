@@ -8,73 +8,9 @@ import (
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"go-monolith/internal/llm"
-	"go-monolith/internal/prompts"
 )
-
-func TestSessionSummaryStoreEvictsIdleSessions(t *testing.T) {
-	store := newSessionSummaryStore()
-
-	stale := store.get("sess-stale")
-	stale.touch(time.Now().Add(-2 * sessionSummaryTTL))
-	store.get("sess-fresh")
-	require.Equal(t, 2, store.size())
-
-	// The periodic sweep is rate limited, so make it due again before
-	// triggering it through a lookup.
-	forceSweepDue(store)
-	store.get("sess-new")
-
-	_, ok := store.peek("sess-stale")
-	require.False(t, ok, "idle session should have been evicted")
-	_, ok = store.peek("sess-fresh")
-	require.True(t, ok, "recently used session must be kept")
-	require.Equal(t, 2, store.size(), "cache should only hold the live sessions")
-}
-
-// forceSweepDue resets the sweep throttle so the next lookup performs a full
-// eviction pass.
-func forceSweepDue(store *sessionSummaryStore) {
-	store.mu.Lock()
-	store.lastSweep = time.Time{}
-	store.mu.Unlock()
-}
-
-func TestSessionSummaryStoreEnforcesCap(t *testing.T) {
-	store := newSessionSummaryStore()
-
-	for i := 0; i < maxSessionSummaries; i++ {
-		state := store.get(fmt.Sprintf("sess-%d", i))
-		// Age the entries so the least recently used one is deterministic.
-		// They stay within the TTL, so only the hard cap can evict them.
-		state.touch(time.Now().Add(-time.Duration(maxSessionSummaries-i) * time.Second))
-	}
-	require.Equal(t, maxSessionSummaries, store.size())
-
-	store.get("sess-new")
-
-	require.Equal(t, maxSessionSummaries, store.size(), "cache must stay at its cap")
-	_, ok := store.peek("sess-0")
-	require.False(t, ok, "least recently used session should be evicted")
-	_, ok = store.peek("sess-new")
-	require.True(t, ok, "new session should be cached")
-}
-
-func TestSessionSummaryStoreKeepsInFlightSessions(t *testing.T) {
-	store := newSessionSummaryStore()
-
-	inFlight := store.get("sess-inflight")
-	inFlight.isGenerating.Store(true)
-	inFlight.touch(time.Now().Add(-2 * sessionSummaryTTL))
-
-	forceSweepDue(store)
-	store.get("sess-other")
-
-	_, ok := store.peek("sess-inflight")
-	require.True(t, ok, "a session with a summary in flight must not be evicted")
-}
 
 func TestSummaryInputTextIsBounded(t *testing.T) {
 	olds := make([]openai.ChatCompletionMessage, maxSummaryInputMessages)
@@ -86,13 +22,41 @@ func TestSummaryInputTextIsBounded(t *testing.T) {
 		}
 	}
 
-	text := summaryInputText(olds)
+	text, included := summaryInputText(olds)
 
 	// One separator per retained line is not counted against the budget.
 	if n := estimateTokens(text); n > maxSummaryInputTokens+maxSummaryInputMessages {
 		t.Fatalf("summary input costs %d tokens, want at most %d", n, maxSummaryInputTokens+maxSummaryInputMessages)
 	}
 	require.Contains(t, text, "user: ")
+	require.Greater(t, included, 0)
+	require.Less(t, included, len(olds), "the token budget cuts the transcript before the message limit does")
+	require.Equal(t, included, strings.Count(text, "user: "), "every included message is in the text, and no other")
+}
+
+func TestSummaryInputTextCountsEveryMessageThatFits(t *testing.T) {
+	olds := []openai.ChatCompletionMessage{
+		{Role: openai.ChatMessageRoleUser, Content: "първо"},
+		{Role: openai.ChatMessageRoleAssistant, Content: "второ"},
+		{Role: openai.ChatMessageRoleUser, Content: "трето"},
+	}
+
+	text, included := summaryInputText(olds)
+
+	require.Equal(t, 3, included)
+	require.Equal(t, "user: първо\nassistant: второ\nuser: трето", text)
+
+	text, included = summaryInputText(nil)
+	require.Equal(t, 0, included)
+	require.Empty(t, text)
+}
+
+func numberedHistory(n int) []openai.ChatCompletionMessage {
+	history := make([]openai.ChatCompletionMessage, n)
+	for i := range history {
+		history[i] = openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: fmt.Sprintf("съобщение %d", i)}
+	}
+	return history
 }
 
 // TestPruneHistoryBoundsTokens covers the history replayed on every turn: the
@@ -109,7 +73,7 @@ func TestPruneHistoryBoundsTokens(t *testing.T) {
 		})
 	}
 
-	kept, dropped, droppedCount := pruneHistory(history)
+	kept := pruneHistory(history, defaultHistoryTokens, defaultHistoryMessages)
 
 	if len(kept) == 0 {
 		t.Fatal("expected the newest turn to be kept")
@@ -117,142 +81,64 @@ func TestPruneHistoryBoundsTokens(t *testing.T) {
 	if kept[len(kept)-1].Content != history[len(history)-1].Content {
 		t.Fatal("the newest message must always be kept")
 	}
-	if len(kept)+len(dropped) != len(history) {
-		t.Fatalf("kept %d + dropped %d messages, want %d", len(kept), len(dropped), len(history))
-	}
-	if droppedCount != len(dropped) {
-		t.Fatalf("droppedCount = %d, want %d", droppedCount, len(dropped))
-	}
+	require.Equal(t, history[len(history)-len(kept):], kept, "what is kept is the newest stretch of the history, in order")
 
 	total := 0
 	for _, m := range kept {
 		total += estimateTokens(m.Content)
 	}
-	if total > maxContextTokens {
-		t.Fatalf("kept history costs %d tokens, want at most %d", total, maxContextTokens)
+	if total > defaultHistoryTokens {
+		t.Fatalf("kept history costs %d tokens, want at most %d", total, defaultHistoryTokens)
 	}
 }
 
-func TestRollingSummaryGeneratesSummaryInBackground(t *testing.T) {
-	previous := prompts.GlobalManager
-	prompts.Init("")
-	t.Cleanup(func() { prompts.GlobalManager = previous })
+func TestPruneHistoryHonoursTheMessageLimit(t *testing.T) {
+	history := numberedHistory(30)
 
-	mock := &llm.MockLLM{
-		Response: openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    openai.ChatMessageRoleAssistant,
-						Content: "  summarised conversation  ",
-					},
-				},
-			},
-		},
-	}
-	orchestrator := NewOrchestrator(nil, nil, mock, nil)
+	kept := pruneHistory(history, 1_000_000, 7)
 
-	olds := make([]openai.ChatCompletionMessage, summaryMinNewMessages)
-	for i := range olds {
-		olds[i] = openai.ChatCompletionMessage{
-			Role:    openai.ChatMessageRoleUser,
-			Content: "old message",
-		}
-	}
-
-	userID := uuid.New()
-
-	// Below the threshold no summary is requested.
-	require.Equal(t, "", orchestrator.rollingSummary(userID, "sess-1", olds, summaryMinNewMessages-1))
-	require.Equal(t, 1, orchestrator.summaries.size())
-
-	require.Equal(t, "", orchestrator.rollingSummary(userID, "sess-1", olds, summaryMinNewMessages))
-
-	// The summary is produced asynchronously.
-	require.Eventually(t, func() bool {
-		return orchestrator.rollingSummary(userID, "sess-1", olds, summaryMinNewMessages) == "summarised conversation"
-	}, 5*time.Second, 10*time.Millisecond)
-
-	state, ok := orchestrator.summaries.peek(summaryKey(userID, "sess-1"))
-	require.True(t, ok)
-	require.False(t, state.isGenerating.Load(), "the in-flight marker must be cleared")
-	require.LessOrEqual(t, estimateTokens(state.text), maxSummaryTokens)
+	require.Equal(t, history[23:], kept)
 }
 
-func TestRollingSummarySurvivesSummariserFailure(t *testing.T) {
-	previous := prompts.GlobalManager
-	prompts.Init("")
-	t.Cleanup(func() { prompts.GlobalManager = previous })
+func TestPruneHistoryKeepsAHugeNewestMessage(t *testing.T) {
+	history := numberedHistory(3)
+	history[2].Content = strings.Repeat("д", 20_000)
 
-	orchestrator := NewOrchestrator(nil, nil, &llm.MockLLM{Error: fmt.Errorf("llm unavailable")}, nil)
+	kept := pruneHistory(history, 100, 10)
 
-	olds := make([]openai.ChatCompletionMessage, summaryMinNewMessages)
-	for i := range olds {
-		olds[i] = openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "old message"}
-	}
-
-	userID := uuid.New()
-
-	require.Equal(t, "", orchestrator.rollingSummary(userID, "sess-2", olds, summaryMinNewMessages))
-
-	// A failed summarisation must not leave the session permanently marked as
-	// in flight, otherwise it would never be summarised again.
-	require.Eventually(t, func() bool {
-		state, ok := orchestrator.summaries.peek(summaryKey(userID, "sess-2"))
-		return ok && !state.isGenerating.Load()
-	}, 5*time.Second, 10*time.Millisecond)
-
-	state, _ := orchestrator.summaries.peek(summaryKey(userID, "sess-2"))
-	require.Equal(t, "", state.text)
-	require.Equal(t, 0, state.lastDropCount)
+	require.Equal(t, history[2:], kept, "the question being answered is never dropped, however large")
 }
 
-// TestRollingSummaryIsScopedPerUser guards the cache key: session IDs are
-// supplied by the client, so two users that pick the same session ID must not
-// share (or overwrite) each other's rolling summary.
-func TestRollingSummaryIsScopedPerUser(t *testing.T) {
-	previous := prompts.GlobalManager
-	prompts.Init("")
-	t.Cleanup(func() { prompts.GlobalManager = previous })
-
-	mock := &llm.MockLLM{
-		Response: openai.ChatCompletionResponse{
-			Choices: []openai.ChatCompletionChoice{
-				{
-					Message: openai.ChatCompletionMessage{
-						Role:    openai.ChatMessageRoleAssistant,
-						Content: "user A private summary",
-					},
-				},
-			},
-		},
+func TestWindowStartPointsAtTheOldestKeptMessage(t *testing.T) {
+	base := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	history := numberedHistory(5)
+	at := make([]time.Time, len(history))
+	for i := range at {
+		at[i] = base.Add(time.Duration(i) * time.Minute)
 	}
-	orchestrator := NewOrchestrator(nil, nil, mock, nil)
+	c := chatContext{History: history, HistoryAt: at}
 
-	olds := make([]openai.ChatCompletionMessage, summaryMinNewMessages)
-	for i := range olds {
-		olds[i] = openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "old message"}
-	}
+	require.Equal(t, at[2], c.windowStart(3), "three kept messages start at the third from the end")
+	require.Equal(t, at[0], c.windowStart(5))
+	require.Equal(t, at[4], c.windowStart(1))
 
-	userA := uuid.New()
-	userB := uuid.New()
+	require.True(t, c.windowStart(0).IsZero())
+	require.True(t, c.windowStart(6).IsZero(), "more kept messages than history is a caller bug, not a position")
+	require.True(t, chatContext{History: history}.windowStart(2).IsZero(), "no timestamps, no position")
+}
 
-	require.Equal(t, "", orchestrator.rollingSummary(userA, "shared-session", olds, summaryMinNewMessages))
-	require.Eventually(t, func() bool {
-		return orchestrator.rollingSummary(userA, "shared-session", olds, summaryMinNewMessages) == "user A private summary"
-	}, 5*time.Second, 10*time.Millisecond)
+func TestSummaryRunsAllowsOnePassPerSession(t *testing.T) {
+	var runs summaryRuns
+	keyA := summaryKey(uuid.New(), "same-session")
+	keyB := summaryKey(uuid.New(), "same-session")
 
-	// Same session ID, different owner: user B sees nothing of user A's summary.
-	require.Equal(t, "", orchestrator.rollingSummary(userB, "shared-session", olds, 0))
-	require.Equal(t, 2, orchestrator.summaries.size(), "each user needs its own cache entry")
+	require.True(t, runs.begin(keyA))
+	require.False(t, runs.begin(keyA), "a second pass for the same session must not start")
+	require.True(t, runs.begin(keyB), "the same session id of another user is a different session")
 
-	stateA, ok := orchestrator.summaries.peek(summaryKey(userA, "shared-session"))
-	require.True(t, ok)
-	require.Equal(t, "user A private summary", stateA.text)
-
-	stateB, ok := orchestrator.summaries.peek(summaryKey(userB, "shared-session"))
-	require.True(t, ok)
-	require.Equal(t, "", stateB.text)
+	runs.end(keyA)
+	require.True(t, runs.begin(keyA), "once the pass ended, the session can be summarised again")
+	assert.Len(t, runs.running, 2)
 }
 
 func TestDropTrailingAssistantMessages(t *testing.T) {

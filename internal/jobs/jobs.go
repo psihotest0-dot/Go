@@ -138,6 +138,9 @@ type Fact struct {
 func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[MemoryConsolidationArgs]) error {
 	slog.Info("MemoryConsolidationWorker started", "user_id", job.Args.UserID)
 
+	// Every LLM call below is background work and must leave a slot to the chat.
+	ctx = llm.WithBackground(ctx)
+
 	// Promote existing candidate memories to active
 	_, err := w.dbClient.SqlDB.ExecContext(ctx, "UPDATE memories SET status = 'active' WHERE user_id = $1 AND status = 'candidate'", job.Args.UserID)
 	if err != nil {

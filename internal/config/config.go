@@ -22,14 +22,43 @@ const DefaultListenAddr = "127.0.0.1:8080"
 // DefaultMaxUploadMB is the upload size limit when MAX_UPLOAD_MB is not set.
 const DefaultMaxUploadMB = 100
 
+// DefaultLLMSlots is how many completions the model server runs in parallel
+// (Lemonade is started with two slots). DefaultLLMBackgroundSlots is the share
+// of them background work (summaries, consolidation, distillation) may use.
+const (
+	DefaultLLMSlots           = 2
+	DefaultLLMBackgroundSlots = 1
+)
+
 type Config struct {
-	ListenAddr       string
-	MaxUploadBytes   int64
-	LLMBaseURL       string
-	EmbedderURL      string
-	EmbedModel       string
-	DatabaseURL      string
-	TelegramBotToken string
+	ListenAddr     string
+	MaxUploadBytes int64
+	LLMBaseURL     string
+	// LLMModel pins the model name sent to the LLM server. Empty means the
+	// client asks the server which model it serves.
+	LLMModel string
+	// LLMSlots is the number of parallel completions the LLM server handles;
+	// LLMBackgroundSlots is how many of them background work may occupy.
+	LLMSlots           int
+	LLMBackgroundSlots int
+	// LLMContextTokens is the context window of ONE request, i.e. the server's
+	// context divided by its slots (32768 / 2 = 16384). Zero means unknown: the
+	// agent then keeps its conservative built-in budgets. The remaining LLM*
+	// token fields override a single budget each; zero means "derive it from
+	// LLMContextTokens" (see internal/agent/budgets.go).
+	LLMContextTokens       int
+	LLMAnswerTokens        int
+	LLMPromptContextTokens int
+	LLMHistoryTokens       int
+	LLMHistoryMessages     int
+	LLMToolResultTokens    int
+	// LLMEnableThinking lets the model reason before it answers in the chat. It
+	// is on by default because that is what the model does when asked nothing.
+	LLMEnableThinking bool
+	EmbedderURL       string
+	EmbedModel        string
+	DatabaseURL       string
+	TelegramBotToken  string
 	// TelegramAllowedChatIDs lists the chats the bot may talk to. Empty means
 	// nobody: the bot token only controls the bot, not who can write to it.
 	TelegramAllowedChatIDs []int64
@@ -54,6 +83,37 @@ func parseChatIDs(raw string) []int64 {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// positiveIntEnv reads a positive integer from the environment. An unset
+// variable gives def silently; an invalid or non-positive one gives def with a
+// warning.
+func positiveIntEnv(name string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		slog.Warn("ignoring invalid "+name, slog.String("value", raw), slog.Int("using", def))
+		return def
+	}
+	return n
+}
+
+// boolEnv reads a boolean from the environment (true/false/1/0, any case). An
+// unset variable gives def silently; an unparsable one gives def with a warning.
+func boolEnv(name string, def bool) bool {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		slog.Warn("ignoring invalid "+name, slog.String("value", raw), slog.Bool("using", def))
+		return def
+	}
+	return value
 }
 
 func Load() *Config {
@@ -92,6 +152,18 @@ func Load() *Config {
 		ListenAddr:         listenAddr,
 		MaxUploadBytes:     maxUploadMB << 20,
 		LLMBaseURL:         os.Getenv("LLM_BASE_URL"),
+		LLMModel:           strings.TrimSpace(os.Getenv("LLM_MODEL")),
+		LLMSlots:           positiveIntEnv("LLM_SLOTS", DefaultLLMSlots),
+		LLMBackgroundSlots: positiveIntEnv("LLM_BACKGROUND_SLOTS", DefaultLLMBackgroundSlots),
+
+		LLMContextTokens:       positiveIntEnv("LLM_CONTEXT_TOKENS", 0),
+		LLMAnswerTokens:        positiveIntEnv("LLM_ANSWER_TOKENS", 0),
+		LLMPromptContextTokens: positiveIntEnv("LLM_PROMPT_CONTEXT_TOKENS", 0),
+		LLMHistoryTokens:       positiveIntEnv("LLM_HISTORY_TOKENS", 0),
+		LLMHistoryMessages:     positiveIntEnv("LLM_HISTORY_MESSAGES", 0),
+		LLMToolResultTokens:    positiveIntEnv("LLM_TOOL_RESULT_TOKENS", 0),
+		LLMEnableThinking:      boolEnv("LLM_ENABLE_THINKING", true),
+
 		EmbedderURL:        os.Getenv("EMBEDDER_URL"),
 		EmbedModel:         os.Getenv("EMBED_MODEL"),
 		DatabaseURL:        dbURL,

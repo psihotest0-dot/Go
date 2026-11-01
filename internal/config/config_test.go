@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+)
 
 func TestLoadTelegramAllowedChatIDs(t *testing.T) {
 	tests := []struct {
@@ -70,6 +73,109 @@ func TestLoadListenAddr(t *testing.T) {
 			t.Setenv("LISTEN_ADDR", tt.env)
 			if got := Load().ListenAddr; got != tt.want {
 				t.Fatalf("ListenAddr = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadLLMSlots(t *testing.T) {
+	tests := []struct {
+		name           string
+		slots          string
+		backgroundSlot string
+		wantSlots      int
+		wantBackground int
+	}{
+		{name: "defaults match the two-slot server", slots: "", backgroundSlot: "", wantSlots: 2, wantBackground: 1},
+		{name: "explicit values", slots: "4", backgroundSlot: "2", wantSlots: 4, wantBackground: 2},
+		{name: "surrounding space is trimmed", slots: " 3 ", backgroundSlot: " 1 ", wantSlots: 3, wantBackground: 1},
+		{name: "not a number falls back", slots: "many", backgroundSlot: "some", wantSlots: 2, wantBackground: 1},
+		{name: "zero falls back", slots: "0", backgroundSlot: "0", wantSlots: 2, wantBackground: 1},
+		{name: "negative falls back", slots: "-1", backgroundSlot: "-1", wantSlots: 2, wantBackground: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LLM_SLOTS", tt.slots)
+			t.Setenv("LLM_BACKGROUND_SLOTS", tt.backgroundSlot)
+			cfg := Load()
+			if cfg.LLMSlots != tt.wantSlots || cfg.LLMBackgroundSlots != tt.wantBackground {
+				t.Fatalf("slots = %d/%d, want %d/%d", cfg.LLMSlots, cfg.LLMBackgroundSlots, tt.wantSlots, tt.wantBackground)
+			}
+		})
+	}
+}
+
+func TestLoadLLMModel(t *testing.T) {
+	t.Setenv("LLM_MODEL", "")
+	if got := Load().LLMModel; got != "" {
+		t.Fatalf("LLMModel = %q, want empty so the client asks the server", got)
+	}
+
+	t.Setenv("LLM_MODEL", "  Qwen3.5-9B-GGUF ")
+	if got := Load().LLMModel; got != "Qwen3.5-9B-GGUF" {
+		t.Fatalf("LLMModel = %q, want the trimmed value", got)
+	}
+}
+
+func TestLoadLLMBudgets(t *testing.T) {
+	names := []string{"LLM_CONTEXT_TOKENS", "LLM_ANSWER_TOKENS", "LLM_PROMPT_CONTEXT_TOKENS",
+		"LLM_HISTORY_TOKENS", "LLM_HISTORY_MESSAGES", "LLM_TOOL_RESULT_TOKENS"}
+
+	for _, name := range names {
+		t.Setenv(name, "")
+	}
+	cfg := Load()
+	for name, got := range map[string]int{
+		"LLM_CONTEXT_TOKENS": cfg.LLMContextTokens, "LLM_ANSWER_TOKENS": cfg.LLMAnswerTokens,
+		"LLM_PROMPT_CONTEXT_TOKENS": cfg.LLMPromptContextTokens, "LLM_HISTORY_TOKENS": cfg.LLMHistoryTokens,
+		"LLM_HISTORY_MESSAGES": cfg.LLMHistoryMessages, "LLM_TOOL_RESULT_TOKENS": cfg.LLMToolResultTokens,
+	} {
+		if got != 0 {
+			t.Fatalf("%s unset = %d, want 0 (derive it)", name, got)
+		}
+	}
+
+	for i, name := range names {
+		t.Setenv(name, " "+strconv.Itoa(100*(i+1))+" ")
+	}
+	cfg = Load()
+	want := []int{100, 200, 300, 400, 500, 600}
+	got := []int{cfg.LLMContextTokens, cfg.LLMAnswerTokens, cfg.LLMPromptContextTokens,
+		cfg.LLMHistoryTokens, cfg.LLMHistoryMessages, cfg.LLMToolResultTokens}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s = %d, want %d", names[i], got[i], want[i])
+		}
+	}
+
+	for _, name := range names {
+		t.Setenv(name, "-3")
+	}
+	if cfg = Load(); cfg.LLMContextTokens != 0 || cfg.LLMHistoryMessages != 0 {
+		t.Fatalf("invalid values must fall back to 0, got context=%d messages=%d", cfg.LLMContextTokens, cfg.LLMHistoryMessages)
+	}
+}
+
+func TestLoadLLMEnableThinking(t *testing.T) {
+	tests := []struct {
+		env  string
+		want bool
+	}{
+		{env: "", want: true},
+		{env: "true", want: true},
+		{env: "TRUE", want: true},
+		{env: "1", want: true},
+		{env: "false", want: false},
+		{env: "False", want: false},
+		{env: "0", want: false},
+		{env: " false ", want: false},
+		{env: "maybe", want: true},
+	}
+	for _, tt := range tests {
+		t.Run("["+tt.env+"]", func(t *testing.T) {
+			t.Setenv("LLM_ENABLE_THINKING", tt.env)
+			if got := Load().LLMEnableThinking; got != tt.want {
+				t.Fatalf("LLMEnableThinking = %v, want %v", got, tt.want)
 			}
 		})
 	}

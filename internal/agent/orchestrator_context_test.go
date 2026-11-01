@@ -215,7 +215,7 @@ func TestPromptBudgetBoundsConceptChunks(t *testing.T) {
 		chunks = append(chunks, strings.Repeat("концепт ", 500))
 	}
 
-	kept := newPromptBudget(maxSystemPromptContextTokens).take(chunks, maxConceptChunkChars)
+	kept := newPromptBudget(defaultPromptContextTokens).take(chunks, maxConceptChunkChars)
 
 	if len(kept) == 0 {
 		t.Fatal("expected at least one chunk to be kept")
@@ -228,7 +228,7 @@ func TestPromptBudgetBoundsConceptChunks(t *testing.T) {
 		}
 		total += estimateTokens(chunk)
 	}
-	if total > maxSystemPromptContextTokens {
-		t.Fatalf("kept %d tokens, want at most %d", total, maxSystemPromptContextTokens)
+	if total > defaultPromptContextTokens {
+		t.Fatalf("kept %d tokens, want at most %d", total, defaultPromptContextTokens)
 	}
 }

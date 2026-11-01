@@ -36,18 +36,13 @@ var (
 // Latin character costs, so a character budget silently lets a Cyrillic prompt
 // use twice the context it was meant to.
 const (
-	// bytesPerToken is the usual rough ratio for BPE tokenizers on natural
-	// text: Latin runs at about four characters per token and Cyrillic
-	// characters carry two bytes each, so both work out to roughly four bytes
-	// per token.
+	// bytesPerToken is the number of bytes one token is assumed to cost.
+	// Measured on 2026-11-01 with the Qwen3.5-9B tokenizer: Bulgarian book text
+	// 5.06 bytes per token, English 4.49, JSON tool output 3.72. Four is on the
+	// safe side for prose (it overestimates the cost by 12-25 %) and about right
+	// for JSON; the real usage reported by the server is logged for each request
+	// so the ratio can be checked again.
 	bytesPerToken = 4
-
-	// maxSystemPromptContextTokens caps the dynamic sections of the system
-	// prompt: rules, profile facts, retrieved memories and concept chunks. The
-	// rolling summary is capped separately by maxSummaryTokens and the history
-	// by maxContextTokens. Raise these constants if the deployment targets a
-	// model with a large context window.
-	maxSystemPromptContextTokens = 3000
 
 	// Per-item caps stop one long passage from crowding out everything else
 	// that was retrieved. They stay in characters so they remain easy to reason
@@ -275,7 +270,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
-		Limit:     maxHistoryMessages,
+		Limit:     int32(o.limits().historyMessages),
 	})
 	if err != nil {
 		slog.Error("failed to get messages", "err", err)
@@ -294,13 +289,14 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			continue
 		}
 		chatCtx.History = append(chatCtx.History, msg)
+		chatCtx.HistoryAt = append(chatCtx.HistoryAt, m.CreatedAt.Time)
 	}
 
 	// Bound the dynamic part of the system prompt. The rules come first because
 	// the user configured them explicitly, then the profile facts, then the
 	// retrieved memories and finally the concept chunks, which are the most
 	// voluminous and therefore the most disposable.
-	budget := newPromptBudget(maxSystemPromptContextTokens)
+	budget := newPromptBudget(o.limits().promptContextTokens)
 	chatCtx.Rules = budget.take(chatCtx.Rules, maxRuleChars)
 	chatCtx.TopMemories = budget.take(chatCtx.TopMemories, maxTopMemoryChars)
 	chatCtx.Memories = budget.take(chatCtx.Memories, maxRetrievedMemoryChars)

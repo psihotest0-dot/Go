@@ -7,6 +7,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"time"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -83,6 +84,15 @@ type Message struct {
 	SourceChunkIds   pqtype.NullRawMessage `json:"source_chunk_ids"`
 	IsAnalyzed       bool                  `json:"is_analyzed"`
 	AnalysisAttempts int32                 `json:"analysis_attempts"`
+}
+
+type SessionSummary struct {
+	UserID                uuid.UUID `json:"user_id"`
+	SessionID             string    `json:"session_id"`
+	Summary               string    `json:"summary"`
+	CoveredUntilMessageID uuid.UUID `json:"covered_until_message_id"`
+	CoveredUntilAt        time.Time `json:"covered_until_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 type User struct {

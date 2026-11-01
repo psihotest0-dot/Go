@@ -141,6 +141,9 @@ type DeleteIngestedFileParams struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
+// DeleteIngestedFile is a hard delete. Only used to roll back an upload that
+// never produced chunks; anything a client asks to remove goes through
+// SoftDeleteIngestedFile.
 func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFileParams) error {
 	_, err := q.db.ExecContext(ctx, deleteIngestedFile, arg.ID, arg.UserID)
 	return err
@@ -285,6 +288,9 @@ const getIngestedFileByID = `-- name: GetIngestedFileByID :one
 SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE id = $1
 `
 
+// GetIngestedFileByID is deliberately unfiltered: the ingest worker and the
+// restore path must be able to see a soft deleted row. Callers that serve
+// clients filter on deleted_at.
 func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (IngestedFile, error) {
 	row := q.db.QueryRowContext(ctx, getIngestedFileByID, id)
 	var i IngestedFile
@@ -627,6 +633,10 @@ type SoftDeleteIngestedFileParams struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
+// SoftDeleteIngestedFile marks the file as gone without destroying its chunks,
+// so a mistaken delete can be undone. The partial unique index on
+// (user_id, file_hash) only covers live rows, which keeps re-uploads of the same
+// document working.
 func (q *Queries) SoftDeleteIngestedFile(ctx context.Context, arg SoftDeleteIngestedFileParams) error {
 	_, err := q.db.ExecContext(ctx, softDeleteIngestedFile, arg.ID, arg.UserID)
 	return err

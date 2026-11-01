@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/retrieval"
@@ -22,20 +24,37 @@ type Orchestrator struct {
 	retrieval *retrieval.RetrievalService
 	llmClient llm.LLMClient
 	tools     ToolRegistry
-	// summaries caches rolling summaries per session. The cache is bounded so
-	// that client supplied session IDs cannot grow memory without limit.
-	summaries *sessionSummaryStore
+	// summaryRuns and summaryWG track the background passes that update the
+	// rolling summary: one per session at a time, and a wait group so tests (and
+	// a future graceful shutdown) can wait for them.
+	summaryRuns summaryRuns
+	summaryWG   sync.WaitGroup
+	// budgets are the token limits requests are built with; the zero value
+	// means the built-in ones (see limits).
+	budgets budgets
 }
 
 // NewOrchestrator creates a new Orchestrator.
 func NewOrchestrator(database *db.Database, r *retrieval.RetrievalService, l llm.LLMClient, t ToolRegistry) *Orchestrator {
+	b := newBudgets(config.Load())
+	b.log()
+
 	return &Orchestrator{
 		db:        database,
 		retrieval: r,
 		llmClient: l,
 		tools:     t,
-		summaries: newSessionSummaryStore(),
+		budgets:   b,
 	}
+}
+
+// limits returns the token budgets in effect. An Orchestrator built without
+// NewOrchestrator (tests) has none configured and uses the built-in ones.
+func (o *Orchestrator) limits() budgets {
+	if o.budgets == (budgets{}) {
+		return legacyBudgets()
+	}
+	return o.budgets
 }
 
 // HandleStreamChat handles incoming chat messages and streams the response.
@@ -107,8 +126,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		"memory_ids": memoryIDs,
 	})
 
-	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
-	chatCtx.RollingSum = o.rollingSummary(userID, req.SessionID, oldMessages, droppedCount)
+	history := pruneHistory(chatCtx.History, o.limits().historyTokens, o.limits().historyMessages)
+	chatCtx.RollingSum = o.rollingSummary(r.Context(), userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
@@ -183,7 +202,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: regenReq.SessionID,
-		Limit:     maxHistoryMessages,
+		Limit:     int32(o.limits().historyMessages),
 	})
 	if err != nil {
 		slog.Error("failed to get messages", "err", err)
@@ -227,14 +246,17 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// history. Drop it from the prompt: the model must regenerate the reply,
 	// not read (and copy) the one it is replacing.
 	chatCtx.History = dropTrailingAssistantMessages(chatCtx.History)
+	if len(chatCtx.HistoryAt) > len(chatCtx.History) {
+		chatCtx.HistoryAt = chatCtx.HistoryAt[:len(chatCtx.History)]
+	}
 
 	_ = o.writeTrace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
 		"memory_ids": memoryIDs,
 	})
 
-	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
-	chatCtx.RollingSum = o.rollingSummary(userID, req.SessionID, oldMessages, droppedCount)
+	history := pruneHistory(chatCtx.History, o.limits().historyTokens, o.limits().historyMessages)
+	chatCtx.RollingSum = o.rollingSummary(r.Context(), userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
@@ -319,8 +341,8 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 		"memory_ids": memoryIDs,
 	})
 
-	history, oldMessages, droppedCount := pruneHistory(chatCtx.History)
-	chatCtx.RollingSum = o.rollingSummary(userID, req.SessionID, oldMessages, droppedCount)
+	history := pruneHistory(chatCtx.History, o.limits().historyTokens, o.limits().historyMessages)
+	chatCtx.RollingSum = o.rollingSummary(ctx, userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {

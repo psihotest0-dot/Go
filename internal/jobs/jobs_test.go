@@ -7,6 +7,7 @@ import (
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
+	"go-monolith/internal/llm"
 	"go-monolith/internal/prompts"
 
 	"github.com/riverqueue/river"
@@ -25,7 +26,7 @@ func (m *mockLLMClient) Chat(ctx context.Context, req openai.ChatCompletionReque
 	return openai.ChatCompletionResponse{}, nil
 }
 
-func (m *mockLLMClient) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (*openai.ChatCompletionStream, error) {
+func (m *mockLLMClient) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (llm.Stream, error) {
 	return nil, nil
 }
 

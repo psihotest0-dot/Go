@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -200,7 +201,7 @@ func TestExecuteToolCallsKeepsOneMessagePerCall(t *testing.T) {
 	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
 		{ID: "call_1", Function: openai.FunctionCall{Name: "search", Arguments: "{}"}},
 		{ID: "call_2"},
-	})
+	}, defaultToolResultTokens)
 
 	require.Len(t, messages, 2, "every call needs a tool message or the next request is invalid")
 	assert.Equal(t, "call_1", messages[0].ToolCallID)
@@ -210,15 +211,50 @@ func TestExecuteToolCallsKeepsOneMessagePerCall(t *testing.T) {
 }
 
 func TestExecuteToolCallsTruncatesHugeResults(t *testing.T) {
-	tools := &fakeToolRegistry{result: strings.Repeat("a", maxToolResultChars+100)}
+	tools := &fakeToolRegistry{result: strings.Repeat("a", 100_000)}
 	orchestrator := newGenerateOrchestrator(&llm.MockLLM{}, tools)
 
 	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
 		{ID: "call_1", Function: openai.FunctionCall{Name: "search", Arguments: "{}"}},
-	})
+	}, 500)
 
 	require.Len(t, messages, 1)
-	assert.LessOrEqual(t, len([]rune(messages[0].Content)), maxToolResultChars+2)
+	assert.LessOrEqual(t, estimateTokens(messages[0].Content), 500)
+	assert.Contains(t, messages[0].Content, toolResultTruncatedMarker, "the model must be told the result is partial")
+}
+
+func TestExecuteToolCallsSharesTheRoundBudget(t *testing.T) {
+	tools := &fakeToolRegistry{result: strings.Repeat("б", 40_000)}
+	orchestrator := newGenerateOrchestrator(&llm.MockLLM{}, tools)
+
+	calls := make([]openai.ToolCall, 3)
+	for i := range calls {
+		calls[i] = openai.ToolCall{ID: fmt.Sprintf("call_%d", i), Function: openai.FunctionCall{Name: "search", Arguments: "{}"}}
+	}
+
+	messages := orchestrator.executeToolCalls(context.Background(), calls, 3000)
+
+	require.Len(t, messages, 3, "every call keeps its tool message")
+	total := 0
+	for _, m := range messages {
+		total += estimateTokens(m.Content)
+	}
+	assert.LessOrEqual(t, total, 3000, "the results of one round fit the round budget together")
+	for _, m := range messages {
+		assert.Greater(t, estimateTokens(m.Content), 900, "no call is starved by the others")
+	}
+}
+
+func TestExecuteToolCallsLeavesResultsOutWhenThereIsNoRoom(t *testing.T) {
+	tools := &fakeToolRegistry{result: strings.Repeat("a", 10_000)}
+	orchestrator := newGenerateOrchestrator(&llm.MockLLM{}, tools)
+
+	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
+		{ID: "call_1", Function: openai.FunctionCall{Name: "search", Arguments: "{}"}},
+	}, 0)
+
+	require.Len(t, messages, 1, "the call still needs a tool message")
+	assert.Equal(t, toolResultOmittedNotice, messages[0].Content)
 }
 
 func TestExecuteToolCallsRejectsUnparsableArguments(t *testing.T) {
@@ -227,7 +263,7 @@ func TestExecuteToolCallsRejectsUnparsableArguments(t *testing.T) {
 
 	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
 		{ID: "call_1", Function: openai.FunctionCall{Name: "search_memories", Arguments: `{"query":`}},
-	})
+	}, defaultToolResultTokens)
 
 	require.Len(t, messages, 1)
 	assert.Empty(t, tools.executed, "the tool must not run on arguments that could not be parsed")
@@ -241,7 +277,7 @@ func TestExecuteToolCallsPassesAnEmptyObjectWhenArgumentsAreMissing(t *testing.T
 
 	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
 		{ID: "call_1", Function: openai.FunctionCall{Name: "search_memories"}},
-	})
+	}, defaultToolResultTokens)
 
 	require.Len(t, messages, 1)
 	require.Len(t, tools.args, 1)
@@ -261,7 +297,7 @@ func TestExecuteToolCallsLogsArgumentErrorsAsWarnings(t *testing.T) {
 
 	messages := orchestrator.executeToolCalls(context.Background(), []openai.ToolCall{
 		{ID: "call_1", Function: openai.FunctionCall{Name: "search_memories", Arguments: `{}`}},
-	})
+	}, defaultToolResultTokens)
 
 	require.Len(t, messages, 1)
 	assert.Contains(t, messages[0].Content, `"query"`)

@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"sync"
-	"sync/atomic"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -11,13 +9,6 @@ import (
 )
 
 const (
-	// maxContextTokens bounds the conversation history replayed on every turn,
-	// measured in estimated tokens (see estimateTokens). The earlier character
-	// cap of 12000 was the same budget for Latin text but let Cyrillic history
-	// grow to roughly twice the intended context.
-	maxContextTokens   = 3000
-	maxHistoryMessages = 10
-
 	// maxChatBodyBytes bounds the chat and regenerate request bodies before they
 	// are decoded, so a malformed client cannot make the process allocate an
 	// arbitrarily large buffer.
@@ -36,30 +27,6 @@ type ChatRequest struct {
 	Content   string `json:"content"`
 }
 
-// sessionSummary holds the cached rolling summary of a single chat session.
-// Entries are keyed per owner (see summaryKey) so identical session IDs from
-// different users never share text. text and lastDropCount are guarded by mu.
-// isGenerating and lastUsed are atomic because the background summariser and
-// the eviction sweep access them without holding mu.
-type sessionSummary struct {
-	mu            sync.Mutex
-	text          string
-	lastDropCount int
-
-	isGenerating atomic.Bool
-	lastUsed     atomic.Int64 // unix nanoseconds of the last cache access
-}
-
-// touch records that the summary was just used so the eviction sweep keeps it.
-func (s *sessionSummary) touch(now time.Time) {
-	s.lastUsed.Store(now.UnixNano())
-}
-
-// lastAccessed reports when the summary was last used.
-func (s *sessionSummary) lastAccessed() time.Time {
-	return time.Unix(0, s.lastUsed.Load())
-}
-
 type chatContext struct {
 	Memories    []string
 	Chunks      []string
@@ -67,5 +34,8 @@ type chatContext struct {
 	Rules       []string
 	TopMemories []string
 	History     []openai.ChatCompletionMessage
-	RollingSum  string
+	// HistoryAt holds the creation time of each History message, index for
+	// index. It tells the rolling summary where the prompt begins.
+	HistoryAt  []time.Time
+	RollingSum string
 }

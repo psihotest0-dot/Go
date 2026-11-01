@@ -28,6 +28,12 @@ var (
 		Help: "Total number of tokens processed by the LLM.",
 	}, []string{"type"}) // type: prompt, completion, total
 
+	LLMQueueWait = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "llm_queue_wait_seconds",
+		Help:    "Time LLM requests waited for a free model slot.",
+		Buckets: []float64{0.01, 0.1, 0.5, 1, 5, 15, 60, 180, 600},
+	}, []string{"priority"}) // priority: interactive, background
+
 	CacheHits = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "cache_hits_total",
 		Help: "Total number of embedding cache hits",

@@ -52,6 +52,9 @@ func (w *DistillationWorker) Timeout(job *river.Job[DistillationWorkerArgs]) tim
 func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[DistillationWorkerArgs]) error {
 	slog.Info("DistillationWorker started", "file_id", job.Args.FileID)
 
+	// Every LLM call below is background work and must leave a slot to the chat.
+	ctx = llm.WithBackground(ctx)
+
 	if !config.Load().EnableDistillation {
 		slog.Info("Distillation skipped because EnableDistillation is false", "file_id", job.Args.FileID)
 		return nil
