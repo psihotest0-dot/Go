@@ -111,3 +111,20 @@ func mustGetwd(t *testing.T) string {
 	require.NoError(t, err)
 	return dir
 }
+
+// The README starts the backend with `go run main.go`, which compiles that one
+// file and nothing else. A second file in this package would make that command
+// fail with "undefined: ..." (it did, once), so everything main needs stays in
+// main.go. Helpers that can live elsewhere belong in an internal package.
+func TestMainPackageIsASingleFile(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	require.NoError(t, err)
+
+	var sources []string
+	for _, f := range files {
+		if !strings.HasSuffix(f, "_test.go") {
+			sources = append(sources, f)
+		}
+	}
+	assert.Equal(t, []string{"main.go"}, sources)
+}
