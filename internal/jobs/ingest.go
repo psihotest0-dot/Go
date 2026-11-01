@@ -176,7 +176,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 		var enrichedBatch []string
 		for k, chunk := range batchChunks {
-			enrichedBatch = append(enrichedBatch, fmt.Sprintf("[Файл: %s - Chunk %d] %s", file.FileName, i+k, chunk))
+			enrichedBatch = append(enrichedBatch, ingest.EmbeddingText(ingest.ChunkTypeRaw, file.FileName, i+k, chunk))
 		}
 
 		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch, false)
@@ -204,7 +204,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			userIDs = append(userIDs, file.UserID)
 			chunkIndices = append(chunkIndices, int32(i+j))
 			texts = append(texts, chunk)
-			chunkTypes = append(chunkTypes, "raw_text")
+			chunkTypes = append(chunkTypes, ingest.ChunkTypeRaw)
 			metadatas = append(metadatas, "{}")
 
 			if len(vectors[j]) != config.VectorDimension {
@@ -234,6 +234,8 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			Embeddings:   embeddings,
 			ChunkTypes:   chunkTypes,
 			Metadatas:    metadatas,
+
+			EmbeddingModel: config.DefaultEmbedModel,
 		})
 		if err != nil {
 			return w.fail(ctx, job, file, fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err))

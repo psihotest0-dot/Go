@@ -1,3 +1,13 @@
+// Command reembed recomputes the vectors in the database with the embedding
+// service that is running. Run it after the embedding model changed (and after
+// the service was rebuilt): vectors of two models are not comparable, so a
+// library searched with the wrong one finds nothing sensible.
+//
+//	go run ./cmd/reembed -force        # every memory and chunk, whatever it says
+//	go run ./cmd/reembed               # only rows not made by the current model
+//
+// Stop the backend first, or accept that rows it writes meanwhile are done
+// again on the next run.
 package main
 
 import (
@@ -6,14 +16,12 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
+	"os/signal"
 
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
-
-	"github.com/google/uuid"
-	pgvector "github.com/pgvector/pgvector-go"
+	"go-monolith/internal/reembed"
 )
 
 func run() error {
@@ -21,16 +29,22 @@ func run() error {
 	slog.SetDefault(logger)
 
 	batchSize := flag.Int("batch", 64, "batch size for re-embedding")
-	modelName := flag.String("model", "intfloat/multilingual-e5-small", "embedding model name")
-	filterModel := flag.String("filter-model", "", "model to filter out (only embed if current model != filter-model)")
+	filterModel := flag.String("filter-model", "", "memories: skip rows already recorded as made by this model (default: the current model)")
+	force := flag.Bool("force", false, "recompute every row, whatever model it says it was made by")
+	memories := flag.Bool("memories", true, "re-embed memories")
+	chunks := flag.Bool("chunks", true, "re-embed document chunks")
+	migrate := flag.Bool("migrate", false, "apply database migrations first (run from the repository root)")
 	flag.Parse()
 
-	if *filterModel == "" {
-		*filterModel = *modelName
-	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	cfg := config.Load()
-	ctx := context.Background()
+	if *migrate {
+		if err := db.RunMigrations(cfg.DatabaseURL); err != nil {
+			return err
+		}
+	}
 
 	database, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -39,78 +53,29 @@ func run() error {
 	defer database.Close()
 
 	embedder := llm.NewHTTPEmbedder(database)
-
-	limit := int32(*batchSize)
-
-	logger.Info("Starting re-embedding process", slog.Int("batch_size", *batchSize), slog.String("model", *modelName), slog.String("filter_model", *filterModel))
-
-	lastCreatedAt := time.Time{}
-	lastID := uuid.Nil
-
-	totalProcessed := 0
-
-	for {
-		memories, err := database.Queries.GetAllMemoriesForReembedding(ctx, db.GetAllMemoriesForReembeddingParams{
-			LastCreatedAt:  lastCreatedAt,
-			LastID:         lastID,
-			EmbeddingModel: *filterModel,
-			Limit:          limit,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to get memories: %w", err)
-		}
-
-		if len(memories) == 0 {
-			break
-		}
-
-		texts := make([]string, len(memories))
-		ids := make([]uuid.UUID, len(memories))
-		for i, mem := range memories {
-			texts[i] = mem.Content
-			ids[i] = mem.ID
-		}
-
-		batchCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		vectors, err := embedder.EmbedTexts(batchCtx, texts, false)
-		cancel()
-
-		if err != nil {
-			return fmt.Errorf("failed to embed texts: %w", err)
-		}
-
-		if len(vectors) != len(memories) {
-			return fmt.Errorf("embedder returned %d vectors for %d memories, expected exact match", len(vectors), len(memories))
-		}
-
-		pgVectors := make([]pgvector.Vector, len(vectors))
-		for i, v := range vectors {
-			if len(v) != config.VectorDimension {
-				return fmt.Errorf("vector for memory %s has incorrect dimensions: expected %d, got %d", ids[i], config.VectorDimension, len(v))
-			}
-			pgVectors[i] = pgvector.NewVector(v)
-		}
-
-		err = database.Queries.UpdateMemoryEmbeddingsBatch(ctx, db.UpdateMemoryEmbeddingsBatchParams{
-			EmbeddingModel: *modelName,
-			Ids:            ids,
-			Embeddings:     pgVectors,
-		})
-		if err != nil {
-			return fmt.Errorf("failed to update memory embeddings batch: %w", err)
-		}
-
-		lastMemory := memories[len(memories)-1]
-		if lastMemory.CreatedAt.Valid {
-			lastCreatedAt = lastMemory.CreatedAt.Time
-		}
-		lastID = lastMemory.ID
-
-		totalProcessed += len(memories)
-		logger.Info("processed batch", slog.Int("batch_size", len(memories)), slog.Int("total", totalProcessed))
+	// Refuse to write vectors of the wrong model before touching a single row.
+	if err := embedder.CheckModel(ctx); err != nil {
+		return err
 	}
 
-	logger.Info("re-embedding process complete", slog.Int("total", totalProcessed))
+	opts := reembed.Options{BatchSize: *batchSize, Force: *force, FilterModel: *filterModel, Log: logger}
+	logger.Info("starting re-embedding", slog.String("model", config.DefaultEmbedModel), slog.Bool("force", *force))
+
+	if *memories {
+		n, err := reembed.Memories(ctx, database, embedder, opts)
+		logger.Info("memories done", slog.Int("rewritten", n))
+		if err != nil {
+			return err
+		}
+	}
+	if *chunks {
+		n, err := reembed.Chunks(ctx, database, embedder, opts)
+		logger.Info("chunks done", slog.Int("rewritten", n))
+		if err != nil {
+			return err
+		}
+	}
+	logger.Info("re-embedding complete; rebuild the vector indexes (REINDEX INDEX CONCURRENTLY idx_document_chunks_embedding, idx_memories_embedding)")
 	return nil
 }
 

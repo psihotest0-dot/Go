@@ -62,7 +62,7 @@ WHERE c.file_id = $1 AND c.user_id = $2 AND f.deleted_at IS NULL
 ORDER BY c.chunk_index ASC;
 
 -- name: CreateDocumentChunksBatch :exec
-INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
 SELECT
     unnest(@file_ids::uuid[]),
     unnest(@user_ids::uuid[]),
@@ -70,7 +70,31 @@ SELECT
     unnest(@texts::text[]),
     unnest(@embeddings::vector[]),
     unnest(@chunk_types::text[]),
-    CAST(unnest(@metadatas::text[]) AS jsonb);
+    CAST(unnest(@metadatas::text[]) AS jsonb),
+    sqlc.arg('embedding_model')::text;
+
+-- The chunks whose vector was not made by the given model (or not known to be),
+-- after last_id, with what is needed to rebuild the text that was embedded.
+-- Soft deleted files are included: they can be restored. force = true returns
+-- every chunk (for vectors whose recorded model cannot be trusted).
+-- name: GetChunksForReembedding :many
+SELECT c.id, c.chunk_type, c.chunk_index, c.text, f.file_name
+FROM document_chunks c
+JOIN ingested_files f ON f.id = c.file_id
+WHERE c.id > sqlc.arg('last_id')::uuid
+  AND (sqlc.arg('force')::boolean OR c.embedding_model IS DISTINCT FROM sqlc.arg('embedding_model')::text)
+ORDER BY c.id ASC
+LIMIT sqlc.arg('limit');
+
+-- name: UpdateChunkEmbeddingsBatch :exec
+UPDATE document_chunks
+SET embedding = v.embedding,
+    embedding_model = sqlc.arg('embedding_model')::text
+FROM (
+    SELECT unnest(sqlc.arg('ids')::uuid[]) AS id,
+           unnest(sqlc.arg('embeddings')::vector[]) AS embedding
+) v
+WHERE document_chunks.id = v.id;
 
 -- name: GetDocumentChunksWithFile :many
 SELECT c.*, f.file_name

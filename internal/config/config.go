@@ -10,8 +10,12 @@ import (
 
 const VectorDimension = 384
 
-// DefaultEmbedModel is the embedding model recorded on rows written by the
-// embedder sidecar's default configuration.
+// DefaultEmbedModel is the embedding model of the whole system: every vector in
+// the database (chunks, memories, the embedding cache) comes from it, and the
+// embedding service must run exactly this one - llm.HTTPEmbedder refuses
+// answers from any other. It is also the name services/embedder loads. Changing
+// it means changing the service, re-embedding everything (cmd/reembed) and, if
+// the dimension differs, VectorDimension and the vector(...) columns.
 const DefaultEmbedModel = "intfloat/multilingual-e5-small"
 
 // DefaultListenAddr keeps the API on the loopback interface: identity is a bare

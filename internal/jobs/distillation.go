@@ -15,6 +15,7 @@ import (
 
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
+	"go-monolith/internal/ingest"
 	"go-monolith/internal/llm"
 )
 
@@ -327,9 +328,9 @@ Constraints:
 
 			// Store it directly
 			_, err = w.dbClient.SqlDB.ExecContext(ctx,
-				`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-				file.ID, file.UserID, nextConceptIndex, result.Summary, embedding, "concept_summary", metaBytes,
+				`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				file.ID, file.UserID, nextConceptIndex, result.Summary, embedding, ingest.ChunkTypeConcept, metaBytes, config.DefaultEmbedModel,
 			)
 			if err != nil {
 				slog.Error("failed to insert concept_summary",

@@ -122,6 +122,14 @@ func TestIngestWorkerStoresTextWithNULBytes(t *testing.T) {
 		assert.False(t, strings.ContainsRune(c, 0), "chunk still has a NUL byte: %q", c)
 	}
 	assert.Contains(t, strings.Join(chunks, ""), "Първи ред с нулев байт.")
+
+	// New chunks say which model made their vectors, so that a change of model
+	// can tell what has to be recomputed.
+	var wrong int
+	require.NoError(t, e.database.SqlDB.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM document_chunks WHERE file_id = $1 AND embedding_model IS DISTINCT FROM $2`,
+		file.ID, config.DefaultEmbedModel).Scan(&wrong))
+	assert.Zero(t, wrong, "every chunk must be marked with the current embedding model")
 }
 
 // An empty result used to leave a "completed" file with zero chunks, which looks

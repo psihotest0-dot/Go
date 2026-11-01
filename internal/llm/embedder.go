@@ -16,6 +16,7 @@ import (
 	"github.com/lib/pq"
 	pgvector "github.com/pgvector/pgvector-go"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/metrics"
 )
@@ -75,10 +76,63 @@ type EmbedResponse struct {
 	Vectors [][]float32 `json:"vectors"`
 }
 
+// ErrEmbedderModel is returned when the embedding service answers with a model
+// other than the one the vectors in the database come from. Vectors of different
+// models are not comparable, so a mismatch must stop the work instead of storing
+// them: on 2026-11-01 the container turned out to run a different model than the
+// code, the database and the documentation said, and nothing noticed.
+var ErrEmbedderModel = errors.New("the embedding service runs a different model than expected")
+
+// cacheKey is the key of a text in embedding_cache. The model is part of it: the
+// text alone (the old key) returned the vector of whatever model had embedded it
+// first, so after a change of model the cache would have mixed both.
+func cacheKey(model, prefixedText string) string {
+	return hashContent(model + "\n" + prefixedText)
+}
+
 func hashContent(content string) string {
 	h := sha256.New()
 	h.Write([]byte(content))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// CheckModel asks the service which model it runs and reports a mismatch with
+// config.DefaultEmbedModel (ErrEmbedderModel). An unreachable service is an
+// ordinary error; callers log both and carry on, since EmbedTexts refuses a
+// wrong model by itself.
+func (c *HTTPEmbedder) CheckModel(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("embedder health check failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("embedder health check returned status %d", resp.StatusCode)
+	}
+	var health EmbedResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		return fmt.Errorf("failed to decode the embedder health response: %w", err)
+	}
+	return checkEmbedResponse(health)
+}
+
+// checkEmbedResponse rejects an answer from the wrong model or of the wrong size.
+func checkEmbedResponse(r EmbedResponse) error {
+	if r.Model != config.DefaultEmbedModel {
+		return fmt.Errorf("%w: it runs %q, the database holds vectors of %q (rebuild the embedder image from services/embedder)",
+			ErrEmbedderModel, r.Model, config.DefaultEmbedModel)
+	}
+	if r.Dim != 0 && r.Dim != config.VectorDimension {
+		return fmt.Errorf("%w: it returns %d-dimensional vectors, the database expects %d",
+			ErrEmbedderModel, r.Dim, config.VectorDimension)
+	}
+	return nil
 }
 
 func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery bool) ([][]float32, error) {
@@ -109,7 +163,7 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery b
 
 	// 1. Check cache for each prefixed text
 	for i, text := range prefixedTexts {
-		h := hashContent(text)
+		h := cacheKey(config.DefaultEmbedModel, text)
 		cached, err := c.db.Queries.GetEmbeddingCacheByHash(ctx, h)
 		if err == nil {
 			// Found in cache
@@ -148,6 +202,10 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery b
 		if err := json.NewDecoder(resp.Body).Decode(&embedResp); err != nil {
 			return nil, fmt.Errorf("failed to decode response: %w", err)
 		}
+		if err := checkEmbedResponse(embedResp); err != nil {
+			// Neither the vectors nor the cache may take anything from this answer.
+			return nil, err
+		}
 
 		if len(embedResp.Vectors) != len(textsToEmbed) {
 			return nil, fmt.Errorf("returned vectors count %d does not match request %d", len(embedResp.Vectors), len(textsToEmbed))
@@ -158,7 +216,7 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery b
 			origIdx := indicesToEmbed[i]
 			resultVectors[origIdx] = vec
 
-			h := hashContent(textsToEmbed[i])
+			h := cacheKey(config.DefaultEmbedModel, textsToEmbed[i])
 			pgVec := pgvector.NewVector(vec)
 
 			_, cacheErr := c.db.Queries.CreateEmbeddingCache(ctx, db.CreateEmbeddingCacheParams{

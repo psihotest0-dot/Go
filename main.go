@@ -121,6 +121,13 @@ func run() error {
 
 	llmClient := llm.NewLemonadeClient()
 	embedder := llm.NewHTTPEmbedder(database)
+	// A wrong model is loud here and refused in EmbedTexts; an embedder that is
+	// merely not up yet is not fatal, the backend retries on every request.
+	if err := embedder.CheckModel(ctx); err != nil {
+		logger.Error("embedding service check failed", slog.Any("error", err))
+	} else {
+		logger.Info("embedding service ready", slog.String("model", config.DefaultEmbedModel))
+	}
 
 	catMgr, err := retrieval.NewCategoryManager(ctx, embedder)
 	if err != nil {

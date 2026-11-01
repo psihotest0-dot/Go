@@ -18,7 +18,7 @@ import (
 const createDocumentChunk = `-- name: CreateDocumentChunk :one
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at, chunk_type, metadata
+RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at, chunk_type, metadata, embedding_model
 `
 
 type CreateDocumentChunkParams struct {
@@ -48,12 +48,13 @@ func (q *Queries) CreateDocumentChunk(ctx context.Context, arg CreateDocumentChu
 		&i.CreatedAt,
 		&i.ChunkType,
 		&i.Metadata,
+		&i.EmbeddingModel,
 	)
 	return i, err
 }
 
 const createDocumentChunksBatch = `-- name: CreateDocumentChunksBatch :exec
-INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
+INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
 SELECT
     unnest($1::uuid[]),
     unnest($2::uuid[]),
@@ -61,17 +62,19 @@ SELECT
     unnest($4::text[]),
     unnest($5::vector[]),
     unnest($6::text[]),
-    CAST(unnest($7::text[]) AS jsonb)
+    CAST(unnest($7::text[]) AS jsonb),
+    $8::text
 `
 
 type CreateDocumentChunksBatchParams struct {
-	FileIds      []uuid.UUID       `json:"file_ids"`
-	UserIds      []uuid.UUID       `json:"user_ids"`
-	ChunkIndices []int32           `json:"chunk_indices"`
-	Texts        []string          `json:"texts"`
-	Embeddings   []pgvector.Vector `json:"embeddings"`
-	ChunkTypes   []string          `json:"chunk_types"`
-	Metadatas    []string          `json:"metadatas"`
+	FileIds        []uuid.UUID       `json:"file_ids"`
+	UserIds        []uuid.UUID       `json:"user_ids"`
+	ChunkIndices   []int32           `json:"chunk_indices"`
+	Texts          []string          `json:"texts"`
+	Embeddings     []pgvector.Vector `json:"embeddings"`
+	ChunkTypes     []string          `json:"chunk_types"`
+	Metadatas      []string          `json:"metadatas"`
+	EmbeddingModel string            `json:"embedding_model"`
 }
 
 func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocumentChunksBatchParams) error {
@@ -83,6 +86,7 @@ func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocum
 		pq.Array(arg.Embeddings),
 		pq.Array(arg.ChunkTypes),
 		pq.Array(arg.Metadatas),
+		arg.EmbeddingModel,
 	)
 	return err
 }
@@ -149,8 +153,71 @@ func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFile
 	return err
 }
 
+const getChunksForReembedding = `-- name: GetChunksForReembedding :many
+SELECT c.id, c.chunk_type, c.chunk_index, c.text, f.file_name
+FROM document_chunks c
+JOIN ingested_files f ON f.id = c.file_id
+WHERE c.id > $1::uuid
+  AND ($2::boolean OR c.embedding_model IS DISTINCT FROM $3::text)
+ORDER BY c.id ASC
+LIMIT $4
+`
+
+type GetChunksForReembeddingParams struct {
+	LastID         uuid.UUID `json:"last_id"`
+	Force          bool      `json:"force"`
+	EmbeddingModel string    `json:"embedding_model"`
+	Limit          int32     `json:"limit"`
+}
+
+type GetChunksForReembeddingRow struct {
+	ID         uuid.UUID `json:"id"`
+	ChunkType  string    `json:"chunk_type"`
+	ChunkIndex int32     `json:"chunk_index"`
+	Text       string    `json:"text"`
+	FileName   string    `json:"file_name"`
+}
+
+// The chunks whose vector was not made by the given model (or not known to be),
+// after last_id, with what is needed to rebuild the text that was embedded.
+// Soft deleted files are included: they can be restored. force = true returns
+// every chunk (for vectors whose recorded model cannot be trusted).
+func (q *Queries) GetChunksForReembedding(ctx context.Context, arg GetChunksForReembeddingParams) ([]GetChunksForReembeddingRow, error) {
+	rows, err := q.db.QueryContext(ctx, getChunksForReembedding,
+		arg.LastID,
+		arg.Force,
+		arg.EmbeddingModel,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetChunksForReembeddingRow{}
+	for rows.Next() {
+		var i GetChunksForReembeddingRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChunkType,
+			&i.ChunkIndex,
+			&i.Text,
+			&i.FileName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getDocumentChunksByFile = `-- name: GetDocumentChunksByFile :many
-SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, c.chunk_type, c.metadata FROM document_chunks c
+SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, c.chunk_type, c.metadata, c.embedding_model FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.file_id = $1 AND c.user_id = $2 AND f.deleted_at IS NULL
 ORDER BY c.chunk_index ASC
@@ -180,6 +247,7 @@ func (q *Queries) GetDocumentChunksByFile(ctx context.Context, arg GetDocumentCh
 			&i.CreatedAt,
 			&i.ChunkType,
 			&i.Metadata,
+			&i.EmbeddingModel,
 		); err != nil {
 			return nil, err
 		}
@@ -195,7 +263,7 @@ func (q *Queries) GetDocumentChunksByFile(ctx context.Context, arg GetDocumentCh
 }
 
 const getDocumentChunksWithFile = `-- name: GetDocumentChunksWithFile :many
-SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, c.chunk_type, c.metadata, f.file_name
+SELECT c.id, c.file_id, c.user_id, c.chunk_index, c.text, c.embedding, c.created_at, c.chunk_type, c.metadata, c.embedding_model, f.file_name
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.id = ANY($1::uuid[]) AND c.user_id = $2
@@ -208,16 +276,17 @@ type GetDocumentChunksWithFileParams struct {
 }
 
 type GetDocumentChunksWithFileRow struct {
-	ID         uuid.UUID       `json:"id"`
-	FileID     uuid.UUID       `json:"file_id"`
-	UserID     uuid.UUID       `json:"user_id"`
-	ChunkIndex int32           `json:"chunk_index"`
-	Text       string          `json:"text"`
-	Embedding  pgvector.Vector `json:"embedding"`
-	CreatedAt  sql.NullTime    `json:"created_at"`
-	ChunkType  string          `json:"chunk_type"`
-	Metadata   json.RawMessage `json:"metadata"`
-	FileName   string          `json:"file_name"`
+	ID             uuid.UUID       `json:"id"`
+	FileID         uuid.UUID       `json:"file_id"`
+	UserID         uuid.UUID       `json:"user_id"`
+	ChunkIndex     int32           `json:"chunk_index"`
+	Text           string          `json:"text"`
+	Embedding      pgvector.Vector `json:"embedding"`
+	CreatedAt      sql.NullTime    `json:"created_at"`
+	ChunkType      string          `json:"chunk_type"`
+	Metadata       json.RawMessage `json:"metadata"`
+	EmbeddingModel sql.NullString  `json:"embedding_model"`
+	FileName       string          `json:"file_name"`
 }
 
 func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, arg GetDocumentChunksWithFileParams) ([]GetDocumentChunksWithFileRow, error) {
@@ -239,6 +308,7 @@ func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, arg GetDocument
 			&i.CreatedAt,
 			&i.ChunkType,
 			&i.Metadata,
+			&i.EmbeddingModel,
 			&i.FileName,
 		); err != nil {
 			return nil, err
@@ -700,6 +770,28 @@ type SoftDeleteIngestedFileParams struct {
 // document working.
 func (q *Queries) SoftDeleteIngestedFile(ctx context.Context, arg SoftDeleteIngestedFileParams) error {
 	_, err := q.db.ExecContext(ctx, softDeleteIngestedFile, arg.ID, arg.UserID)
+	return err
+}
+
+const updateChunkEmbeddingsBatch = `-- name: UpdateChunkEmbeddingsBatch :exec
+UPDATE document_chunks
+SET embedding = v.embedding,
+    embedding_model = $1::text
+FROM (
+    SELECT unnest($2::uuid[]) AS id,
+           unnest($3::vector[]) AS embedding
+) v
+WHERE document_chunks.id = v.id
+`
+
+type UpdateChunkEmbeddingsBatchParams struct {
+	EmbeddingModel string            `json:"embedding_model"`
+	Ids            []uuid.UUID       `json:"ids"`
+	Embeddings     []pgvector.Vector `json:"embeddings"`
+}
+
+func (q *Queries) UpdateChunkEmbeddingsBatch(ctx context.Context, arg UpdateChunkEmbeddingsBatchParams) error {
+	_, err := q.db.ExecContext(ctx, updateChunkEmbeddingsBatch, arg.EmbeddingModel, pq.Array(arg.Ids), pq.Array(arg.Embeddings))
 	return err
 }
 

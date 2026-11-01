@@ -187,7 +187,7 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		Content:         fact.Statement,
 		Status:          action.status,
 		Embedding:       vec,
-		EmbeddingModel:  "intfloat/multilingual-e5-small",
+		EmbeddingModel:  config.DefaultEmbedModel,
 		SourceMessageID: uuid.NullUUID{UUID: msg.ID, Valid: true},
 		Importance:      1,
 		Metadata:        pqtype.NullRawMessage{RawMessage: metaBytes, Valid: true},
