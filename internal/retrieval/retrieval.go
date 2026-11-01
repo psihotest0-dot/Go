@@ -9,6 +9,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -22,12 +23,6 @@ import (
 )
 
 const (
-	// categoryBoostMargin is how far the best category centroid must be ahead
-	// of the runner-up before its chunks get boosted.
-	categoryBoostMargin = 0.08
-	// categoryBoostAmount is the score bonus given to chunks of the boosted category.
-	categoryBoostAmount = 0.08
-
 	// chunkMaxDistance is the cosine distance beyond which a raw chunk is not a
 	// vector match for the question. Measured on 2026-11-01 with E5-small on four
 	// books (5 076 chunks): the nearest relevant chunk of 20 questions was at
@@ -36,6 +31,16 @@ const (
 	// a margin and drops the four farthest unrelated questions; the old 0.45
 	// dropped nothing. Re-measure after a change of model.
 	chunkMaxDistance = 0.20
+
+	// chunkCrossLanguageMargin is added to chunkMaxDistance for a chunk written in
+	// another script than the question (see the SearchHybridChunks query). With eight
+	// books, three of them English, the nearest relevant chunk of a Bulgarian question
+	// was at 0.105-0.171 in a Bulgarian book and at 0.168-0.212 in an English one;
+	// 0.20 dropped the English answers to two of eleven questions, while a plain
+	// threshold of 0.22 for every chunk gave the questions the library cannot answer
+	// 5.7 results instead of 2.7. The margin widens the threshold only where the
+	// language gap is.
+	chunkCrossLanguageMargin = 0.03
 
 	// conceptMaxDistance is the same for concept summaries. They are written in
 	// English, so a Bulgarian question is farther from them: the nearest summary
@@ -53,14 +58,12 @@ const (
 type RetrievalService struct {
 	db       *db.Database
 	embedder llm.Embedder
-	catMgr   *CategoryManager
 }
 
-func NewRetrievalService(database *db.Database, embedder llm.Embedder, catMgr *CategoryManager) *RetrievalService {
+func NewRetrievalService(database *db.Database, embedder llm.Embedder) *RetrievalService {
 	return &RetrievalService{
 		db:       database,
 		embedder: embedder,
-		catMgr:   catMgr,
 	}
 }
 
@@ -140,34 +143,6 @@ func (s *RetrievalService) embedQuery(ctx context.Context, query string) ([]floa
 	return vectors[0], nil
 }
 
-// boostFor returns the category whose chunks should be boosted for queryVec,
-// or an empty category when no centroid clearly wins.
-func (s *RetrievalService) boostFor(queryVec []float32) (string, float64) {
-	if s.catMgr == nil {
-		return "", 0
-	}
-
-	bestCat := ""
-	bestScore := float32(-1.0)
-	secondBestScore := float32(-1.0)
-
-	for cat, centroid := range s.catMgr.GetAllCentroids() {
-		score := CosineSimilarity(queryVec, centroid)
-		if score > bestScore {
-			secondBestScore = bestScore
-			bestScore = score
-			bestCat = cat
-		} else if score > secondBestScore {
-			secondBestScore = score
-		}
-	}
-
-	if bestScore-secondBestScore >= categoryBoostMargin {
-		return bestCat, categoryBoostAmount
-	}
-	return "", 0
-}
-
 // searchMemories runs the hybrid memory search, or the text-only search when
 // queryVec is nil.
 func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID, query string, limit int, queryVec []float32) ([]SearchResult, error) {
@@ -206,7 +181,7 @@ func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID,
 	return res, nil
 }
 
-// searchChunks runs the hybrid chunk search with category boosting, or the
+// searchChunks runs the hybrid chunk search, or the
 // text-only search when queryVec is nil. The words of query - and of themes,
 // the topics of the concept summaries that matched - are what the lexical half
 // looks for in the chunk text.
@@ -234,18 +209,17 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 		return res, nil
 	}
 
-	boostCategory, boostAmount := s.boostFor(queryVec)
 	var rows []db.SearchHybridChunksRow
 	err := s.db.WithSearchSettings(ctx, func(q *db.Queries) (err error) {
 		rows, err = q.SearchHybridChunks(ctx, db.SearchHybridChunksParams{
-			UserID:        userID,
-			MatchCount:    int32(limit),
-			Embedding:     pgvector.NewVector(queryVec),
-			VectorLimit:   db.SearchVectorCandidates,
-			MaxDistance:   chunkMaxDistance,
-			TsQuery:       tsQuery,
-			BoostCategory: boostCategory,
-			BoostAmount:   boostAmount,
+			UserID:              userID,
+			MatchCount:          int32(limit),
+			Embedding:           pgvector.NewVector(queryVec),
+			VectorLimit:         db.SearchVectorCandidates,
+			MaxDistance:         chunkMaxDistance,
+			QueryCyrillic:       queryIsCyrillic(query),
+			CrossLanguageMargin: chunkCrossLanguageMargin,
+			TsQuery:             tsQuery,
 		})
 		return err
 	})
@@ -411,6 +385,12 @@ func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUI
 	return memories, conceptChunks, nil
 }
 
+// SearchRawChunks is the search behind the search_documents tool: the chunks of
+// the books that answer a question. The concept summaries closest to the question
+// lend their themes to the text half of the search (as in SearchAll), which is what
+// finds an English book from a Bulgarian question: on eleven questions with a known
+// answer it put a chunk of the right book into the first five results 9 times,
+// against 6 times without the themes. The summaries themselves are not returned.
 func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {
 	start := time.Now()
 	defer func() {
@@ -421,7 +401,32 @@ func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	return s.searchChunks(ctx, userID, query, nil, limit, queryVec)
+
+	var themes []string
+	if queryVec != nil {
+		// The themes only widen the search; without them it still works.
+		if _, themes, err = s.searchConcepts(ctx, userID, queryVec); err != nil {
+			slog.Warn("failed to search concept chunks for themes", "error", err)
+			themes = nil
+		}
+	}
+	return s.searchChunks(ctx, userID, query, themes, limit, queryVec)
+}
+
+// queryIsCyrillic reports whether text is written mostly in Cyrillic, which is
+// what the language-aware distance threshold compares the chunks against. Text
+// without letters counts as Cyrillic (the language of the owner's questions).
+func queryIsCyrillic(text string) bool {
+	cyrillic, latin := 0, 0
+	for _, r := range text {
+		switch {
+		case unicode.Is(unicode.Cyrillic, r):
+			cyrillic++
+		case unicode.Is(unicode.Latin, r):
+			latin++
+		}
+	}
+	return cyrillic >= latin
 }
 
 func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {

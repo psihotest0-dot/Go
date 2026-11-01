@@ -125,7 +125,7 @@ func newSummaryEnv(t *testing.T) *summaryEnv {
 		MockLLM: &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("Отговор")}},
 		answer:  "резюме-текст",
 	}
-	retrievalService := retrieval.NewRetrievalService(database, &llm.MockEmbedder{}, nil)
+	retrievalService := retrieval.NewRetrievalService(database, &llm.MockEmbedder{})
 
 	return &summaryEnv{
 		o:      NewOrchestrator(database, retrievalService, model, &MockToolRegistry{}),

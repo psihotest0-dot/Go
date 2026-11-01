@@ -13,7 +13,13 @@ import (
 const (
 	// SearchVectorCandidates is how many nearest chunks the HNSW scan returns
 	// before the user, status and type filters are applied.
-	SearchVectorCandidates = 200
+	//
+	// 400, not 200: with eight books the nearest 200 chunks of a question are dominated
+	// by one or two of them, and the passages of the book that answers it can lie just
+	// behind. On 19 questions with a known answer, 400 candidates put a relevant chunk
+	// into the first five results 14 times instead of 12, without losing any (the time
+	// of a search stays at about 10 ms: 300, 400 and 800 candidates did the same).
+	SearchVectorCandidates = 400
 
 	// SearchEfSearch is hnsw.ef_search. The index returns at most this many rows
 	// (default 40), so it must not be smaller than SearchVectorCandidates.

@@ -45,7 +45,7 @@ func newEnv(t *testing.T, embedder llm.Embedder) *env {
 	if embedder == nil {
 		embedder = &llm.MockEmbedder{}
 	}
-	e.svc = NewService(database, retrieval.NewRetrievalService(database, embedder, nil))
+	e.svc = NewService(database, retrieval.NewRetrievalService(database, embedder))
 	return e
 }
 
@@ -280,7 +280,7 @@ func TestFailedApplyReopensTheProposal(t *testing.T) {
 	assert.Empty(t, e.memories(t, e.userID))
 
 	// The embedder is back.
-	e.svc.retrieval = retrieval.NewRetrievalService(e.database, &llm.MockEmbedder{}, nil)
+	e.svc.retrieval = retrieval.NewRetrievalService(e.database, &llm.MockEmbedder{})
 	_, err = e.svc.Approve(e.ctx, e.userID, p.ID)
 	require.NoError(t, err)
 	assert.Len(t, e.memories(t, e.userID), 1)

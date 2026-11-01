@@ -33,7 +33,7 @@ func proposalOrchestrator(t *testing.T, e *toolEnv, toolName, toolArgs string) *
 		{toolCallChunk(0, "call-1", toolName, toolArgs)},
 		{textChunk("Предлагам да го запомня — потвърди ми.")},
 	}}
-	return NewOrchestrator(e.db, retrieval.NewRetrievalService(e.db, &llm.MockEmbedder{}, nil), model, e.reg)
+	return NewOrchestrator(e.db, retrieval.NewRetrievalService(e.db, &llm.MockEmbedder{}), model, e.reg)
 }
 
 func TestStreamChatReportsProposalsToTheClient(t *testing.T) {

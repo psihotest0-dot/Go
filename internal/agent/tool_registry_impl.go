@@ -128,15 +128,22 @@ func intArg(args map[string]interface{}, name string, fallback int) int {
 	return fallback
 }
 
-// maxToolSearchResults is the most results one search tool call returns, so the
-// answer fits the model's context. It is also the default, and the schema in
-// toolDefinitions tells the model so.
-const maxToolSearchResults = 5
+// The most results one call of a search tool returns, so the answer fits the model's
+// context. Each is also the default of its tool, and the schema in toolDefinitions
+// tells the model so.
+//
+// Documents get 8: on 33 questions with a known answer, the right book was among the
+// results 26 times with 5 and 28 with 8 (a relevant passage 20 times against 22), at
+// about 1 000 more tokens per call - the tool results may use 4 000 per round.
+// Memories stay at 5; nothing was measured for them.
+const (
+	maxMemorySearchResults   = 5
+	maxDocumentSearchResults = 8
+)
 
-// searchLimitArg reads the optional "limit" of a search tool, capped at
-// maxToolSearchResults.
-func searchLimitArg(args map[string]interface{}) int {
-	return min(intArg(args, "limit", maxToolSearchResults), maxToolSearchResults)
+// searchLimitArg reads the optional "limit" of a search tool, capped at maxResults.
+func searchLimitArg(args map[string]interface{}, maxResults int) int {
+	return min(intArg(args, "limit", maxResults), maxResults)
 }
 
 // maxFallbackQueryRunes bounds the user message reused as a search query. The
@@ -362,7 +369,7 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 		}, nil
 	}
 
-	limit := searchLimitArg(args)
+	limit := searchLimitArg(args, maxMemorySearchResults)
 
 	results, err := r.retrieval.SearchMemories(ctx, userID, query, limit)
 	if err != nil {
@@ -399,7 +406,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		}, nil
 	}
 
-	limit := searchLimitArg(args)
+	limit := searchLimitArg(args, maxDocumentSearchResults)
 
 	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
 	if err != nil {

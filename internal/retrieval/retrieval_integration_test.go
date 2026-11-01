@@ -48,7 +48,7 @@ func TestRetrieval_Integration(t *testing.T) {
 	// but the requirement is to use MockEmbedder or real depending on availability.
 	// We'll use HTTPEmbedder if the URL is provided.
 	embedder := llm.NewHTTPEmbedder(d)
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	content := "The capital of France is Paris."
 	mem, err := svc.CreateMemory(ctx, user.ID, content, 5, "active", pqtype.NullRawMessage{})
@@ -92,7 +92,7 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	}()
 
 	embedder := llm.NewHTTPEmbedder(d)
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	facts := []string{
 		"Кучето лае през нощта.",

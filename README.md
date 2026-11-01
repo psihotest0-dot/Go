@@ -44,6 +44,13 @@ Retrieval operates via **Hybrid Search**, combining:
 
 Results are merged directly inside optimized SQL CTEs using Reciprocal Rank Fusion (RRF) with `k=60` and returned to the caller.
 
+Two details matter for a library with books in more than one language:
+* **Associative search.** The `search_documents` tool first finds the concept summaries nearest to the question and lends their themes to the text side, so a Bulgarian question also finds passages of an English book (on 11 questions with a known answer, a chunk of the right book was among the first five results 11 times, against 6 before).
+* **Candidate pool and result count.** The vector scan keeps the 400 nearest chunks (not 200) before filtering, and `search_documents` returns up to 8 passages (`search_memories` 5). On 33 questions with a known answer this put a chunk of the right book among the results 27 times instead of 25, and a relevant passage 22 times instead of 19, at the same search time (about 10 ms) and about 1 000 more tokens per call.
+* **Language-aware distance limit.** A question is farther from passages in another language than from passages in its own, so a chunk whose language differs from the question's gets 0.03 more distance before it is dropped (`chunkCrossLanguageMargin`).
+
+No distance limit can tell an answer from an off-topic hit with this embedding model (nearest relevant chunks at 0.10-0.21, nearest chunks of questions the library cannot answer at 0.18-0.21), so the model that reads the results is the one that judges relevance.
+
 ### Embedding model and cache
 Every vector in the database (chunks, memories, the cache) comes from the one model named by `config.DefaultEmbedModel`. The backend checks at start that the embedder runs exactly that model and refuses to store vectors from any other.
 
@@ -144,7 +151,7 @@ Pending database migrations are applied when the backend starts (`AUTO_MIGRATE`,
 - **Database Migrations**: `go run ./cmd/migrate` (`-status` only lists what is pending), or `goose -dir migrations postgres "$DATABASE_URL" up`
 - **River Migrations**: `river db migrate-v5 --database-url "$DATABASE_URL"`
 - **Generate SQLC** (after changing `internal/db/queries` or a migration): `sqlc generate`
-- **Library maintenance**: `go run ./cmd/reingest -list | -file <id> | -all` (extract and embed the stored originals again; the running backend does the work), `go run ./cmd/reembed [-force]` (see [Embedding model and cache](#embedding-model-and-cache)).
+- **Library maintenance**: `go run ./cmd/reingest -list | -file <id> | -all` (extract and embed the stored originals again; the running backend does the work), `go run ./cmd/reembed [-force]` (see [Embedding model and cache](#embedding-model-and-cache)), `go run ./cmd/recategorize [-apply]` (work out the category of the files again from the stored vectors; it only shows the differences without `-apply`).
 
 ### Scripts
 Backup, restore and reindex scripts are in `scripts/`; `Backup and Restore.md` has the full guide (in Bulgarian).

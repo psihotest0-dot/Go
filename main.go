@@ -185,7 +185,7 @@ func run() error {
 
 	apiService := api.New(database, embedder).WithUploadLimit(cfg.MaxUploadBytes)
 
-	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
+	retrievalService := retrieval.NewRetrievalService(database, embedder)
 	proposalService := proposals.NewService(database, retrievalService)
 	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database, proposalService)
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)

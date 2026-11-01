@@ -60,7 +60,7 @@ func TestOrchestratorIntegration(t *testing.T) {
 	}
 	mockTools := &MockToolRegistry{}
 
-	retrievalService := retrieval.NewRetrievalService(database, mockEmbedder, nil)
+	retrievalService := retrieval.NewRetrievalService(database, mockEmbedder)
 	orchestrator := NewOrchestrator(database, retrievalService, mockLLM, mockTools)
 
 	// Create user

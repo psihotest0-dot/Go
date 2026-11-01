@@ -536,48 +536,51 @@ func (q *Queries) SearchConceptChunks(ctx context.Context, arg SearchConceptChun
 const searchHybridChunks = `-- name: SearchHybridChunks :many
 WITH nearest AS (
     SELECT c.id, c.file_id, c.user_id, c.chunk_type,
-           (c.embedding <=> $5) AS distance
+           (c.embedding <=> $3) AS distance,
+           (c.text ~ '[А-Яа-я]{3}') AS cyrillic
     FROM document_chunks c
     WHERE c.chunk_type = 'raw_text'
-    ORDER BY c.embedding <=> $5
-    LIMIT $6
+    ORDER BY c.embedding <=> $3
+    LIMIT $4
 ),
 per_file AS (
-    SELECT GREATEST(2, CEIL($4::float8 / GREATEST(COUNT(*), 1)))::int AS max_per_file
+    SELECT GREATEST(2, CEIL($2::float8 / GREATEST(COUNT(*), 1)))::int AS max_per_file
     FROM ingested_files
-    WHERE user_id = $3 AND status = 'completed' AND deleted_at IS NULL
+    WHERE user_id = $1 AND status = 'completed' AND deleted_at IS NULL
 ),
 chunk_vector_search AS (
-    SELECT id, category, distance, rank FROM (
-        SELECT v.id, f.category, v.distance,
+    SELECT id, distance, rank FROM (
+        SELECT v.id, v.distance,
                RANK() OVER (ORDER BY v.distance) AS rank,
                ROW_NUMBER() OVER (PARTITION BY v.file_id ORDER BY v.distance) AS file_rank
         FROM nearest v
         JOIN ingested_files f ON v.file_id = f.id
-        WHERE v.user_id = $3
+        WHERE v.user_id = $1
           AND f.status = 'completed'
           AND f.deleted_at IS NULL
           AND v.chunk_type = 'raw_text'
-          AND v.distance < $7::float8
+          AND v.distance < $5::float8
+              + (CASE WHEN v.cyrillic <> $6::boolean
+                      THEN $7::float8 ELSE 0.0 END)
     ) sub
     WHERE file_rank <= (SELECT max_per_file FROM per_file)
     ORDER BY rank
     LIMIT 100
 ),
 text_matches AS (
-    SELECT c.id, c.file_id, f.category,
+    SELECT c.id, c.file_id,
            ts_rank_cd(to_tsvector('simple', c.text), to_tsquery('simple', NULLIF($8::text, '')), 32) AS ts_score
     FROM document_chunks c
     JOIN ingested_files f ON c.file_id = f.id
-    WHERE c.user_id = $3
+    WHERE c.user_id = $1
       AND f.status = 'completed'
       AND f.deleted_at IS NULL
       AND c.chunk_type = 'raw_text'
       AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF($8::text, ''))
 ),
 chunk_text_search AS (
-    SELECT id, category, sim_score, rank FROM (
-        SELECT t.id, t.category, 0.5 + 0.5 * t.ts_score AS sim_score,
+    SELECT id, sim_score, rank FROM (
+        SELECT t.id, 0.5 + 0.5 * t.ts_score AS sim_score,
                RANK() OVER (ORDER BY t.ts_score DESC) AS rank,
                ROW_NUMBER() OVER (PARTITION BY t.file_id ORDER BY t.ts_score DESC) AS file_rank
         FROM text_matches t
@@ -594,27 +597,26 @@ SELECT
         GREATEST(
             COALESCE(1.0 - cvs.distance, 0.0),
             COALESCE(cts.sim_score, 0.0)
-        ) +
-        (CASE WHEN COALESCE(cvs.category, cts.category) = $1::text THEN $2::FLOAT8 ELSE 0.0 END)
+        )
     AS FLOAT8) as score
 FROM chunk_vector_search cvs
 FULL OUTER JOIN chunk_text_search cts ON cvs.id = cts.id
 JOIN document_chunks c ON c.id = COALESCE(cvs.id, cts.id)
 JOIN ingested_files f ON c.file_id = f.id
-WHERE c.user_id = $3
+WHERE c.user_id = $1
 ORDER BY (COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0)) DESC
-LIMIT $4
+LIMIT $2
 `
 
 type SearchHybridChunksParams struct {
-	BoostCategory string          `json:"boost_category"`
-	BoostAmount   float64         `json:"boost_amount"`
-	UserID        uuid.UUID       `json:"user_id"`
-	MatchCount    int32           `json:"match_count"`
-	Embedding     pgvector.Vector `json:"embedding"`
-	VectorLimit   int32           `json:"vector_limit"`
-	MaxDistance   float64         `json:"max_distance"`
-	TsQuery       string          `json:"ts_query"`
+	UserID              uuid.UUID       `json:"user_id"`
+	MatchCount          int32           `json:"match_count"`
+	Embedding           pgvector.Vector `json:"embedding"`
+	VectorLimit         int32           `json:"vector_limit"`
+	MaxDistance         float64         `json:"max_distance"`
+	QueryCyrillic       bool            `json:"query_cyrillic"`
+	CrossLanguageMargin float64         `json:"cross_language_margin"`
+	TsQuery             string          `json:"ts_query"`
 }
 
 type SearchHybridChunksRow struct {
@@ -624,6 +626,12 @@ type SearchHybridChunksRow struct {
 	Score    float64   `json:"score"`
 }
 
+// A question in one language is farther from the passages of a book in another
+// one than from passages in its own (Bulgarian question, English book: 0.17-0.21,
+// against 0.10-0.15 within Bulgarian, for the same quality of match), so a chunk
+// whose language differs from the question's gets cross_language_margin more
+// distance before it is dropped. "Cyrillic" is decided per chunk by three letters
+// in a row.
 // At most this many chunks per file, so one long book cannot fill the whole
 // result: 2 when the library has many files, more when it has few (a library of
 // one book would otherwise return two chunks in total).
@@ -632,13 +640,13 @@ type SearchHybridChunksRow struct {
 // of the words (ts_rank_cd, normalised to 0..1) adds up to 0.5.
 func (q *Queries) SearchHybridChunks(ctx context.Context, arg SearchHybridChunksParams) ([]SearchHybridChunksRow, error) {
 	rows, err := q.db.QueryContext(ctx, searchHybridChunks,
-		arg.BoostCategory,
-		arg.BoostAmount,
 		arg.UserID,
 		arg.MatchCount,
 		arg.Embedding,
 		arg.VectorLimit,
 		arg.MaxDistance,
+		arg.QueryCyrillic,
+		arg.CrossLanguageMargin,
 		arg.TsQuery,
 	)
 	if err != nil {

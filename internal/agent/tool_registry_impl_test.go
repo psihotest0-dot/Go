@@ -70,12 +70,18 @@ func TestSearchDocumentsToolWithoutUserMessageIsAnArgumentError(t *testing.T) {
 }
 
 func TestSearchLimitIsCappedAtWhatTheSchemaPromises(t *testing.T) {
-	assert.Equal(t, maxToolSearchResults, searchLimitArg(map[string]interface{}{}), "the default is the cap")
-	assert.Equal(t, maxToolSearchResults, searchLimitArg(map[string]interface{}{"limit": float64(20)}))
-	assert.Equal(t, 2, searchLimitArg(map[string]interface{}{"limit": float64(2)}))
+	caps := map[string]int{"search_memories": maxMemorySearchResults, "search_documents": maxDocumentSearchResults}
+	assert.Equal(t, 5, maxMemorySearchResults)
+	assert.Equal(t, 8, maxDocumentSearchResults, "documents get more results than memories (measured)")
 
-	// The model reads the schema, so it must state the cap that is enforced
-	// (it once promised "max 20" while the registry cut at 5).
+	for tool, limit := range caps {
+		assert.Equal(t, limit, searchLimitArg(map[string]interface{}{}, limit), tool+": the default is the cap")
+		assert.Equal(t, limit, searchLimitArg(map[string]interface{}{"limit": float64(20)}, limit), tool)
+		assert.Equal(t, 2, searchLimitArg(map[string]interface{}{"limit": float64(2)}, limit), tool)
+	}
+
+	// The model reads the schema, so it must state the cap that is enforced of
+	// that very tool (it once promised "max 20" while the registry cut at 5).
 	found := 0
 	for _, tool := range toolDefinitions() {
 		properties, _ := tool.Function.Parameters.(map[string]interface{})["properties"].(map[string]interface{})
@@ -84,7 +90,7 @@ func TestSearchLimitIsCappedAtWhatTheSchemaPromises(t *testing.T) {
 			continue
 		}
 		found++
-		assert.Contains(t, limit["description"], strconv.Itoa(maxToolSearchResults), tool.Function.Name)
+		assert.Contains(t, limit["description"], "maximum: "+strconv.Itoa(caps[tool.Function.Name]), tool.Function.Name)
 		assert.NotContains(t, limit["description"], "20", tool.Function.Name)
 	}
 	assert.Equal(t, 2, found, "search_memories and search_documents take a limit")

@@ -28,9 +28,11 @@ func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 	}, nil
 }
 
-// limitDescription is what the model is told about the "limit" argument of the
-// search tools. It names the real cap (maxToolSearchResults), not a larger one.
-var limitDescription = fmt.Sprintf("The number of results to return (default and maximum: %d).", maxToolSearchResults)
+// limitDescription is what the model is told about the "limit" argument of a
+// search tool. It names the real cap of that tool, not a larger one.
+func limitDescription(maxResults int) string {
+	return fmt.Sprintf("The number of results to return (default and maximum: %d).", maxResults)
+}
 
 func toolDefinitions() []openai.Tool {
 	return []openai.Tool{
@@ -69,7 +71,7 @@ func toolDefinitions() []openai.Tool {
 						},
 						"limit": map[string]interface{}{
 							"type":        "integer",
-							"description": limitDescription,
+							"description": limitDescription(maxMemorySearchResults),
 						},
 					},
 					"required": []string{"query"},
@@ -90,7 +92,7 @@ func toolDefinitions() []openai.Tool {
 						},
 						"limit": map[string]interface{}{
 							"type":        "integer",
-							"description": limitDescription,
+							"description": limitDescription(maxDocumentSearchResults),
 						},
 					},
 					"required": []string{"query"},

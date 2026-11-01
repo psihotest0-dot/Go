@@ -47,7 +47,7 @@ func newSanitizeFixture(t *testing.T, chunks ...string) *sanitizeFixture {
 		})
 	}
 	mockLLM := &llm.MockLLM{StreamChunks: script}
-	retrievalService := retrieval.NewRetrievalService(database, &llm.MockEmbedder{}, nil)
+	retrievalService := retrieval.NewRetrievalService(database, &llm.MockEmbedder{})
 
 	user, err := database.Queries.CreateUser(ctx)
 	require.NoError(t, err)

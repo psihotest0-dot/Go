@@ -140,16 +140,16 @@ func TestSearchesSeeTheirOwnChunkTypeBehindManyOfTheOther(t *testing.T) {
 		return got
 	}
 
-	// 300 raw chunks nearer to the question than 5 summaries: the summaries still show.
-	insert("raw_text", 300, near, 0)
+	// More raw chunks than the candidates asked for, all nearer to the question than 5 summaries: the summaries still show.
+	insert("raw_text", SearchVectorCandidates+100, near, 0)
 	insert("concept_summary", 5, far, 1000)
 	got := search()
 	assert.Equal(t, 5, got.concepts, "the summaries were crowded out by the nearer raw chunks")
 	assert.Equal(t, 100, got.raw, "the hybrid search takes 100 raw chunks per side")
 	clear()
 
-	// And the other way round: 300 summaries nearer than 5 raw chunks.
-	insert("concept_summary", 300, near, 1000)
+	// And the other way round: more summaries than the candidates, nearer than 5 raw chunks.
+	insert("concept_summary", SearchVectorCandidates+100, near, 1000)
 	insert("raw_text", 5, far, 0)
 	got = search()
 	assert.Equal(t, 5, got.raw, "the raw chunks were crowded out by the nearer summaries")
@@ -175,7 +175,7 @@ func TestSearchesSeeTheirOwnChunkTypeBehindManyOfTheOther(t *testing.T) {
 		}
 		conceptPlan := plan(searchConceptChunks, user.ID, 0.4, 10, query, 200)
 		assert.Contains(t, conceptPlan, "idx_document_chunks_concept_embedding", conceptPlan)
-		hybridPlan := plan(searchHybridChunks, "", 0.0, user.ID, 10, query, 200, 0.4, "")
+		hybridPlan := plan(searchHybridChunks, user.ID, 10, query, 200, 0.4, true, 0.03, "")
 		assert.Contains(t, hybridPlan, "idx_document_chunks_raw_embedding", hybridPlan)
 		return nil
 	}))

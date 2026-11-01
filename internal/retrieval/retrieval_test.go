@@ -42,7 +42,7 @@ func TestRetrieval_CreateMemory_Mock(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	content := "Test memory content"
@@ -66,7 +66,7 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Find test fact"
@@ -99,7 +99,7 @@ func TestRetrieval_SearchChunks_Mock(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Find test chunk"
@@ -133,7 +133,7 @@ func TestRetrieval_SearchAll_Fallback_EmptyResult(t *testing.T) {
 
 	// Make embedder return empty slice
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Empty vectors test"
@@ -168,7 +168,7 @@ func TestRetrieval_SearchAll_Fallback_Error(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{Err: fmt.Errorf("mock error")}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Error vectors test"
@@ -200,7 +200,7 @@ func TestRetrieval_SearchAll_InvalidDimension(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{Dim: 128} // Invalid dimension
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	_, _, err = svc.SearchAll(context.Background(), userID, "test", 10)
@@ -208,7 +208,7 @@ func TestRetrieval_SearchAll_InvalidDimension(t *testing.T) {
 }
 
 func TestRetrieval_CreateMemory_EmptyContent(t *testing.T) {
-	svc := retrieval.NewRetrievalService(nil, nil, nil)
+	svc := retrieval.NewRetrievalService(nil, nil)
 	userID := uuid.New()
 
 	_, err := svc.CreateMemory(context.Background(), userID, "   ", 5, "active", pqtype.NullRawMessage{})
@@ -217,7 +217,7 @@ func TestRetrieval_CreateMemory_EmptyContent(t *testing.T) {
 
 func TestRetrieval_CreateMemory_EmbedderError(t *testing.T) {
 	embedder := &llm.MockEmbedderWithConfig{Err: fmt.Errorf("embed error")}
-	svc := retrieval.NewRetrievalService(nil, embedder, nil)
+	svc := retrieval.NewRetrievalService(nil, embedder)
 	userID := uuid.New()
 
 	_, err := svc.CreateMemory(context.Background(), userID, "valid content", 5, "active", pqtype.NullRawMessage{})
@@ -226,7 +226,7 @@ func TestRetrieval_CreateMemory_EmbedderError(t *testing.T) {
 
 func TestRetrieval_CreateMemory_EmbedderEmpty(t *testing.T) {
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
-	svc := retrieval.NewRetrievalService(nil, embedder, nil)
+	svc := retrieval.NewRetrievalService(nil, embedder)
 	userID := uuid.New()
 
 	_, err := svc.CreateMemory(context.Background(), userID, "valid content", 5, "active", pqtype.NullRawMessage{})
@@ -235,7 +235,7 @@ func TestRetrieval_CreateMemory_EmbedderEmpty(t *testing.T) {
 
 func TestRetrieval_CreateMemory_InvalidDimension(t *testing.T) {
 	embedder := &llm.MockEmbedderWithConfig{Dim: 128}
-	svc := retrieval.NewRetrievalService(nil, embedder, nil)
+	svc := retrieval.NewRetrievalService(nil, embedder)
 	userID := uuid.New()
 
 	_, err := svc.CreateMemory(context.Background(), userID, "valid content", 5, "active", pqtype.NullRawMessage{})
@@ -251,7 +251,7 @@ func TestRetrieval_CreateMemory_DBError(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	content := "Test db error"
@@ -271,7 +271,7 @@ func TestRetrieval_SearchAll_SearchError(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Test search error"
@@ -288,7 +288,7 @@ func TestRetrieval_SearchAll_SearchError(t *testing.T) {
 	require.ErrorContains(t, err, "db search fail")
 }
 
-func TestRetrieval_SearchAll_WithBoost(t *testing.T) {
+func TestRetrieval_SearchAll_MemoriesAndChunks(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer mockDB.Close()
@@ -297,13 +297,10 @@ func TestRetrieval_SearchAll_WithBoost(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-    catMgr, err := retrieval.NewCategoryManager(context.Background(), embedder)
-    require.NoError(t, err)
-
-	svc := retrieval.NewRetrievalService(d, embedder, catMgr)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
-	query := "The treatment of acute viral infections requires antiviral therapy and rest." // Matches medicine perfectly in mock
+	query := "The treatment of acute viral infections requires antiviral therapy and rest."
 
 	mock.MatchExpectationsInOrder(false)
 
@@ -330,7 +327,7 @@ func TestRetrieval_SearchAll_IncludesConceptChunks(t *testing.T) {
 	defer mockDB.Close()
 
 	d := &db.Database{SqlDB: mockDB, Queries: db.New(mockDB)}
-	svc := retrieval.NewRetrievalService(d, &llm.MockEmbedder{}, nil)
+	svc := retrieval.NewRetrievalService(d, &llm.MockEmbedder{})
 
 	conceptID := uuid.New()
 	mock.MatchExpectationsInOrder(false)
@@ -367,7 +364,7 @@ func TestRetrieval_CreateMemory_ConflictError(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	content := "Test conflict db error"
@@ -387,7 +384,7 @@ func TestRetrieval_SearchAll_Fallback_TextSearchError(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Empty vectors test"
@@ -415,7 +412,7 @@ func TestRetrieval_SearchAll_Fallback_TextSearchChunksError(t *testing.T) {
 	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
-	svc := retrieval.NewRetrievalService(d, embedder, nil)
+	svc := retrieval.NewRetrievalService(d, embedder)
 
 	userID := uuid.New()
 	query := "Empty vectors chunk test"

@@ -285,53 +285,17 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 	}
 
 	if !file.ManualOverride && w.catMgr != nil {
-		votes := make(map[string]int)
-		for i := range chunks {
-			if i >= 30 {
-				break
-			}
-			if i >= len(allVectors) {
-				break
-			}
-			vec := allVectors[i]
-			if len(vec) == 0 {
-				continue
-			}
-
-			bestCat := config.DefaultFileCategory
-			bestScore := float32(-1.0)
-			for cat, centroid := range w.catMgr.GetAllCentroids() {
-				score := retrieval.CosineSimilarity(vec, centroid)
-				if score > bestScore {
-					bestScore = score
-					bestCat = cat
-				}
-			}
-
-			if bestScore > 0.20 {
-				votes[bestCat]++
-			} else {
-				votes[config.DefaultFileCategory]++
-			}
-		}
-
-		winningCat := config.DefaultFileCategory
-		maxVotes := -1
-		for cat, voteCount := range votes {
-			if voteCount > maxVotes {
-				maxVotes = voteCount
-				winningCat = cat
-			}
-		}
+		decision := w.catMgr.Classify(allVectors)
 
 		err = w.dbClient.Queries.UpdateIngestedFileCategoryAuto(ctx, db.UpdateIngestedFileCategoryAutoParams{
 			ID:       file.ID,
-			Category: winningCat,
+			Category: decision.Category,
 		})
 		if err != nil {
 			slog.Warn("Failed to auto-update file category", "file_id", file.ID, "error", err)
 		} else {
-			slog.Info("Auto-assigned category to file", "file_id", file.ID, "category", winningCat, "votes", maxVotes)
+			slog.Info("Auto-assigned category to file", "file_id", file.ID, "category", decision.Category,
+				"leader", decision.Leader, "leader_votes", decision.LeaderVotes, "sampled", decision.Sampled)
 		}
 	}
 

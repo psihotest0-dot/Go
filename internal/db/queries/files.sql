@@ -141,10 +141,17 @@ WHERE f.user_id = sqlc.arg('user_id')
 ORDER BY v.distance ASC
 LIMIT sqlc.arg('match_count');
 
+-- A question in one language is farther from the passages of a book in another
+-- one than from passages in its own (Bulgarian question, English book: 0.17-0.21,
+-- against 0.10-0.15 within Bulgarian, for the same quality of match), so a chunk
+-- whose language differs from the question's gets cross_language_margin more
+-- distance before it is dropped. "Cyrillic" is decided per chunk by three letters
+-- in a row.
 -- name: SearchHybridChunks :many
 WITH nearest AS (
     SELECT c.id, c.file_id, c.user_id, c.chunk_type,
-           (c.embedding <=> sqlc.arg('embedding')) AS distance
+           (c.embedding <=> sqlc.arg('embedding')) AS distance,
+           (c.text ~ '[А-Яа-я]{3}') AS cyrillic
     FROM document_chunks c
     WHERE c.chunk_type = 'raw_text'
     ORDER BY c.embedding <=> sqlc.arg('embedding')
@@ -159,8 +166,8 @@ per_file AS (
     WHERE user_id = sqlc.arg('user_id') AND status = 'completed' AND deleted_at IS NULL
 ),
 chunk_vector_search AS (
-    SELECT id, category, distance, rank FROM (
-        SELECT v.id, f.category, v.distance,
+    SELECT id, distance, rank FROM (
+        SELECT v.id, v.distance,
                RANK() OVER (ORDER BY v.distance) AS rank,
                ROW_NUMBER() OVER (PARTITION BY v.file_id ORDER BY v.distance) AS file_rank
         FROM nearest v
@@ -170,13 +177,15 @@ chunk_vector_search AS (
           AND f.deleted_at IS NULL
           AND v.chunk_type = 'raw_text'
           AND v.distance < sqlc.arg('max_distance')::float8
+              + (CASE WHEN v.cyrillic <> sqlc.arg('query_cyrillic')::boolean
+                      THEN sqlc.arg('cross_language_margin')::float8 ELSE 0.0 END)
     ) sub
     WHERE file_rank <= (SELECT max_per_file FROM per_file)
     ORDER BY rank
     LIMIT 100
 ),
 text_matches AS (
-    SELECT c.id, c.file_id, f.category,
+    SELECT c.id, c.file_id,
            ts_rank_cd(to_tsvector('simple', c.text), to_tsquery('simple', NULLIF(sqlc.arg('ts_query')::text, '')), 32) AS ts_score
     FROM document_chunks c
     JOIN ingested_files f ON c.file_id = f.id
@@ -190,8 +199,8 @@ text_matches AS (
 -- match whatever its density, so the text score starts at 0.5 and the proximity
 -- of the words (ts_rank_cd, normalised to 0..1) adds up to 0.5.
 chunk_text_search AS (
-    SELECT id, category, sim_score, rank FROM (
-        SELECT t.id, t.category, 0.5 + 0.5 * t.ts_score AS sim_score,
+    SELECT id, sim_score, rank FROM (
+        SELECT t.id, 0.5 + 0.5 * t.ts_score AS sim_score,
                RANK() OVER (ORDER BY t.ts_score DESC) AS rank,
                ROW_NUMBER() OVER (PARTITION BY t.file_id ORDER BY t.ts_score DESC) AS file_rank
         FROM text_matches t
@@ -208,8 +217,7 @@ SELECT
         GREATEST(
             COALESCE(1.0 - cvs.distance, 0.0),
             COALESCE(cts.sim_score, 0.0)
-        ) +
-        (CASE WHEN COALESCE(cvs.category, cts.category) = sqlc.arg('boost_category')::text THEN sqlc.arg('boost_amount')::FLOAT8 ELSE 0.0 END)
+        )
     AS FLOAT8) as score
 FROM chunk_vector_search cvs
 FULL OUTER JOIN chunk_text_search cts ON cvs.id = cts.id

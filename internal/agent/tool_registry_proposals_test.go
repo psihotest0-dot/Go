@@ -84,7 +84,7 @@ func newToolEnv(t *testing.T) *toolEnv {
 	require.NoError(t, err)
 	t.Cleanup(func() { dbtest.DeleteUser(t, database.Pool, user.ID) })
 
-	retrievalService := retrieval.NewRetrievalService(database, &llm.MockEmbedder{}, nil)
+	retrievalService := retrieval.NewRetrievalService(database, &llm.MockEmbedder{})
 	svc := proposals.NewService(database, retrievalService)
 	reg := NewDefaultToolRegistry(retrievalService, database, svc)
 
