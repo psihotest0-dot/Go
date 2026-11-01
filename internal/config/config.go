@@ -68,7 +68,7 @@ type Config struct {
 	// start fail with the command to run (cmd/migrate), so a schema change can be
 	// preceded by a backup.
 	AutoMigrate bool
-	LLMBaseURL string
+	LLMBaseURL  string
 	// LLMModel pins the model name sent to the LLM server. Empty means the
 	// client asks the server which model it serves.
 	LLMModel string
@@ -93,10 +93,9 @@ type Config struct {
 	EmbedderURL       string
 	// EmbedderTimeout bounds one call to the embedding service, with its cache reads
 	// and writes (EMBEDDER_TIMEOUT_SECONDS).
-	EmbedderTimeout time.Duration
-	EmbedModel        string
-	DatabaseURL       string
-	TelegramBotToken  string
+	EmbedderTimeout  time.Duration
+	DatabaseURL      string
+	TelegramBotToken string
 	// TelegramAllowedChatIDs lists the chats the bot may talk to. Empty means
 	// nobody: the bot token only controls the bot, not who can write to it.
 	TelegramAllowedChatIDs []int64
@@ -206,7 +205,6 @@ func Load() *Config {
 
 		EmbedderURL:        os.Getenv("EMBEDDER_URL"),
 		EmbedderTimeout:    time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
-		EmbedModel:         os.Getenv("EMBED_MODEL"),
 		DatabaseURL:        dbURL,
 		TelegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
 		EnableAdaptiveSkip: adaptiveSkip,

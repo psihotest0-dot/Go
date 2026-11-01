@@ -474,8 +474,9 @@ paths:
           blocks and tool-call markup already removed;
 
         * `event: proposals` - once, before the end, only when the model asked
-          to save a rule or a memory: a JSON array of `Proposal`. Nothing is
-          saved until the user decides (`/proposals/{id}/approve`);
+          to save a global rule: a JSON array of `Proposal`. The rule is not
+          saved until the user decides (`/proposals/{id}/approve`). (A memory
+          the model decides to keep is saved at once and is not announced.);
 
         * `data: [DONE]` - the end of a good answer;
 
@@ -575,9 +576,11 @@ paths:
     get:
       summary: Proposals that wait for the user
       description: >-
-        What the model asked to save (a global rule or a memory) is kept here
-        until the user approves or rejects it. A proposal that nobody answers
-        expires after 14 days.
+        A global rule the model asked to save is kept here until the user
+        approves or rejects it (a rule is the first thing in the system prompt of
+        every session, so it is never written without a decision). A proposal
+        that nobody answers expires after 14 days. Memories are not proposals:
+        the model saves them itself.
       parameters:
       - $ref: '#/components/parameters/UserId'
       responses:
@@ -596,7 +599,8 @@ paths:
   /proposals/{id}/approve:
     post:
       summary: Apply a proposal
-      description: Saves the rule or the memory the proposal describes.
+      description: >-
+        Saves what the proposal describes - in practice a global rule.
       parameters:
       - $ref: '#/components/parameters/ProposalId'
       - $ref: '#/components/parameters/UserId'
@@ -919,8 +923,11 @@ components:
     Proposal:
       type: object
       description: >-
-        Something the model asked to save, waiting for the user. A rule has
-        `key` and `value`; a memory has `content` and `importance`.
+        Something the model asked to save, waiting for the user. A rule
+        (`save_global_rule`) has `key` and `value`. The `create_memory` kind,
+        with `content` and `importance`, is what proposals made before the owner
+        decided that memories are saved at once look like; none is created now,
+        but a stored one can still be approved or rejected.
       properties:
         id:
           type: integer

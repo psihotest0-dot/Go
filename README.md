@@ -20,12 +20,13 @@ The main agent orchestrator (`internal/agent`) implements a streaming pipeline u
 1. Fetching history from PostgreSQL and fitting it into a token budget (`LLM_HISTORY_TOKENS`, `LLM_HISTORY_MESSAGES`); older turns are replaced by a rolling summary.
 2. Generating real-time embeddings for the user's prompt using the embedder sidecar.
 3. Fetching semantically similar long-term memories and document chunks via Hybrid Search.
-4. Calling the LLM with the context and streaming response chunks directly to the user. The model may call tools (search, web search/fetch, memory and rule proposals); the output is cleaned of `<think>` blocks and tool markup before it is shown or stored.
+4. Calling the LLM with the context and streaming response chunks directly to the user. The model may call tools (search, web search/fetch, saving a memory, proposing a global rule); the output is cleaned of `<think>` blocks and tool markup before it is shown or stored.
 
 All token budgets of one request derive from the context window of one slot (`LLM_CONTEXT_TOKENS`, e.g. `16384` for a 32k server with two slots); every budget can also be set explicitly. See [Configuration](#configuration).
 
-### Writes need the user's confirmation
-`save_global_rule` and `create_memory` do not write directly. The model's request becomes a **proposal** that waits for the user (`GET /proposals`, `POST /proposals/{id}/approve|reject`, or `/pending`, `/approve`, `/reject` in Telegram). A proposal that rests on text from the web or from a document says so. Global rules (they apply to every session) are capped in number and can be listed and deleted (`GET /rules`, `DELETE /rules/{id}`). The chat stream announces new proposals with an `event: proposals` frame.
+### What the model saves, and what waits for the user
+* **Memories** (`create_memory`) are saved at once: what to remember is the model's decision, as in a conversation between people. A memory written in a turn that read a web page or a document carries `metadata.source = "chat_tool"` and `metadata.external_sources`, so a doubtful one can be found and deleted later (`GET /memories`, `DELETE /memories/{id}`).
+* **Global rules** (`save_global_rule`) do not write directly, because a rule is the first thing in the system prompt of every session. The model's request becomes a **proposal** that waits for the user (`GET /proposals`, `POST /proposals/{id}/approve|reject`, or `/pending`, `/approve`, `/reject` in Telegram). A proposal that rests on text from the web or from a document says so. Global rules (they apply to every session) are capped in number and can be listed and deleted (`GET /rules`, `DELETE /rules/{id}`). The chat stream announces new proposals with an `event: proposals` frame.
 
 ### Memory Consolidation
 Background memory consolidation runs asynchronously via River queues (`internal/jobs`).
