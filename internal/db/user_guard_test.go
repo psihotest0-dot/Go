@@ -20,7 +20,7 @@ const restrictViolation = "23001"
 
 // TestUserDeleteGuard covers migration 00018: a bare DELETE (or TRUNCATE) on
 // users must fail, because every table with user data cascades from it
-// (docs/incident-2026-10-30/REPORT.md), while a transaction that opts in
+// (the 2026-10-30 incident), while a transaction that opts in
 // explicitly still works and still cascades.
 func TestUserDeleteGuard(t *testing.T) {
 	connString := dbtest.ConnString(t)

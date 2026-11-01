@@ -43,7 +43,7 @@ func setupTestDB(t *testing.T) *db.Database {
 		// The schema is deliberately left in place: dropping it (goose.DownTo
 		// to 0) would erase the shared test database while other packages are
 		// still using it, and it is the exact operation that once emptied the
-		// live database (docs/incident-2026-10-30/REPORT.md).
+		// live database (the 2026-10-30 incident).
 		database.Close()
 		rawDB.Close()
 	})

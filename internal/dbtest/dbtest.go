@@ -5,7 +5,7 @@
 // every table (goose.DownTo(..., 0)). Pointing them at the live DATABASE_URL
 // once emptied the whole library: a test cleanup executed `DELETE FROM users`,
 // and every table that stores user data cascades from there (see
-// docs/incident-2026-10-30/REPORT.md). The helpers below make that mistake
+// the 2026-10-30 incident report). The helpers below make that mistake
 // impossible: they read TEST_DATABASE_URL only and they refuse a connection
 // whose database name does not look disposable.
 package dbtest

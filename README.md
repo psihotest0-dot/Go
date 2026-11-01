@@ -54,11 +54,11 @@ To avoid repeated computation, embeddings are cached in the `embedding_cache` ta
 2. Stop the backend and run `go run ./cmd/reembed -force`. It recomputes the vectors of **memories and document chunks** (`-memories=false` / `-chunks=false` limit it). It does not need the original files.
 3. Back up first (`scripts\backup.ps1`); a full re-embed of a large library takes hours of CPU. The old cache entries are no longer read and disappear with the 30-day rule.
 
-If the extraction itself changed (a better PDF parser, say), use `go run ./cmd/reingest` instead: it queues the ingest of the stored originals again.
+If the extraction itself changed (a better PDF parser, say), use `go run ./cmd/reingest` instead: it queues the ingest of the stored originals again. It can only do that for files whose original is still in `storage/` (see `KEEP_ORIGINALS`); the others are left alone, with their text and vectors untouched.
 
 ## File Ingestion Pipeline
 The system supports uploading external knowledge documents via the `POST /v1/files` endpoint (also served as `POST /files`).
-1. **Upload & Verification**: Enforces a 100 MB limit (`MAX_UPLOAD_MB` changes it; larger files get `413 file too large`), hashes the file for deduplication (a duplicate is answered with `409` and the existing record), securely saves it to the local `storage/` directory, and writes a tracking record. The upload itself accepts any file type; the format is judged by the ingest job.
+1. **Upload & Verification**: Enforces a 100 MB limit (`MAX_UPLOAD_MB` changes it; larger files get `413 file too large`), hashes the file for deduplication (a duplicate is answered with `409` and the existing record), securely saves it to the local `storage/` directory, and writes a tracking record. The original stays there after the ingest unless `KEEP_ORIGINALS=false`. The upload itself accepts any file type; the format is judged by the ingest job.
 2. **Extraction**: The `internal/ingest` module picks the parser by the **MIME type sniffed from the file's first 3072 bytes (`mimetype`) or by the file extension** — either one is enough. Supported: plain text (`.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.yml`, `.log`), HTML, PDF, DOCX, XLSX, EPUB and images. PDF text comes from Poppler's `pdftotext`; pages with almost no text are treated as scans and OCR'd (`pdftoppm` + Tesseract with the `bul` and `eng` languages). Images go through Tesseract directly. A file that cannot be read (unsupported, empty, password protected, no text) ends in status `failed` and is not retried.
 3. **Background Chunking**: An async River job (`IngestFileWorker`) extracts the raw text, splits it into chunks, generates vector embeddings, and stores them in the `document_chunks` table for retrieval.
 4. **Embedding Status**: `GET /v1/files` (also available as `GET /files`) reports `chunk_count`, `has_embeddings` and `embedding_status` per file. Embeddings live in PostgreSQL via `pgvector` — there is no external vector store. `embedding_status` mirrors the ingest status but maps a `completed` file with zero chunks to `empty`, so the UI can distinguish "indexed" from "ingested but nothing to search".
@@ -78,6 +78,8 @@ The backend reads the environment, and a `.env` file in the working directory is
 | `LISTEN_ADDR` | `127.0.0.1:8080` | Address of the API. The default is loopback on purpose: identity is a bare `X-User-ID` header and `/metrics` is unauthenticated. |
 | `MAX_UPLOAD_MB` | `100` | Upload size limit. |
 | `AUTO_MIGRATE` | `true` | Apply pending migrations at start. When `false`, a database that is behind makes the start fail and print the command to run (`go run ./cmd/migrate`), so a backup can come first. |
+| `KEEP_ORIGINALS` | `true` | Keep the uploaded file in `storage/` after a successful ingest. The original is only needed to ingest the file again (`cmd/reingest`); search and chat use the text and vectors in the database. With `false` it is deleted once its ingest has succeeded (a failed ingest keeps it, so it can be tried again), and `cmd/reingest` leaves such files alone. A new value needs a restart of the backend. |
+| `LOG_MAX_MB` | `10` | Size at which `backend.log` is rotated: the old file is compressed and kept as one backup (`backend-<time>.log.gz`), so the logs take about this much and no more. A file that is already larger is rotated at the first write after the start. |
 | `PROMPTS_DIR` | empty | Directory of prompt templates (`*.tmpl`) that override the ones compiled into the binary (`internal/prompts`). Empty means no override. |
 | `LLM_BASE_URL` | – | OpenAI-compatible URL of the model server (Lemonade), e.g. `http://localhost:13305/v1`. |
 | `LLM_MODEL` | empty | Pins the model name sent to the server. Empty: ask the server which model it serves. |
@@ -153,7 +155,7 @@ Backup, restore and reindex scripts are in `scripts/`; `Backup and Restore.md` h
 - `scripts\backup-task.ps1` registers a daily Windows Scheduled Task (`go-monolith-backup`) that runs `backup.ps1` and keeps the dumps outside the repository.
 - `scripts\build.ps1` builds `main.exe`.
 
-> **Take backups.** On 2026-10-30 a `DELETE FROM users` cascade wiped the ingested files, the chunks and their embeddings. Nothing could be restored because no dump had ever been taken — see `docs/incident-2026-10-30/REPORT.md`.
+> **Take backups.** On 2026-10-30 a `DELETE FROM users` cascade wiped the ingested files, the chunks and their embeddings. Nothing could be restored because no dump had ever been taken — the 2026-10-30 incident.
 
 ## API
 The HTTP API is described in [`docs/openapi.yaml`](docs/openapi.yaml). Every route except `/healthz` and `/metrics` needs the `X-User-ID` header (a UUID; the user is created on first use). The Flet client keeps a copy of the file in its own `docs/openapi.yaml`; change both together.
@@ -178,3 +180,7 @@ In PowerShell set the variable with `$env:TEST_DATABASE_URL = "postgres://postgr
 * **Vector Dimensions Validation:** When verifying embedder outputs, avoid hardcoding the dimensions logic like `len(vectors[0]) == 384` across the codebase. The dimension is `config.VectorDimension`; a model with another dimension also needs the `vector(...)` columns migrated and everything re-embedded.
 * **Embedder Fallback:** When the embedder fails or returns zero-dimension vectors, the fallback logic should not pad or insert zeroed-out arrays of a fixed size, as this pollutes the database with useless embeddings and degrades hybrid search quality.
 * **Web tools:** `web_search` / `web_fetch` can send text from the conversation to external services (the paid search API and the fetched URL). URLs are limited to public `http(s)` addresses, but there is no allowlist of domains.
+
+## License
+
+MIT - see [LICENSE](LICENSE).

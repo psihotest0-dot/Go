@@ -4,7 +4,7 @@ Creates a compressed pg_dump archive of the database (Windows front-end).
 
 .DESCRIPTION
 The 2026-10-30 incident left nothing to restore from because no dump had ever
-been taken (see docs/incident-2026-10-30/REPORT.md). This script is the Windows
+been taken (the 2026-10-30 incident). This script is the Windows
 counterpart of scripts/backup.sh:
 
 * it uses a locally installed pg_dump when there is one, otherwise it runs
@@ -16,7 +16,7 @@ counterpart of scripts/backup.sh:
 * it prunes old dumps so the directory does not grow forever;
 * it also copies the uploaded originals (storage\) next to the dumps, because the
   database only holds extracted text and vectors: the files are the only source
-  for a re-ingest (see ACTION_PLAN.md, task 18).
+  for a re-ingest (task 18 of the project plan).
 
 .PARAMETER BackupDir
 Where the dumps go. Defaults to <repo>\backups.

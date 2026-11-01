@@ -2,7 +2,10 @@ go-monolith
 __pycache__/
 .pytest_cache/
 backend.log
+backend-*.log*
 storage/
 .env
 backups/
 *.exe
+# working notes of the owner, kept locally only
+ACTION_PLAN.md

@@ -43,6 +43,9 @@ type IngestFileWorker struct {
 	catMgr   *retrieval.CategoryManager
 	// distillation is ENABLE_DISTILLATION, read once when the worker is built.
 	distillation bool
+	// keepOriginals is KEEP_ORIGINALS, read once when the worker is built: whether
+	// the uploaded file stays in storage/ after a successful ingest.
+	keepOriginals bool
 }
 
 // ingestJobTimeout is only a ceiling for a job that is stuck. A PDF sets its own,
@@ -69,8 +72,9 @@ func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *r
 		manager: ingest.NewManager(ingest.WithLimits(ingest.Limits{
 			MaxInputBytes: cfg.MaxUploadBytes,
 		})),
-		catMgr:       catMgr,
-		distillation: cfg.EnableDistillation,
+		catMgr:        catMgr,
+		distillation:  cfg.EnableDistillation,
+		keepOriginals: cfg.KeepOriginals,
 	}
 }
 
@@ -131,11 +135,6 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileArgs]) error {
 	slog.Info("IngestFileWorker started", "file_id", job.Args.FileID)
 
-	_, err := w.dbClient.SqlDB.ExecContext(ctx, "DELETE FROM document_chunks WHERE file_id = $1", job.Args.FileID)
-	if err != nil {
-		return fmt.Errorf("failed to clean up old document chunks: %w", err)
-	}
-
 	file, err := w.dbClient.Queries.GetIngestedFileByID(ctx, job.Args.FileID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// The row is gone (deleted, or an old job from before a restore): no
@@ -144,6 +143,19 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 	}
 	if err != nil {
 		return fmt.Errorf("failed to get ingested file: %w", err)
+	}
+
+	// A finished file whose original is gone (KEEP_ORIGINALS=false, or a file
+	// deleted by hand) cannot be ingested again. This has to be said before
+	// anything is touched: the old chunks are deleted next, and the file would
+	// end with no text at all.
+	if file.Status == "completed" && !originalExists(file.LocalPath) {
+		return river.JobCancel(fmt.Errorf("the original of file %s is not in storage, so it cannot be ingested again; its text and vectors are left as they are", file.ID))
+	}
+
+	_, err = w.dbClient.SqlDB.ExecContext(ctx, "DELETE FROM document_chunks WHERE file_id = $1", job.Args.FileID)
+	if err != nil {
+		return fmt.Errorf("failed to clean up old document chunks: %w", err)
 	}
 
 	err = w.dbClient.Queries.UpdateIngestedFileStatus(ctx, db.UpdateIngestedFileStatusParams{
@@ -332,15 +344,6 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to update status to completed: %w", err)
 	}
 
-	// The original upload is kept on disk. It is the only copy of the source
-	// document once it is chunked, and on 2026-10-30 removing it immediately
-	// after ingest left nothing to re-ingest from after the rows were deleted
-	// (docs/incident-2026-10-30/REPORT.md). Cleanup is a separate, deliberate
-	// operation.
-	if file.LocalPath != "" {
-		slog.Info("retained original upload after ingestion", "file_id", file.ID, "path", file.LocalPath)
-	}
-
 	// Enqueue distillation worker
 	if w.distillation {
 		pgxClient, clientErr := river.ClientFromContextSafely[pgx.Tx](ctx)
@@ -354,8 +357,44 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 		}
 	}
 
+	w.releaseOriginal(file)
+
 	slog.Info("IngestFileWorker finished successfully", "file_id", job.Args.FileID, "chunks", len(chunks))
 	return nil
+}
+
+// releaseOriginal decides what happens to the uploaded file once its ingest has
+// succeeded. By default it is kept: it is the only copy of the source document
+// once that is chunked, and on 2026-10-30 removing it right after ingest left
+// nothing to ingest again from when the rows were deleted
+// (the 2026-10-30 incident). With KEEP_ORIGINALS=false the owner has
+// decided that his own copy of the library is enough, and the file is deleted.
+// This is the last step of a successful ingest, so a retry never finds the file
+// missing; a failed ingest never gets here and keeps its file.
+func (w *IngestFileWorker) releaseOriginal(file db.IngestedFile) {
+	if file.LocalPath == "" {
+		return
+	}
+	if w.keepOriginals {
+		slog.Info("retained original upload after ingestion", "file_id", file.ID, "path", file.LocalPath)
+		return
+	}
+	if err := os.Remove(file.LocalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Error("failed to delete the original upload after ingestion", "file_id", file.ID, "path", file.LocalPath, "error", err)
+		return
+	}
+	slog.Info("deleted original upload after ingestion (KEEP_ORIGINALS=false)", "file_id", file.ID, "path", file.LocalPath)
+}
+
+// originalExists reports whether the uploaded file of an ingest is still in
+// storage. A path that cannot be checked for another reason counts as present:
+// the ingest will then report the real error.
+func originalExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 
 func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []string {

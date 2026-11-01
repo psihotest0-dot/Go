@@ -334,7 +334,7 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		// Soft delete: the row and its chunks are kept, and so is the original
 		// upload, so an accidental delete can be undone with one UPDATE. A hard
 		// delete cascades into document_chunks, which is how the whole library
-		// was destroyed on 2026-10-30 (docs/incident-2026-10-30/REPORT.md).
+		// was destroyed on 2026-10-30 (the 2026-10-30 incident).
 		err = a.db.Queries.SoftDeleteIngestedFile(r.Context(), db.SoftDeleteIngestedFileParams{
 			ID:     fileID,
 			UserID: userID,

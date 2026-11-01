@@ -8,8 +8,8 @@ import (
 )
 
 // Settings of the similarity searches. They are starting values: the cosine
-// distance thresholds are re-measured against the real library in task 32 of
-// ACTION_PLAN.md.
+// distance thresholds are re-measured against the real library in task 32 of the
+// project plan.
 const (
 	// SearchVectorCandidates is how many nearest chunks the HNSW scan returns
 	// before the user, status and type filters are applied.

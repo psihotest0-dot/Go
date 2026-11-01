@@ -4,7 +4,7 @@ Builds the backend binary (main.exe) from the repository root.
 
 .DESCRIPTION
 main.exe is a build artifact: it is listed in .gitignore (*.exe) and was removed
-from the git history (see ACTION_PLAN.md, task 2). Run this script instead of
+from the git history (task 2 of the project plan). Run this script instead of
 committing the binary.
 
 .PARAMETER Output

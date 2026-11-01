@@ -62,21 +62,40 @@ func TestJoinHyphenatedIsIdempotent(t *testing.T) {
 }
 
 // A book of 600 thousand characters must not take noticeable time, and the
-// decision for each break must not scan the whole text again.
+// decision for each break must not scan the whole text again. The test compares
+// the time for a text with the time for four times as much of it instead of
+// holding one run to a number of seconds: a linear join takes about 4 times as
+// long, a quadratic one about 16 times, and the ratio does not depend on how
+// fast the machine is (a fixed limit of 3 s failed on a slow CI runner under the
+// race detector, which makes the code several times slower).
 func TestJoinHyphenatedIsLinear(t *testing.T) {
-	var b strings.Builder
-	for i := 0; i < 20000; i++ {
-		b.WriteString("Парите на хората се обезцен-\nяват и по-\nголемите спестявания зат-\nворници.\n")
+	const paragraph = "Парите на хората се обезцен-\nяват и по-\nголемите спестявания зат-\nворници.\n"
+
+	// bestTime is the fastest of a few runs, which keeps a garbage collection or
+	// a busy neighbour from deciding the result. Building the text is not timed.
+	bestTime := func(repeats int) (time.Duration, int) {
+		text := strings.Repeat(paragraph, repeats)
+		best := time.Duration(1<<63 - 1)
+		for run := 0; run < 3; run++ {
+			start := time.Now()
+			got := JoinHyphenated(text)
+			if took := time.Since(start); took < best {
+				best = took
+			}
+			if strings.Contains(got, "-\n") {
+				t.Fatal("a break was left")
+			}
+		}
+		return best, len(text)
 	}
-	text := b.String()
-	start := time.Now()
-	got := JoinHyphenated(text)
-	took := time.Since(start)
-	if strings.Contains(got, "-\n") {
-		t.Fatal("a break was left")
+
+	small, smallChars := bestTime(5000)
+	large, largeChars := bestTime(20000)
+	t.Logf("%d characters: %s; %d characters: %s", smallChars, small.Round(time.Millisecond), largeChars, large.Round(time.Millisecond))
+
+	// 4x the text: linear is ~4, quadratic ~16. Ten is far from both.
+	if large > 10*small {
+		t.Fatalf("%d characters took %s but %d took %s: more than 10 times as long for 4 times the text, so it is not linear",
+			largeChars, large, smallChars, small)
 	}
-	if took > 3*time.Second {
-		t.Fatalf("took %s for %d characters", took, len(text))
-	}
-	t.Logf("%d characters, 60000 breaks: %s", len(text), took.Round(time.Millisecond))
 }

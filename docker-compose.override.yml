@@ -10,7 +10,7 @@ services:
     volumes:
       # A named volume: the data survives recreating the container. (Without it
       # Docker makes a new anonymous volume per container and the old one is
-      # orphaned - see ACTION_PLAN.md, task 17.)
+      # orphaned.)
       - pgdata:/var/lib/postgresql/data
     # `docker compose ps` / `up --wait` report the database as healthy only when it
     # accepts connections. (The embedder has its own HEALTHCHECK in its Dockerfile.)

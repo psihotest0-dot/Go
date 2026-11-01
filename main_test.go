@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,4 +128,48 @@ func TestMainPackageIsASingleFile(t *testing.T) {
 		}
 	}
 	assert.Equal(t, []string{"main.go"}, sources)
+}
+
+// backend.log must not grow without a limit: at the configured size it is
+// compressed and kept as one backup.
+func TestLogFileIsRotatedAtTheConfiguredSize(t *testing.T) {
+	t.Chdir(t.TempDir())
+	logFile := newLogFile(1)
+	t.Cleanup(func() { _ = logFile.Close() })
+
+	assert.Equal(t, "backend.log", logFile.Filename)
+	assert.Equal(t, 1, logFile.MaxSize)
+	assert.Equal(t, 1, logFile.MaxBackups, "one backup, so the logs take about twice the limit at most")
+
+	line := []byte(strings.Repeat("x", 99) + "\n")
+	for written := 0; written < 3<<20; written += len(line) {
+		_, err := logFile.Write(line)
+		require.NoError(t, err)
+	}
+
+	info, err := os.Stat("backend.log")
+	require.NoError(t, err)
+	assert.LessOrEqual(t, info.Size(), int64(1<<20), "the current file stays under the limit")
+
+	// The backup is compressed in the background.
+	assert.Eventually(t, func() bool {
+		backups, _ := filepath.Glob("backend-*.log*")
+		return len(backups) == 1
+	}, 5*time.Second, 50*time.Millisecond, "exactly one backup is kept")
+}
+
+// A log that is already over the limit when the backend starts (the limit was
+// lowered, or the old build never rotated it) is rotated at once.
+func TestOversizedLogFileIsRotatedOnTheFirstWrite(t *testing.T) {
+	t.Chdir(t.TempDir())
+	require.NoError(t, os.WriteFile("backend.log", make([]byte, 3<<20), 0o600))
+	logFile := newLogFile(1)
+	t.Cleanup(func() { _ = logFile.Close() })
+
+	_, err := logFile.Write([]byte("first line\n"))
+	require.NoError(t, err)
+
+	info, err := os.Stat("backend.log")
+	require.NoError(t, err)
+	assert.Less(t, info.Size(), int64(1<<10))
 }

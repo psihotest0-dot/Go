@@ -207,6 +207,76 @@ func (c cancelingEmbedder) EmbedTexts(ctx context.Context, _ []string, _ bool) (
 	return nil, ctx.Err()
 }
 
+// By default the uploaded file stays in storage after a good ingest: it is what a
+// later re-ingest starts from.
+func TestIngestWorkerKeepsTheOriginalByDefault(t *testing.T) {
+	e := newIngestEnv(t)
+	file := e.addFile(t, "book.txt", []byte("Първи ред на книгата. Втори ред на книгата."))
+
+	require.NoError(t, e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25)))
+
+	assert.Equal(t, "completed", e.status(t, file.ID))
+	assert.FileExists(t, file.LocalPath)
+}
+
+// KEEP_ORIGINALS=false: the original goes once its text and vectors are stored.
+func TestIngestWorkerDeletesTheOriginalWhenToldTo(t *testing.T) {
+	t.Setenv("KEEP_ORIGINALS", "false")
+	e := newIngestEnv(t)
+	file := e.addFile(t, "book.txt", []byte("Първи ред на книгата. Втори ред на книгата."))
+
+	require.NoError(t, e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25)))
+
+	assert.Equal(t, "completed", e.status(t, file.ID))
+	assert.NotEmpty(t, e.chunks(t, file.ID), "the text is in the database")
+	assert.NoFileExists(t, file.LocalPath)
+}
+
+// A failed ingest never deletes the file: it is what the next attempt reads.
+func TestIngestWorkerKeepsTheOriginalOfAFailedIngest(t *testing.T) {
+	t.Setenv("KEEP_ORIGINALS", "false")
+	e := newIngestEnv(t)
+	file := e.addFile(t, "blank.txt", []byte("     "))
+
+	err := e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25))
+
+	require.Error(t, err)
+	assert.Equal(t, "failed", e.status(t, file.ID))
+	assert.FileExists(t, file.LocalPath)
+}
+
+// Ingesting a finished file again deletes its chunks first. Without the original
+// that would leave the file with no text, so the job stops before touching it.
+func TestIngestWorkerLeavesAFinishedFileWithoutItsOriginalAlone(t *testing.T) {
+	e := newIngestEnv(t)
+	file := e.addFile(t, "book.txt", []byte("Първи ред на книгата. Втори ред на книгата."))
+	require.NoError(t, e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25)))
+	before := e.chunks(t, file.ID)
+	require.NotEmpty(t, before)
+	require.NoError(t, os.Remove(file.LocalPath))
+
+	err := e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25))
+
+	require.Error(t, err)
+	assert.True(t, isCancelled(err), "nothing will bring the file back, so no retries: %v", err)
+	assert.Equal(t, "completed", e.status(t, file.ID))
+	assert.Equal(t, before, e.chunks(t, file.ID))
+}
+
+// KEEP_ORIGINALS is read when a worker is built, like ENABLE_DISTILLATION.
+func TestWorkersReadKeepOriginalsOnce(t *testing.T) {
+	t.Setenv("KEEP_ORIGINALS", "false")
+	deleting := NewIngestFileWorker(nil, nil, nil)
+	t.Setenv("KEEP_ORIGINALS", "true")
+	keeping := NewIngestFileWorker(nil, nil, nil)
+
+	assert.False(t, deleting.keepOriginals)
+	assert.True(t, keeping.keepOriginals)
+
+	t.Setenv("KEEP_ORIGINALS", "false")
+	assert.True(t, keeping.keepOriginals, "a built worker does not re-read the environment")
+}
+
 // ENABLE_DISTILLATION is read when a worker is built, not on every job.
 func TestWorkersReadTheDistillationSwitchOnce(t *testing.T) {
 	t.Setenv("ENABLE_DISTILLATION", "false")

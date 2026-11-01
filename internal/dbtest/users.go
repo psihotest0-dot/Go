@@ -18,7 +18,7 @@ type TxBeginner interface {
 //
 // Migration 00018 makes a plain `DELETE FROM users` fail, because that
 // statement is what emptied the library on 2026-10-30 (see
-// docs/incident-2026-10-30/REPORT.md). The delete therefore runs in its own
+// the 2026-10-30 incident report). The delete therefore runs in its own
 // transaction with app.allow_user_delete switched on, and only for the single
 // id the test owns. A failure is reported on t instead of being ignored, so a
 // cleanup that stopped working cannot leave rows behind unnoticed.

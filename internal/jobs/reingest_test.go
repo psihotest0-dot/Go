@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,10 +22,10 @@ func TestReingestFiles(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { dbtest.DeleteUser(t, e.database.Pool, user.ID) })
 
-	addFile := func(name, status string, deleted bool) uuid.UUID {
+	add := func(name, status string, deleted bool, path string) uuid.UUID {
 		f, err := e.database.Queries.CreateIngestedFile(ctx, db.CreateIngestedFileParams{
 			UserID: user.ID, FileName: name, FileHash: "hash-" + uuid.NewString(),
-			MimeType: "text/plain", FileSize: 1, Status: status, LocalPath: "storage/none",
+			MimeType: "text/plain", FileSize: 1, Status: status, LocalPath: path,
 		})
 		require.NoError(t, err)
 		if deleted {
@@ -32,7 +34,15 @@ func TestReingestFiles(t *testing.T) {
 		}
 		return f.ID
 	}
+	// A file with its original in storage, as every upload has by default.
+	addFile := func(name, status string, deleted bool) uuid.UUID {
+		path := filepath.Join(t.TempDir(), name)
+		require.NoError(t, os.WriteFile(path, []byte("text"), 0o600))
+		return add(name, status, deleted, path)
+	}
 	completed := addFile("done.pdf", "completed", false)
+	// Finished, but the original is gone (KEEP_ORIGINALS=false, or deleted by hand).
+	lost := add("lost.pdf", "completed", false, filepath.Join(t.TempDir(), "gone.pdf"))
 	failed := addFile("failed.pdf", "failed", false)
 	processing := addFile("busy.pdf", "processing", false)
 	pending := addFile("new.pdf", "pending", false)
@@ -53,10 +63,12 @@ func TestReingestFiles(t *testing.T) {
 	})
 
 	// Named files: the finished ones are queued; a file that is still being
-	// processed, a deleted one and one that does not exist are skipped.
-	res, err := ReingestFiles(ctx, e.database, e.client, []uuid.UUID{completed, failed, processing, deleted, uuid.New()})
+	// processed, a deleted one and one that does not exist are skipped; one whose
+	// original is gone is left alone (an ingest would wipe its chunks and fail).
+	res, err := ReingestFiles(ctx, e.database, e.client, []uuid.UUID{completed, failed, processing, deleted, uuid.New(), lost})
 	require.NoError(t, err)
-	assert.Equal(t, ReingestResult{Queued: 2, Skipped: 3}, res)
+	assert.Equal(t, ReingestResult{Queued: 2, Skipped: 3, NoOriginal: 1}, res)
+	assert.Zero(t, ingestJobs(lost), "no original, so nothing to ingest again")
 	assert.Equal(t, 1, ingestJobs(completed))
 	assert.Equal(t, 1, ingestJobs(failed))
 	assert.Zero(t, ingestJobs(processing), "a second run would delete the chunks the first is writing")
@@ -74,6 +86,7 @@ func TestReingestFiles(t *testing.T) {
 	_, err = ReingestFiles(ctx, e.database, e.client, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, ingestJobs(completed))
+	assert.Zero(t, ingestJobs(lost))
 	assert.Zero(t, ingestJobs(pending), "a pending file is not finished")
 	assert.Zero(t, ingestJobs(deleted))
 }

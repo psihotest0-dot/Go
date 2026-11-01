@@ -48,7 +48,7 @@ func TestOrchestratorIntegration(t *testing.T) {
 	// The test creates its own user below and every row it writes hangs off
 	// that user, so no cleanup of other people's data is needed - or allowed.
 	// `DELETE FROM users` without a WHERE clause is what destroyed the library
-	// on 2026-10-30 (see docs/incident-2026-10-30/REPORT.md).
+	// on 2026-10-30 (the 2026-10-30 incident).
 
 	// Set up mocks
 	mockEmbedder := &llm.MockEmbedder{}

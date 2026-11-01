@@ -76,9 +76,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	slog.Info("done", "queued", res.Queued, "already_queued", res.AlreadyDue, "skipped", res.Skipped)
+	slog.Info("done", "queued", res.Queued, "already_queued", res.AlreadyDue, "skipped", res.Skipped, "no_original", res.NoOriginal)
 	if res.Skipped > 0 {
 		slog.Warn("some files were skipped: not found, deleted, or still being processed", "count", res.Skipped)
+	}
+	if res.NoOriginal > 0 {
+		slog.Warn("some files were left alone: their original is not in storage (KEEP_ORIGINALS=false, or deleted by hand); upload them again to ingest them anew", "count", res.NoOriginal)
 	}
 	return nil
 }
@@ -87,23 +90,35 @@ func listFiles(ctx context.Context, database *db.Database) error {
 	rows, err := database.SqlDB.QueryContext(ctx, `
 		SELECT f.id, f.status, left(f.file_name, 60),
 		       (SELECT count(*) FROM document_chunks c WHERE c.file_id = f.id AND c.chunk_type = 'raw_text'),
-		       (SELECT count(*) FROM document_chunks c WHERE c.file_id = f.id AND c.chunk_type = 'concept_summary')
+		       (SELECT count(*) FROM document_chunks c WHERE c.file_id = f.id AND c.chunk_type = 'concept_summary'),
+		       f.local_path
 		FROM ingested_files f WHERE f.deleted_at IS NULL ORDER BY f.created_at`)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	fmt.Printf("%-36s  %-10s  %6s  %9s  %s\n", "id", "status", "chunks", "summaries", "file")
+	fmt.Printf("%-36s  %-10s  %6s  %9s  %-8s  %s\n", "id", "status", "chunks", "summaries", "original", "file")
 	for rows.Next() {
 		var id uuid.UUID
-		var status, name string
+		var status, name, path string
 		var chunks, summaries int
-		if err := rows.Scan(&id, &status, &name, &chunks, &summaries); err != nil {
+		if err := rows.Scan(&id, &status, &name, &chunks, &summaries, &path); err != nil {
 			return err
 		}
-		fmt.Printf("%-36s  %-10s  %6d  %9d  %s\n", id, status, chunks, summaries, name)
+		fmt.Printf("%-36s  %-10s  %6d  %9d  %-8s  %s\n", id, status, chunks, summaries, originalState(path), name)
 	}
 	return rows.Err()
+}
+
+// originalState says whether the uploaded file of a row is still in storage.
+func originalState(path string) string {
+	if path == "" {
+		return "no"
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "no"
+	}
+	return "yes"
 }
 
 func main() {

@@ -39,7 +39,7 @@ func TestRetrieval_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// Only this test's own rows are removed; a bare `DELETE FROM users` would
-	// cascade through the whole library (docs/incident-2026-10-30/REPORT.md).
+	// cascade through the whole library (the 2026-10-30 incident).
 	defer func() {
 		dbtest.DeleteUser(t, d.Pool, user.ID)
 	}()
@@ -86,7 +86,7 @@ func TestRetrieval_HybridSearch_Bulgarian(t *testing.T) {
 	require.NoError(t, err)
 
 	// Only this test's own rows are removed; a bare `DELETE FROM users` would
-	// cascade through the whole library (docs/incident-2026-10-30/REPORT.md).
+	// cascade through the whole library (the 2026-10-30 incident).
 	defer func() {
 		dbtest.DeleteUser(t, d.Pool, user.ID)
 	}()

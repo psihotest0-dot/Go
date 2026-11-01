@@ -8,7 +8,7 @@ set -euo pipefail
 # BACKUP_KEEP  how many dumps to keep, oldest removed first (default: 14,
 #              0 disables pruning).
 #
-# The 2026-10-30 incident (docs/incident-2026-10-30/REPORT.md) left nothing to
+# The 2026-10-30 incident (the 2026-10-30 incident) left nothing to
 # restore from because no dump had ever been taken. Run this on a schedule -
 # scripts/backup-task.ps1 registers a daily Windows task - and verify the files
 # are actually reachable from another machine.

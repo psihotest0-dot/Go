@@ -45,6 +45,9 @@ const DefaultListenAddr = "127.0.0.1:8080"
 // DefaultMaxUploadMB is the upload size limit when MAX_UPLOAD_MB is not set.
 const DefaultMaxUploadMB = 100
 
+// DefaultLogMaxMB is the size at which backend.log is rotated (LOG_MAX_MB).
+const DefaultLogMaxMB = 10
+
 // DefaultLLMSlots is how many completions the model server runs in parallel
 // (Lemonade is started with two slots). DefaultLLMBackgroundSlots is the share
 // of them background work (summaries, consolidation, distillation) may use.
@@ -68,7 +71,18 @@ type Config struct {
 	// start fail with the command to run (cmd/migrate), so a schema change can be
 	// preceded by a backup.
 	AutoMigrate bool
-	LLMBaseURL  string
+	// KeepOriginals keeps the uploaded file in storage/ after it was ingested
+	// successfully (KEEP_ORIGINALS, on by default). The original is only needed to
+	// ingest the file again (cmd/reingest); search and chat use the text and
+	// vectors in the database. When off, the original is deleted as soon as the
+	// ingest has finished; a file whose ingest failed keeps it, so it can be tried
+	// again.
+	KeepOriginals bool
+	// LogMaxMB is the size, in megabytes, at which backend.log is rotated
+	// (LOG_MAX_MB): the old file is compressed and kept as one backup, so the logs
+	// take about this much and no more.
+	LogMaxMB   int
+	LLMBaseURL string
 	// LLMModel pins the model name sent to the LLM server. Empty means the
 	// client asks the server which model it serves.
 	LLMModel string
@@ -190,6 +204,8 @@ func Load() *Config {
 		MaxUploadBytes:     maxUploadMB << 20,
 		PromptsDir:         strings.TrimSpace(os.Getenv("PROMPTS_DIR")),
 		AutoMigrate:        boolEnv("AUTO_MIGRATE", true),
+		KeepOriginals:      boolEnv("KEEP_ORIGINALS", true),
+		LogMaxMB:           positiveIntEnv("LOG_MAX_MB", DefaultLogMaxMB),
 		LLMBaseURL:         os.Getenv("LLM_BASE_URL"),
 		LLMModel:           strings.TrimSpace(os.Getenv("LLM_MODEL")),
 		LLMSlots:           positiveIntEnv("LLM_SLOTS", DefaultLLMSlots),

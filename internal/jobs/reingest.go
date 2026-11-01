@@ -31,6 +31,10 @@ type ReingestResult struct {
 	Queued     int // jobs inserted
 	AlreadyDue int // files that already had an ingest queued or running
 	Skipped    int // files that could not be re-ingested (not found, deleted, still being processed)
+	// NoOriginal counts finished files whose uploaded original is not in storage
+	// (KEEP_ORIGINALS=false, or a file deleted by hand). They are left alone: an
+	// ingest would delete their chunks first and then fail to read the file.
+	NoOriginal int
 }
 
 // ReingestFiles runs the ingest of files again from the originals kept in
@@ -39,12 +43,13 @@ type ReingestResult struct {
 //
 // ids selects the files; nil selects every file that is finished (completed or
 // failed) and not deleted. A file that is still pending or processing is skipped:
-// a second run would delete the chunks the first one is writing.
+// a second run would delete the chunks the first one is writing. A file whose
+// original is not in storage is not queued either (see ReingestResult.NoOriginal).
 func ReingestFiles(ctx context.Context, database *db.Database, client *river.Client[pgx.Tx], ids []uuid.UUID) (ReingestResult, error) {
 	var res ReingestResult
 
 	rows, err := database.SqlDB.QueryContext(ctx, `
-		SELECT id, file_name FROM ingested_files
+		SELECT id, file_name, local_path FROM ingested_files
 		WHERE deleted_at IS NULL AND status IN ('completed', 'failed')
 		  AND ($1::uuid[] IS NULL OR id = ANY($1::uuid[]))
 		ORDER BY created_at`, uuidArray(ids))
@@ -54,11 +59,12 @@ func ReingestFiles(ctx context.Context, database *db.Database, client *river.Cli
 	type file struct {
 		id   uuid.UUID
 		name string
+		path string
 	}
 	var files []file
 	for rows.Next() {
 		var f file
-		if err := rows.Scan(&f.id, &f.name); err != nil {
+		if err := rows.Scan(&f.id, &f.name, &f.path); err != nil {
 			rows.Close()
 			return res, err
 		}
@@ -73,6 +79,11 @@ func ReingestFiles(ctx context.Context, database *db.Database, client *river.Cli
 	}
 
 	for _, f := range files {
+		if !originalExists(f.path) {
+			res.NoOriginal++
+			slog.Warn("not ingested again: the original is not in storage", "file_id", f.id, "file", f.name)
+			continue
+		}
 		ins, err := client.Insert(ctx, IngestFileArgs{FileID: f.id}, IngestInsertOpts())
 		if err != nil {
 			return res, fmt.Errorf("failed to queue %s: %w", f.name, err)

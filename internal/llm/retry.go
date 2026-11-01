@@ -78,6 +78,12 @@ func retry(ctx context.Context, op string, baseDelay time.Duration, attempt func
 			return nil
 		}
 		if !retryable(ctx, err) {
+			// The context may have ended while this very attempt was failing (the
+			// caller gave up as the answer arrived). Say so, next to the failure,
+			// so errors.Is(err, context.Canceled) holds whatever the timing was.
+			if ctxErr := ctx.Err(); ctxErr != nil && !errors.Is(err, ctxErr) {
+				return fmt.Errorf("llm %s: %w", op, errors.Join(ctxErr, err))
+			}
 			return fmt.Errorf("llm %s: %w", op, err)
 		}
 		if i == maxAttempts-1 {

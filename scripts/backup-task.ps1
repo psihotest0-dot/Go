@@ -5,7 +5,7 @@ Registers (or removes) the Windows Scheduled Task that dumps the database daily.
 .DESCRIPTION
 The 2026-10-30 incident left nothing to restore from: no dump had ever been
 taken, so the deleted rows and vectors were unrecoverable (see
-docs/incident-2026-10-30/REPORT.md). This script creates the missing piece - a
+the 2026-10-30 incident report). This script creates the missing piece - a
 daily, unattended backup run.
 
 The task starts scripts/backup.ps1 with powershell.exe, so it needs neither bash
@@ -93,7 +93,7 @@ Register-ScheduledTask `
     -Action $action `
     -Trigger $trigger `
     -Settings $settings `
-    -Description "Daily pg_dump backup of the go-monolith database (see docs/incident-2026-10-30)." `
+    -Description "Daily pg_dump backup of the go-monolith database (the 2026-10-30 incident)." `
     -Force | Out-Null
 
 Write-Host "Registered scheduled task '$TaskName':"

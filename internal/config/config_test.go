@@ -227,6 +227,52 @@ func TestLoadAutoMigrate(t *testing.T) {
 	}
 }
 
+func TestLoadKeepOriginals(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{name: "originals are kept by default", env: "", want: true},
+		{name: "false deletes them after a good ingest", env: "false", want: false},
+		{name: "zero", env: "0", want: false},
+		{name: "any case", env: "FALSE", want: false},
+		{name: "explicit true", env: "true", want: true},
+		// A typo must not start deleting the only copy of a book.
+		{name: "garbage keeps the default", env: "nope", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("KEEP_ORIGINALS", tt.env)
+			if got := Load().KeepOriginals; got != tt.want {
+				t.Fatalf("KeepOriginals = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadLogMaxMB(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want int
+	}{
+		{name: "ten megabytes by default", env: "", want: 10},
+		{name: "custom", env: "25", want: 25},
+		{name: "zero is not a limit", env: "0", want: 10},
+		{name: "negative", env: "-5", want: 10},
+		{name: "garbage", env: "big", want: 10},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LOG_MAX_MB", tt.env)
+			if got := Load().LogMaxMB; got != tt.want {
+				t.Fatalf("LogMaxMB = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFileCategories(t *testing.T) {
 	for _, name := range []string{"medicine", "economics", "programming", "law", "psychology", "literature", "general"} {
 		if !IsFileCategory(name) {

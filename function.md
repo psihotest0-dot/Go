@@ -1,6 +1,6 @@
 # Архитектура и функции на системата
 
-Този документ описва модулите на бекенда, за какво отговаря всеки и как си взаимодействат. Актуален е към 2026-11-01 (след задачи 1–37 от `ACTION_PLAN.md`). За настройките вж. `README.md`, за HTTP интерфейса — `docs/openapi.yaml`, за архивите — `Backup and Restore.md`.
+Този документ описва модулите на бекенда, за какво отговаря всеки и как си взаимодействат. Актуален е към 2026-11-01 (след задачи 1–37 от плана на проекта). За настройките вж. `README.md`, за HTTP интерфейса — `docs/openapi.yaml`, за архивите — `Backup and Restore.md`.
 
 ---
 
@@ -21,7 +21,7 @@
 ## 1. Модули
 
 ### `main.go`
-Сглобява всичко и държи HTTP маршрутите. Публични са само `/healthz` и `/metrics`; останалото минава през `api.UserMiddleware` (заглавие `X-User-ID`) и `api.RecordRoute` (етикет на маршрута за метриките). CORS е разрешен за `localhost`/`127.0.0.1`. Слуша на `LISTEN_ADDR` (по подразбиране `127.0.0.1:8080`). Спира с `Ctrl+C`/сигнал: изчаква River и затваря базата.
+Сглобява всичко и държи HTTP маршрутите. Публични са само `/healthz` и `/metrics`; останалото минава през `api.UserMiddleware` (заглавие `X-User-ID`) и `api.RecordRoute` (етикет на маршрута за метриките). CORS е разрешен за `localhost`/`127.0.0.1`. Слуша на `LISTEN_ADDR` (по подразбиране `127.0.0.1:8080`). Логът отива в `backend.log` (JSON), който се ротира при `LOG_MAX_MB` (10 MB; старият се компресира и се пази един архив); на екрана излизат само грешките. Спира с `Ctrl+C`/сигнал: изчаква River и затваря базата.
 
 ### `internal/config`
 Всички настройки от средата в един `Config` (`config.Load()`), плюс константите на системата: `DefaultEmbedModel` (моделът на **всички** вектори), `VectorDimension` (384), `FileCategories` (седемте категории), `DefaultListenAddr`, `DefaultMaxUploadMB` и др. Невалидно число/флаг се логва и се ползва подразбирането.
@@ -60,11 +60,11 @@
 
 ### `internal/jobs` (River)
 Фонова работа в PostgreSQL (без Redis). Опашки: `default`, `ingest`, `distillation`, `memory`, `maintenance` (по 1 работник).
-* **`IngestFileWorker`** (`ingest.go`): отваря оригинала от `storage/`, `Extract`, нарязва на chunks (800 знака с припокриване 100; за предимно кирилица 400/50), вгражда ги на партиди през `llm.Embedder`, записва `document_chunks` (`raw_text`) с името на модела, определя категорията по гласуване на chunks, маркира файла `completed` и пуска дистилацията. Оригиналът **не се трие** (след инцидента от 30.10 е единственото копие, от което може да се започне пак).
+* **`IngestFileWorker`** (`ingest.go`): отваря оригинала от `storage/`, `Extract`, нарязва на chunks (800 знака с припокриване 100; за предимно кирилица 400/50), вгражда ги на партиди през `llm.Embedder`, записва `document_chunks` (`raw_text`) с името на модела, определя категорията по гласуване на chunks, маркира файла `completed` и пуска дистилацията. Оригиналът **по подразбиране не се трие** (след инцидента от 30.10 е единственото копие, от което може да се започне пак); с `KEEP_ORIGINALS=false` се трие като последна стъпка на успешния ингест, а при неуспешен се пази. Преди да изтрие старите chunks на вече завършен файл, задачата проверява, че оригиналът го има — иначе се отказва (`JobCancel`) и текстът остава.
 * **`DistillationWorker`** (`distillation.go`): LLM обобщава по 5 chunks на английски → `concept_summary` chunks с теми; цел — 80 % от партидите. При старт `EnqueueIncompleteDistillations` пуска недовършените. Върви на фонов дял от слотовете на модела.
 * **Консолидация на паметта** (`jobs.go`, `memory_facts.go`): периодична задача на всеки 5 минути намира потребители с неанализирани съобщения → за всеки `MemoryConsolidationWorker` (до 20 съобщения на пуск) моли LLM с JSON схема за факти (`fact_key`, `value`, `statement`, `is_explicit_change`) → `decideFact` решава дали е нов, повтарящ се или заменя стар (`candidate`/`active`/`superseded`) в една транзакция, под advisory lock на потребителя.
 * **`EmbeddingCacheGCWorker`**: веднъж дневно трие записи на `embedding_cache`, неползвани 30 дни.
-* **`reingest.go`**: `ReingestFiles` пуска ингеста наново от оригиналите (ползва го `cmd/reingest`). **`collector.go`**: Prometheus колектор за състоянието на опашките и на файловете.
+* **`reingest.go`**: `ReingestFiles` пуска ингеста наново от оригиналите (ползва го `cmd/reingest`); файл без оригинал в `storage/` не се слага в опашката (брои се в `NoOriginal`). **`collector.go`**: Prometheus колектор за състоянието на опашките и на файловете.
 
 ### `internal/db`
 Достъп до PostgreSQL: `sqlc` генерира `*.sql.go` от `internal/db/queries/*.sql` (не се редактират на ръка); `database.go` — пул (`pgx`) + `database/sql`, `Connect`, миграции (`goose`, папка `migrations/`, `PendingMigrations`/`RunMigrations`), `CreateMemoryWithCheck`/`UpdateMemoryWithCheck` (дедупликация по хеш на съдържанието); `search.go` — транзакция с настройките за търсене. Таблици: `users`, `messages`, `memories`, `ingested_files`, `document_chunks`, `embedding_cache`, `global_rules`, `agent_traces`, `session_summaries`, `pending_actions`, `telegram_users` (чат ↔ потребител; ползва се през пула, не през `sqlc`) и таблиците на River. `DELETE`/`TRUNCATE` върху `users` е забранено с тригер (миграция 00018).
@@ -91,7 +91,7 @@ FastAPI услуга (`/embed`, `/health`), модел `intfloat/multilingual-e5
 
 ### `cmd/*`
 * `cmd/migrate` — прилага миграциите на ръка (`-status` само показва).
-* `cmd/reingest` — `-list`, `-file <id>`, `-all`: пуска ингеста наново от `storage/` (работата я върши работещият бекенд).
+* `cmd/reingest` — `-list`, `-file <id>`, `-all`: пуска ингеста наново от `storage/` (работата я върши работещият бекенд); `-list` показва и дали оригиналът го има (колона `original`), а файловете без оригинал се пропускат с предупреждение.
 * `cmd/reembed` — преизчислява вектори (`-force`, `-memories`, `-chunks`); спри бекенда преди това.
 
 ---

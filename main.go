@@ -66,6 +66,19 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 	}
 }
 
+// newLogFile is the rotating backend.log. When it reaches maxMB megabytes it is
+// compressed and kept as the one backup (backend-<time>.log.gz), so the logs
+// never take much more than maxMB. A file that is already larger than the limit
+// is rotated on the first write.
+func newLogFile(maxMB int) *lumberjack.Logger {
+	return &lumberjack.Logger{
+		Filename:   "backend.log",
+		MaxSize:    maxMB, // megabytes
+		MaxBackups: 1,
+		Compress:   true,
+	}
+}
+
 func run() error {
 	// One signal-aware context for the whole process: Ctrl+C / SIGTERM cancels
 	// it, which stops River and the Telegram bot and starts the HTTP shutdown.
@@ -76,12 +89,10 @@ func run() error {
 		fmt.Printf("warning: failed to load .env file: %v\n", err)
 	}
 
-	logFile := &lumberjack.Logger{
-		Filename:   "backend.log",
-		MaxSize:    5, // megabytes
-		MaxBackups: 1,
-		Compress:   true,
-	}
+	// Read once, right after .env: the size limit of the log file is part of it.
+	cfg := config.Load()
+
+	logFile := newLogFile(cfg.LogMaxMB)
 	defer logFile.Close()
 
 	fileHandler := slog.NewJSONHandler(logFile, nil)
@@ -94,8 +105,6 @@ func run() error {
 	slog.SetDefault(logger)
 
 	fmt.Println("Starting server...")
-
-	cfg := config.Load()
 
 	dbURLForLog := cfg.DatabaseURL
 	if u, err := url.Parse(cfg.DatabaseURL); err == nil {
