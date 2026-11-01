@@ -38,7 +38,7 @@ func toolDefinitions() []openai.Tool {
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
 				Name:        "create_memory",
-				Description: "Save a new personal fact or preference about the user.",
+				Description: "Save a new personal fact or preference about the user. After a web page or a document was read in this conversation it is only a proposal that the user must confirm.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -101,7 +101,7 @@ func toolDefinitions() []openai.Tool {
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
 				Name:        "save_global_rule",
-				Description: "Save a new global rule or preference (e.g., 'always speak in Bulgarian'). Overwrites existing rule with same key.",
+				Description: "Propose a new global rule or preference (e.g., 'always speak in Bulgarian'). It is saved only when the user confirms it; a rule with the same key replaces the old one.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{

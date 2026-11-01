@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go-monolith/internal/agent"
+	"go-monolith/internal/proposals"
 )
 
 const (
@@ -42,7 +44,15 @@ type sender interface {
 
 // chatProcessor answers one user turn; *agent.Orchestrator implements it.
 type chatProcessor interface {
-	ProcessChat(ctx context.Context, userID uuid.UUID, req agent.ChatRequest) (string, error)
+	ProcessChatTurn(ctx context.Context, userID uuid.UUID, req agent.ChatRequest) (agent.ChatTurn, error)
+}
+
+// proposalDesk is where the user decides on the writes the model proposed (a
+// global rule, a memory); *proposals.Service implements it.
+type proposalDesk interface {
+	Pending(ctx context.Context, userID uuid.UUID) ([]proposals.Proposal, error)
+	Approve(ctx context.Context, userID uuid.UUID, id int64) (proposals.Proposal, error)
+	Reject(ctx context.Context, userID uuid.UUID, id int64) (proposals.Proposal, error)
 }
 
 // userStore maps Telegram chats to backend users.
@@ -86,6 +96,7 @@ type Bot struct {
 	sender    sender
 	processor chatProcessor
 	store     userStore
+	desk      proposalDesk
 
 	// allowed is the set of chats that may talk to the bot. Telegram only
 	// authenticates the bot's token, not who writes to it, so everybody else is
@@ -103,7 +114,7 @@ type Bot struct {
 	wg sync.WaitGroup
 }
 
-func newBot(s sender, processor chatProcessor, store userStore, allowedChatIDs []int64) *Bot {
+func newBot(s sender, processor chatProcessor, store userStore, desk proposalDesk, allowedChatIDs []int64) *Bot {
 	allowed := make(map[int64]struct{}, len(allowedChatIDs))
 	for _, id := range allowedChatIDs {
 		allowed[id] = struct{}{}
@@ -112,13 +123,14 @@ func newBot(s sender, processor chatProcessor, store userStore, allowedChatIDs [
 		sender:    s,
 		processor: processor,
 		store:     store,
+		desk:      desk,
 		allowed:   allowed,
 		slots:     make(chan struct{}, maxConcurrentChats),
 		chatLocks: make(map[int64]chan struct{}),
 	}
 }
 
-func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool) (*Bot, error) {
+func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool, desk *proposals.Service) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("telegram token is empty")
 	}
@@ -130,7 +142,7 @@ func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool
 		return nil, errors.New(strings.ReplaceAll(err.Error(), token, "<redacted>"))
 	}
 
-	bot := newBot(api, orch, pgUserStore{pool: pool}, allowedChatIDs)
+	bot := newBot(api, orch, pgUserStore{pool: pool}, desk, allowedChatIDs)
 	bot.api = api
 	return bot, nil
 }
@@ -143,14 +155,14 @@ const (
 // Run connects to Telegram and serves updates until ctx is cancelled. A failed
 // connection (network down, connection reset, ...) is retried with exponential
 // backoff instead of leaving the bot disabled until the next restart.
-func Run(ctx context.Context, token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool) {
+func Run(ctx context.Context, token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool, desk *proposals.Service) {
 	if len(allowedChatIDs) == 0 {
 		slog.Warn("TELEGRAM_ALLOWED_CHAT_IDS is empty: the bot answers nobody except /id, which prints the chat id to put there")
 	}
 
 	backoff := initialConnectBackoff
 	for {
-		bot, err := NewBot(token, allowedChatIDs, orch, pool)
+		bot, err := NewBot(token, allowedChatIDs, orch, pool, desk)
 		if err == nil {
 			bot.Start(ctx)
 			return
@@ -301,6 +313,12 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		}
 	}
 
+	switch command {
+	case "pending", "approve", "reject":
+		b.handleProposalCommand(ctx, chatID, userID, command, args)
+		return
+	}
+
 	if !b.acquireSlot(ctx) {
 		return
 	}
@@ -311,7 +329,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 
 	turnCtx, cancel := context.WithTimeout(ctx, chatTurnTimeout)
 	defer cancel()
-	answer, err := b.processor.ProcessChat(turnCtx, userID, agent.ChatRequest{
+	turn, err := b.processor.ProcessChatTurn(turnCtx, userID, agent.ChatRequest{
 		SessionID: fmt.Sprintf("tg-%d", chatID),
 		Content:   msg.Text,
 	})
@@ -323,13 +341,107 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		b.sendReply(chatID, "Възникна грешка при генерирането на отговор.")
 		return
 	}
-	if strings.TrimSpace(answer) == "" {
+	answer := turn.Answer
+	if strings.TrimSpace(answer) == "" && len(turn.Proposals) == 0 {
 		// Telegram rejects an empty message.
 		b.sendReply(chatID, "Не успях да формулирам отговор. Опитай отново.")
 		return
 	}
 
-	b.sendReply(chatID, answer)
+	if strings.TrimSpace(answer) != "" {
+		b.sendReply(chatID, answer)
+	}
+	if len(turn.Proposals) > 0 {
+		b.sendReply(chatID, proposalNotice(turn.Proposals))
+	}
+}
+
+// handleProposalCommand serves /pending, /approve <id> and /reject <id>.
+func (b *Bot) handleProposalCommand(ctx context.Context, chatID int64, userID uuid.UUID, command, args string) {
+	if b.desk == nil {
+		b.sendReply(chatID, "Предложенията не са налични.")
+		return
+	}
+
+	if command == "pending" {
+		list, err := b.desk.Pending(ctx, userID)
+		if err != nil {
+			slog.Error("Failed to list proposals", slog.Any("error", err), slog.Int64("chat_id", chatID))
+			b.sendReply(chatID, "Възникна грешка при четенето на предложенията.")
+			return
+		}
+		if len(list) == 0 {
+			b.sendReply(chatID, "Няма предложения, които чакат потвърждение.")
+			return
+		}
+		b.sendReply(chatID, proposalNotice(list))
+		return
+	}
+
+	id, err := strconv.ParseInt(strings.TrimSpace(args), 10, 64)
+	if err != nil || id < 1 {
+		b.sendReply(chatID, fmt.Sprintf("Кажи кое предложение: /%s <номер>. Списъкът е с /pending.", command))
+		return
+	}
+
+	decide := b.desk.Approve
+	if command == "reject" {
+		decide = b.desk.Reject
+	}
+	p, err := decide(ctx, userID, id)
+	switch {
+	case err == nil:
+		if command == "approve" {
+			b.sendReply(chatID, "✅ Запазено: "+p.Summary)
+		} else {
+			b.sendReply(chatID, "🗑 Отхвърлено: "+p.Summary)
+		}
+	case errors.Is(err, proposals.ErrNotFound):
+		b.sendReply(chatID, "Няма такова предложение.")
+	case errors.Is(err, proposals.ErrNotPending):
+		b.sendReply(chatID, "Това предложение вече е решено.")
+	case errors.Is(err, proposals.ErrTooManyRules):
+		b.sendReply(chatID, fmt.Sprintf("Вече има %d глобални правила — първо изтрий някое от приложението.", proposals.MaxActiveRules))
+	default:
+		slog.Error("Failed to decide a proposal", slog.Any("error", err), slog.Int64("chat_id", chatID), slog.Int64("proposal_id", id))
+		b.sendReply(chatID, "Възникна грешка. Опитай отново.")
+	}
+}
+
+// proposalNotice lists proposals with the commands that decide them.
+func proposalNotice(list []proposals.Proposal) string {
+	var sb strings.Builder
+	sb.WriteString("📝 Чака твоето потвърждение:")
+	for _, p := range list {
+		fmt.Fprintf(&sb, "\n\n%d. %s", p.ID, p.Summary)
+		if warning := externalWarning(p.ExternalSources); warning != "" {
+			sb.WriteString("\n" + warning)
+		}
+		fmt.Fprintf(&sb, "\n/approve %d  ·  /reject %d", p.ID, p.ID)
+	}
+	return sb.String()
+}
+
+// externalWarning tells where the text came from that the proposal may rest on.
+func externalWarning(sources []string) string {
+	var web, docs bool
+	for _, source := range sources {
+		switch source {
+		case "web_search", "web_fetch":
+			web = true
+		default:
+			docs = true
+		}
+	}
+	switch {
+	case web && docs:
+		return "⚠️ Предложено след четене на интернет и документи — провери го."
+	case web:
+		return "⚠️ Предложено след четене на интернет — провери го."
+	case docs:
+		return "⚠️ Предложено след четене на документи — провери го."
+	}
+	return ""
 }
 
 // handleLink connects the (already authorised) chat to a backend user id.

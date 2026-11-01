@@ -27,6 +27,7 @@ import (
 	"go-monolith/internal/jobs"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/prompts"
+	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
 	"go-monolith/internal/telegram"
 )
@@ -172,7 +173,8 @@ func run() error {
 	apiService := api.New(database, embedder).WithUploadLimit(cfg.MaxUploadBytes)
 
 	retrievalService := retrieval.NewRetrievalService(database, embedder, catMgr)
-	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database)
+	proposalService := proposals.NewService(database, retrievalService)
+	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database, proposalService)
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
 
 	if cfg.TelegramBotToken != "" {
@@ -182,7 +184,7 @@ func run() error {
 					logger.Error("telegram bot panicked", slog.Any("error", r))
 				}
 			}()
-			telegram.Run(ctx, cfg.TelegramBotToken, cfg.TelegramAllowedChatIDs, orchestrator, database.Pool)
+			telegram.Run(ctx, cfg.TelegramBotToken, cfg.TelegramAllowedChatIDs, orchestrator, database.Pool, proposalService)
 		}()
 	}
 
@@ -220,6 +222,11 @@ func run() error {
 	})
 
 	protectedMux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
+
+	// What the model proposes to remember waits here for the user, and the saved
+	// global rules can be read and deleted.
+	proposalService.RegisterRoutes(protectedMux)
+	apiService.RegisterRuleRoutes(protectedMux)
 
 	// File endpoints are served under both /v1/files and /files; see
 	// api.RegisterFileRoutes for why both prefixes exist.

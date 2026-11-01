@@ -43,6 +43,15 @@ type EmbeddingCache struct {
 	CreatedAt   sql.NullTime    `json:"created_at"`
 }
 
+type GlobalRule struct {
+	ID        int32     `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	Enabled   bool      `json:"enabled"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type IngestedFile struct {
 	ID             uuid.UUID    `json:"id"`
 	UserID         uuid.UUID    `json:"user_id"`
@@ -85,6 +94,19 @@ type Message struct {
 	SourceChunkIds   pqtype.NullRawMessage `json:"source_chunk_ids"`
 	IsAnalyzed       bool                  `json:"is_analyzed"`
 	AnalysisAttempts int32                 `json:"analysis_attempts"`
+}
+
+type PendingAction struct {
+	ID              int64           `json:"id"`
+	UserID          uuid.UUID       `json:"user_id"`
+	SessionID       string          `json:"session_id"`
+	Kind            string          `json:"kind"`
+	Payload         json.RawMessage `json:"payload"`
+	PayloadHash     string          `json:"payload_hash"`
+	ExternalSources []string        `json:"external_sources"`
+	Status          string          `json:"status"`
+	CreatedAt       time.Time       `json:"created_at"`
+	DecidedAt       sql.NullTime    `json:"decided_at"`
 }
 
 type SessionSummary struct {

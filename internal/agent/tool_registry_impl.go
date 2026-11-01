@@ -1,14 +1,12 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -19,21 +17,29 @@ import (
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/db"
+	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
+	"go-monolith/metrics"
 )
 
 // DefaultToolRegistry is the concrete implementation of ToolRegistry.
 type DefaultToolRegistry struct {
-	retrieval  *retrieval.RetrievalService
-	db         *db.Database
+	retrieval *retrieval.RetrievalService
+	db        *db.Database
+	// proposals holds the writes that wait for the user (global rules, and memories
+	// of a turn that read untrusted text).
+	proposals  *proposals.Service
 	httpClient *http.Client
+	// webBaseURL replaces the paid web API in tests; empty means the real one.
+	webBaseURL string
 }
 
 // NewDefaultToolRegistry creates a new DefaultToolRegistry.
-func NewDefaultToolRegistry(r *retrieval.RetrievalService, d *db.Database) *DefaultToolRegistry {
+func NewDefaultToolRegistry(r *retrieval.RetrievalService, d *db.Database, p *proposals.Service) *DefaultToolRegistry {
 	return &DefaultToolRegistry{
 		retrieval:  r,
 		db:         d,
+		proposals:  p,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -162,75 +168,71 @@ func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[str
 	if !ok {
 		return nil, missingArgError("web_search", "query", `{"query": "<what to search for>"}`)
 	}
+	if err := webSearchQuery(query); err != nil {
+		metrics.WebToolRequests.WithLabelValues("web_search", "rejected").Inc()
+		return nil, err
+	}
 
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
-
-	reqBody, _ := json.Marshal(map[string]interface{}{"query": query})
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.deepseek.com/v1/tools/search", bytes.NewReader(reqBody))
+	result, err := r.callWebTool(ctx, "web_search", "/search", map[string]interface{}{"query": query})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	resp, err := r.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to perform search request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("search API returned status %d: %v", resp.StatusCode, result)
-	}
-
+	turnFrom(ctx).markExternal(sourceWebSearch)
 	return result, nil
 }
 
 func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	url, ok := stringArg(args, "url")
+	rawURL, ok := stringArg(args, "url")
 	if !ok {
 		return nil, missingArgError("web_fetch", "url", `{"url": "<page url>"}`)
 	}
-
-	apiKey := os.Getenv("DEEPSEEK_API_KEY")
-
-	reqBody, _ := json.Marshal(map[string]interface{}{"url": url})
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.deepseek.com/v1/tools/fetch", bytes.NewReader(reqBody))
+	pageURL, err := validateFetchURL(rawURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		metrics.WebToolRequests.WithLabelValues("web_fetch", "rejected").Inc()
+		slog.Warn("web_fetch refused a URL", "err", err, "url", truncateRunes(rawURL, maxLoggedToolArgsRunes))
+		return nil, &toolArgumentError{tool: "web_fetch", reason: err.Error()}
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	resp, err := r.httpClient.Do(req)
+	result, err := r.callWebTool(ctx, "web_fetch", "/fetch", map[string]interface{}{"url": pageURL})
 	if err != nil {
-		return nil, fmt.Errorf("failed to perform fetch request: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch API returned status %d: %v", resp.StatusCode, result)
-	}
-
+	turnFrom(ctx).markExternal(sourceWebFetch)
 	return result, nil
 }
 
+// pendingApprovalResult is what the model is told when a write was turned into a
+// proposal: it must not claim the thing is saved.
+func pendingApprovalResult(p proposals.Proposal) map[string]interface{} {
+	return map[string]interface{}{
+		"status":      "pending_approval",
+		"proposal_id": p.ID,
+		"proposal":    p.Summary,
+		"message": "NOT saved yet. This is only a proposal and it waits for the user to confirm it. " +
+			"Tell the user briefly what you propose to save and that they can confirm or reject it. " +
+			"Do not say that it is saved.",
+	}
+}
+
+// proposalError turns the errors of the proposals package into what the model
+// sees: a call it can fix or an expected refusal, not a server failure.
+func proposalError(tool string, err error) error {
+	var invalid *proposals.InvalidError
+	switch {
+	case errors.As(err, &invalid):
+		return &toolArgumentError{tool: tool, reason: invalid.Reason}
+	case errors.Is(err, proposals.ErrTooManyPending):
+		return &toolArgumentError{tool: tool, reason: fmt.Sprintf(
+			"the user already has %d proposals waiting for an answer; ask them to confirm or reject those first", proposals.MaxPending)}
+	case errors.Is(err, proposals.ErrTooManyRules):
+		return &toolArgumentError{tool: tool, reason: fmt.Sprintf(
+			"the user already has %d global rules; ask them to delete one before adding another", proposals.MaxActiveRules)}
+	}
+	return fmt.Errorf("failed to propose: %w", err)
+}
+
+// executeSaveGlobalRule never writes the rule. A rule is the first thing in the
+// system prompt of every session, so it only becomes one when the user confirms.
 func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
 	key, ok := stringArg(args, "key")
 	if !ok {
@@ -242,32 +244,45 @@ func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID 
 		return nil, missingArgError("save_global_rule", "value", `{"key": "<short rule name>", "value": "<instruction>"}`)
 	}
 
-	err := r.db.Queries.SaveGlobalRule(ctx, db.SaveGlobalRuleParams{
-		UserID: userID,
-		Key:    key,
-		Value:  value,
-	})
+	turn := turnFrom(ctx)
+	p, err := r.proposals.ProposeRule(ctx, userID, turn.session(), key, value, turn.externalSources())
 	if err != nil {
-		return nil, fmt.Errorf("failed to save global rule: %w", err)
+		return nil, proposalError("save_global_rule", err)
 	}
-
-	return map[string]interface{}{
-		"status": "success",
-		"key":    key,
-		"value":  value,
-	}, nil
+	turn.addProposal(p)
+	return pendingApprovalResult(p), nil
 }
 
+// executeCreateMemory saves the fact when the turn read nothing but the
+// conversation. After the turn read a web page or a document, the same call is a
+// proposal: that text could have told the model what to remember.
 func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
 	content, ok := stringArg(args, "content")
 	if !ok {
 		return nil, missingArgError("create_memory", "content", `{"content": "<fact about the user>"}`)
 	}
 
-	importance := intArg(args, "importance", 5)
+	importance, err := importanceArg(args)
+	if err != nil {
+		return nil, err
+	}
+	memory, err := proposals.NormalizeMemory(content, importance)
+	if err != nil {
+		return nil, proposalError("create_memory", err)
+	}
+
+	turn := turnFrom(ctx)
+	if external := turn.externalSources(); len(external) > 0 {
+		p, err := r.proposals.ProposeMemory(ctx, userID, turn.session(), memory.Content, memory.Importance, external)
+		if err != nil {
+			return nil, proposalError("create_memory", err)
+		}
+		turn.addProposal(p)
+		return pendingApprovalResult(p), nil
+	}
 
 	// Always save as "active" to avoid conflicts, letting the background worker consolidate.
-	mem, err := r.retrieval.CreateMemory(ctx, userID, content, importance, "active", pqtype.NullRawMessage{})
+	mem, err := r.retrieval.CreateMemory(ctx, userID, memory.Content, memory.Importance, "active", pqtype.NullRawMessage{})
 	if err != nil {
 		if errors.Is(err, db.ErrMemoryExists) {
 			// If it's the exact same content, we can just return success
@@ -286,6 +301,45 @@ func (r *DefaultToolRegistry) executeCreateMemory(ctx context.Context, userID uu
 		"memory_id": mem.ID,
 		"content":   mem.Content,
 	}, nil
+}
+
+// importanceArg reads the optional importance of create_memory. Absent means the
+// default (0); a value outside 1-10 is an error the model can correct.
+func importanceArg(args map[string]interface{}) (int, error) {
+	raw, present := args["importance"]
+	if !present || raw == nil {
+		return 0, nil
+	}
+
+	notWhole := &toolArgumentError{tool: "create_memory", reason: "importance must be a whole number from 1 to 10"}
+	var n int
+	switch value := raw.(type) {
+	case float64:
+		n = int(value)
+		if float64(n) != value {
+			return 0, notWhole
+		}
+	case json.Number:
+		parsed, err := value.Int64()
+		if err != nil {
+			return 0, notWhole
+		}
+		n = int(parsed)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil {
+			return 0, notWhole
+		}
+		n = parsed
+	default:
+		return 0, notWhole
+	}
+
+	if n < proposals.MinImportance || n > proposals.MaxImportance {
+		return 0, &toolArgumentError{tool: "create_memory", reason: fmt.Sprintf(
+			"importance must be between %d and %d", proposals.MinImportance, proposals.MaxImportance)}
+	}
+	return n, nil
 }
 
 func truncateString(s string, maxRunes int) string {
@@ -352,6 +406,9 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search documents: %w", err)
+	}
+	if len(results) > 0 {
+		turnFrom(ctx).markExternal(sourceSearchDocuments)
 	}
 
 	var formattedResults []map[string]interface{}

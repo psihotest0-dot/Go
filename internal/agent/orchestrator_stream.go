@@ -207,6 +207,13 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		flusher.Flush()
 	}
 
+	// Writes the model asked for wait for the user; tell the client so it can ask.
+	if made := turnFrom(r.Context()).madeProposals(); len(made) > 0 {
+		proposalBytes, _ := json.Marshal(made)
+		fmt.Fprintf(w, "event: proposals\ndata: %s\n\n", string(proposalBytes))
+		flusher.Flush()
+	}
+
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 

@@ -15,6 +15,7 @@ import (
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
 )
 
@@ -120,6 +121,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	// The tools of this turn share its state: what untrusted text it has read and
+	// which proposals it made (see turnState).
+	turnCtx, _ := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
+	r = r.WithContext(turnCtx)
 
 	_ = o.writeTrace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
@@ -250,6 +256,11 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		chatCtx.HistoryAt = chatCtx.HistoryAt[:len(chatCtx.History)]
 	}
 
+	// The tools of this turn share its state: what untrusted text it has read and
+	// which proposals it made (see turnState).
+	turnCtx, _ := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
+	r = r.WithContext(turnCtx)
+
 	_ = o.writeTrace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
 		"memory_ids": memoryIDs,
@@ -314,27 +325,45 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// ChatTurn is the outcome of a chat turn run without HTTP.
+type ChatTurn struct {
+	// Answer has the hidden reasoning and the tool markup already removed.
+	Answer string
+	// Proposals are the writes the model asked for in this turn that wait for the
+	// user's confirmation.
+	Proposals []proposals.Proposal
+}
+
 // ProcessChat executes the chat pipeline without HTTP dependencies and returns
 // the answer with hidden reasoning and tool markup already removed.
 func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req ChatRequest) (string, error) {
+	turn, err := o.ProcessChatTurn(ctx, userID, req)
+	return turn.Answer, err
+}
+
+// ProcessChatTurn is ProcessChat that also reports the proposals of the turn, so
+// a caller without an event stream (Telegram) can ask the user about them.
+func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, req ChatRequest) (ChatTurn, error) {
 	ctx = context.WithValue(ctx, api.ParsedUserIDKey, userID)
 	ctx = WithCurrentQuery(ctx, req.Content)
 
 	if req.SessionID == "" || req.Content == "" {
-		return "", fmt.Errorf("session_id and content are required")
+		return ChatTurn{}, fmt.Errorf("session_id and content are required")
 	}
 
 	// See HandleStreamChat: the user turn is persisted up front so that it is
 	// part of the history the prompt is built from.
 	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
 		slog.Error("failed to save user message", "err", err)
-		return "", fmt.Errorf("failed to save user message: %w", err)
+		return ChatTurn{}, fmt.Errorf("failed to save user message: %w", err)
 	}
 
 	chatCtx, memoryIDs, err := o.loadContext(ctx, userID, req)
 	if err != nil {
-		return "", err
+		return ChatTurn{}, err
 	}
+
+	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
 
 	_ = o.writeTrace(ctx, userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
@@ -347,7 +376,7 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
 		slog.Error("failed to render system prompt", "err", err)
-		return "", fmt.Errorf("failed to render system prompt: %w", err)
+		return ChatTurn{}, fmt.Errorf("failed to render system prompt: %w", err)
 	}
 
 	var finalMessages []openai.ChatCompletionMessage
@@ -363,7 +392,7 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 
 	assistantContent, _, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, nil)
 	if err != nil {
-		return "", err
+		return ChatTurn{}, err
 	}
 	answer := sanitizeAssistantText(assistantContent)
 
@@ -376,5 +405,5 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 		"response_length": len(answer),
 	})
 
-	return answer, nil
+	return ChatTurn{Answer: answer, Proposals: turn.madeProposals()}, nil
 }

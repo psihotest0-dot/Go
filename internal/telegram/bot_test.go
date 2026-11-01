@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/agent"
+	"go-monolith/internal/proposals"
 )
 
 type fakeSender struct {
@@ -88,7 +90,9 @@ type fakeProcessor struct {
 	calls  atomic.Int32
 	answer string
 	err    error
-	// onCall runs inside ProcessChat and may block.
+	// proposals are the writes the model "proposed" in the turn.
+	proposals []proposals.Proposal
+	// onCall runs inside ProcessChatTurn and may block.
 	onCall func(ctx context.Context, userID uuid.UUID, req agent.ChatRequest)
 
 	mu    sync.Mutex
@@ -96,7 +100,7 @@ type fakeProcessor struct {
 	reqs  []agent.ChatRequest
 }
 
-func (p *fakeProcessor) ProcessChat(ctx context.Context, userID uuid.UUID, req agent.ChatRequest) (string, error) {
+func (p *fakeProcessor) ProcessChatTurn(ctx context.Context, userID uuid.UUID, req agent.ChatRequest) (agent.ChatTurn, error) {
 	p.calls.Add(1)
 	p.mu.Lock()
 	p.users = append(p.users, userID)
@@ -105,7 +109,47 @@ func (p *fakeProcessor) ProcessChat(ctx context.Context, userID uuid.UUID, req a
 	if p.onCall != nil {
 		p.onCall(ctx, userID, req)
 	}
-	return p.answer, p.err
+	return agent.ChatTurn{Answer: p.answer, Proposals: p.proposals}, p.err
+}
+
+// fakeDesk is the proposal desk: it holds the open proposals per user.
+type fakeDesk struct {
+	mu       sync.Mutex
+	open     map[uuid.UUID][]proposals.Proposal
+	decided  []string
+	failWith error
+}
+
+func newFakeDesk() *fakeDesk { return &fakeDesk{open: map[uuid.UUID][]proposals.Proposal{}} }
+
+func (d *fakeDesk) Pending(_ context.Context, userID uuid.UUID) ([]proposals.Proposal, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]proposals.Proposal(nil), d.open[userID]...), d.failWith
+}
+
+func (d *fakeDesk) decide(userID uuid.UUID, id int64, verb string) (proposals.Proposal, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.failWith != nil {
+		return proposals.Proposal{}, d.failWith
+	}
+	for i, p := range d.open[userID] {
+		if p.ID == id {
+			d.open[userID] = append(d.open[userID][:i:i], d.open[userID][i+1:]...)
+			d.decided = append(d.decided, fmt.Sprintf("%s %d", verb, id))
+			return p, nil
+		}
+	}
+	return proposals.Proposal{}, proposals.ErrNotFound
+}
+
+func (d *fakeDesk) Approve(_ context.Context, userID uuid.UUID, id int64) (proposals.Proposal, error) {
+	return d.decide(userID, id, "approve")
+}
+
+func (d *fakeDesk) Reject(_ context.Context, userID uuid.UUID, id int64) (proposals.Proposal, error) {
+	return d.decide(userID, id, "reject")
 }
 
 type fixture struct {
@@ -113,11 +157,12 @@ type fixture struct {
 	sender    *fakeSender
 	store     *fakeStore
 	processor *fakeProcessor
+	desk      *fakeDesk
 }
 
 func newFixture(allowed ...int64) *fixture {
-	f := &fixture{sender: &fakeSender{}, store: newFakeStore(), processor: &fakeProcessor{answer: "отговор"}}
-	f.bot = newBot(f.sender, f.processor, f.store, allowed)
+	f := &fixture{sender: &fakeSender{}, store: newFakeStore(), processor: &fakeProcessor{answer: "отговор"}, desk: newFakeDesk()}
+	f.bot = newBot(f.sender, f.processor, f.store, f.desk, allowed)
 	return f
 }
 

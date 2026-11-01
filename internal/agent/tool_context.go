@@ -1,6 +1,12 @@
 package agent
 
-import "context"
+import (
+	"context"
+	"slices"
+	"sync"
+
+	"go-monolith/internal/proposals"
+)
 
 // currentQueryKey stores the user message that started the current turn. Tool
 // calls carry only the arguments the model chose to send, so a model that
@@ -22,4 +28,97 @@ func WithCurrentQuery(ctx context.Context, query string) context.Context {
 func currentQuery(ctx context.Context) string {
 	query, _ := ctx.Value(currentQueryKey{}).(string)
 	return query
+}
+
+// Sources of untrusted text. They end up on a proposal so the user can see what
+// the turn had read when the model asked to save something.
+const (
+	sourceWebSearch          = "web_search"
+	sourceWebFetch           = "web_fetch"
+	sourceSearchDocuments    = "search_documents"
+	sourceRetrievedDocuments = "retrieved_documents"
+)
+
+// turnKey stores the turnState of the current chat turn.
+type turnKey struct{}
+
+// turnState is what the tools of one chat turn share: where the turn is
+// happening, which untrusted text it has read, and the proposals it made.
+type turnState struct {
+	sessionID string
+
+	mu        sync.Mutex
+	external  []string
+	proposals []proposals.Proposal
+}
+
+// withTurn starts the state of a chat turn. retrievedDocuments tells that text
+// from the user's documents is already in the prompt.
+func withTurn(ctx context.Context, sessionID string, retrievedDocuments bool) (context.Context, *turnState) {
+	turn := &turnState{sessionID: sessionID}
+	if retrievedDocuments {
+		turn.markExternal(sourceRetrievedDocuments)
+	}
+	return context.WithValue(ctx, turnKey{}, turn), turn
+}
+
+// turnFrom returns the state of the current turn, or nil outside a chat turn.
+func turnFrom(ctx context.Context) *turnState {
+	turn, _ := ctx.Value(turnKey{}).(*turnState)
+	return turn
+}
+
+// markExternal records that the turn has read text the user did not write.
+func (t *turnState) markExternal(source string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !slices.Contains(t.external, source) {
+		t.external = append(t.external, source)
+	}
+}
+
+// externalSources lists the untrusted sources the turn has read so far.
+func (t *turnState) externalSources() []string {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.external)
+}
+
+// session is the session of the turn ("" outside a chat turn).
+func (t *turnState) session() string {
+	if t == nil {
+		return ""
+	}
+	return t.sessionID
+}
+
+// addProposal remembers a proposal made in this turn, once.
+func (t *turnState) addProposal(p proposals.Proposal) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, known := range t.proposals {
+		if known.ID == p.ID {
+			return
+		}
+	}
+	t.proposals = append(t.proposals, p)
+}
+
+// madeProposals lists the proposals the turn made.
+func (t *turnState) madeProposals() []proposals.Proposal {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.proposals)
 }
