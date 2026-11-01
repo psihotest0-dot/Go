@@ -20,6 +20,10 @@ import (
 // point it at a temporary directory.
 var uploadDir = "storage"
 
+// UploadDir is the directory uploads are stored in (relative to the working
+// directory); main logs it as an absolute path at start.
+func UploadDir() string { return uploadDir }
+
 const (
 	// maxUploadBytes is the default cap on a single upload request (MAX_UPLOAD_MB
 	// overrides it through API.WithUploadLimit). The body is streamed to disk, so

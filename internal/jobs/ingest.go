@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,10 +19,12 @@ import (
 	"go-monolith/internal/ingest"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/retrieval"
+	"go-monolith/metrics"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 )
 
 type IngestFileArgs struct {
@@ -40,6 +41,8 @@ type IngestFileWorker struct {
 	embedder llm.Embedder
 	manager  *ingest.Manager
 	catMgr   *retrieval.CategoryManager
+	// distillation is ENABLE_DISTILLATION, read once when the worker is built.
+	distillation bool
 }
 
 // ingestJobTimeout is only a ceiling for a job that is stuck. A PDF sets its own,
@@ -59,13 +62,15 @@ func ocrCheckpointDir(fileID uuid.UUID) string {
 }
 
 func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *retrieval.CategoryManager) *IngestFileWorker {
+	cfg := config.Load()
 	return &IngestFileWorker{
 		dbClient: dbClient,
 		embedder: embedder,
 		manager: ingest.NewManager(ingest.WithLimits(ingest.Limits{
-			MaxInputBytes: config.Load().MaxUploadBytes,
+			MaxInputBytes: cfg.MaxUploadBytes,
 		})),
-		catMgr:   catMgr,
+		catMgr:       catMgr,
+		distillation: cfg.EnableDistillation,
 	}
 }
 
@@ -98,7 +103,32 @@ func (w *IngestFileWorker) markFileFailed(fileID uuid.UUID, userID uuid.UUID, er
 	})
 }
 
+// ingestResult names how an ingest attempt ended, for the metrics.
+func ingestResult(ctx context.Context, err error) string {
+	var cancelled *rivertype.JobCancelError
+	switch {
+	case err == nil:
+		return "completed"
+	case errors.As(err, &cancelled):
+		return "cancelled"
+	case ctx.Err() != nil:
+		return "interrupted"
+	default:
+		return "failed"
+	}
+}
+
 func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileArgs]) error {
+	start := time.Now()
+	err := w.work(ctx, job)
+
+	result := ingestResult(ctx, err)
+	metrics.IngestJobs.WithLabelValues(result).Inc()
+	metrics.IngestDuration.WithLabelValues(result).Observe(time.Since(start).Seconds())
+	return err
+}
+
+func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileArgs]) error {
 	slog.Info("IngestFileWorker started", "file_id", job.Args.FileID)
 
 	_, err := w.dbClient.SqlDB.ExecContext(ctx, "DELETE FROM document_chunks WHERE file_id = $1", job.Args.FileID)
@@ -256,10 +286,10 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 				continue
 			}
 
-			bestCat := "general"
+			bestCat := config.DefaultFileCategory
 			bestScore := float32(-1.0)
 			for cat, centroid := range w.catMgr.GetAllCentroids() {
-				score := cosineSimilarity(vec, centroid)
+				score := retrieval.CosineSimilarity(vec, centroid)
 				if score > bestScore {
 					bestScore = score
 					bestCat = cat
@@ -269,11 +299,11 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			if bestScore > 0.20 {
 				votes[bestCat]++
 			} else {
-				votes["general"]++
+				votes[config.DefaultFileCategory]++
 			}
 		}
 
-		winningCat := "general"
+		winningCat := config.DefaultFileCategory
 		maxVotes := -1
 		for cat, voteCount := range votes {
 			if voteCount > maxVotes {
@@ -312,7 +342,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	}
 
 	// Enqueue distillation worker
-	if config.Load().EnableDistillation {
+	if w.distillation {
 		pgxClient, clientErr := river.ClientFromContextSafely[pgx.Tx](ctx)
 		if clientErr == nil {
 			_, err = pgxClient.Insert(ctx, DistillationWorkerArgs{FileID: file.ID}, distillationInsertOpts())
@@ -377,15 +407,3 @@ func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []stri
 	return chunks
 }
 
-func cosineSimilarity(a, b []float32) float32 {
-	var dotProduct, normA, normB float32
-	for i := 0; i < len(a) && i < len(b); i++ {
-		dotProduct += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dotProduct / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
-}

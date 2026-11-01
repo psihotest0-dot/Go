@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
 
@@ -308,9 +309,11 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Another user's file is answered exactly like a missing one: a 403 would tell
+	// which ids exist.
 	if file.UserID != userID {
-		slog.Warn("unauthorized access to file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
-		http.Error(w, "unauthorized access to file", http.StatusForbidden)
+		slog.Warn("access to another user's file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
@@ -383,6 +386,10 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	if !config.IsFileCategory(req.Category) {
+		http.Error(w, "category must be one of: "+strings.Join(config.FileCategories, ", "), http.StatusBadRequest)
+		return
+	}
 
 	// First verify the file exists and belongs to the user
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
@@ -393,8 +400,13 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if file.UserID != userID {
-		slog.Warn("unauthorized access to file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
-		http.Error(w, "unauthorized access to file", http.StatusForbidden)
+		slog.Warn("access to another user's file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	if file.DeletedAt.Valid {
+		slog.Warn("category of a soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 

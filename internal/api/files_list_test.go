@@ -45,12 +45,16 @@ func createTestChunk(t *testing.T, database *db.Database, fileID, userID uuid.UU
 		embedding[i] = float32(i%7) / 10
 	}
 
-	_, err := database.Queries.CreateDocumentChunk(context.Background(), db.CreateDocumentChunkParams{
-		FileID:     fileID,
-		UserID:     userID,
-		ChunkIndex: index,
-		Text:       "chunk text",
-		Embedding:  pgvector.NewVector(embedding),
+	// The batch insert is what ingestion uses; it records the embedding model too.
+	err := database.Queries.CreateDocumentChunksBatch(context.Background(), db.CreateDocumentChunksBatchParams{
+		FileIds:        []uuid.UUID{fileID},
+		UserIds:        []uuid.UUID{userID},
+		ChunkIndices:   []int32{index},
+		Texts:          []string{"chunk text"},
+		Embeddings:     []pgvector.Vector{pgvector.NewVector(embedding)},
+		ChunkTypes:     []string{"raw_text"},
+		Metadatas:      []string{"{}"},
+		EmbeddingModel: config.DefaultEmbedModel,
 	})
 	require.NoError(t, err)
 }

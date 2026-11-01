@@ -203,3 +203,42 @@ func TestLoadEmbedderTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadAutoMigrate(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{name: "on by default", env: "", want: true},
+		{name: "false", env: "false", want: false},
+		{name: "zero", env: "0", want: false},
+		{name: "explicit true", env: "true", want: true},
+		{name: "any case", env: "FALSE", want: false},
+		{name: "garbage keeps the default", env: "maybe", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AUTO_MIGRATE", tt.env)
+			if got := Load().AutoMigrate; got != tt.want {
+				t.Fatalf("AutoMigrate = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFileCategories(t *testing.T) {
+	for _, name := range []string{"medicine", "economics", "programming", "law", "psychology", "literature", "general"} {
+		if !IsFileCategory(name) {
+			t.Errorf("%q should be a category", name)
+		}
+	}
+	for _, name := range []string{"", "General", " general", "cooking", "general;", "medicine,law"} {
+		if IsFileCategory(name) {
+			t.Errorf("%q should not be a category", name)
+		}
+	}
+	if !IsFileCategory(DefaultFileCategory) {
+		t.Errorf("the default category %q must be one of FileCategories", DefaultFileCategory)
+	}
+}

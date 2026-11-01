@@ -1,38 +1,665 @@
 {
   "title": "System Monitoring",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "go-monolith"
+  ],
   "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 1
+    },
     {
       "type": "timeseries",
       "title": "QPS",
-      "targets": [{"expr": "rate(api_requests_total[1m])", "legendFormat": "{{method}} {{path}}"}],
-      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8}
+      "targets": [
+        {
+          "expr": "rate(api_requests_total[1m])",
+          "legendFormat": "{{method}} {{path}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      },
+      "id": 2
     },
     {
       "type": "timeseries",
       "title": "API Latency",
-      "targets": [{"expr": "rate(api_request_duration_seconds_sum[1m]) / rate(api_request_duration_seconds_count[1m])", "legendFormat": "{{method}} {{path}}"}],
-      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8}
+      "targets": [
+        {
+          "expr": "rate(api_request_duration_seconds_sum[1m]) / rate(api_request_duration_seconds_count[1m])",
+          "legendFormat": "{{method}} {{path}}"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      },
+      "id": 3
     },
     {
       "type": "timeseries",
       "title": "Stage Latency",
-      "targets": [{"expr": "rate(stage_duration_seconds_sum[1m]) / rate(stage_duration_seconds_count[1m])", "legendFormat": "{{stage}}"}],
-      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8}
+      "targets": [
+        {
+          "expr": "rate(stage_duration_seconds_sum[1m]) / rate(stage_duration_seconds_count[1m])",
+          "legendFormat": "{{stage}}"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "id": 4
     },
     {
       "type": "timeseries",
       "title": "Token Count",
-      "targets": [{"expr": "rate(llm_tokens_total[1m])", "legendFormat": "{{type}}"}],
-      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8}
+      "targets": [
+        {
+          "expr": "rate(llm_tokens_total[1m])",
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 9,
+        "w": 12,
+        "h": 8
+      },
+      "id": 5
     },
     {
       "type": "timeseries",
       "title": "Cache Performance",
       "targets": [
-        {"expr": "rate(cache_hits_total[1m])", "legendFormat": "Hits"},
-        {"expr": "rate(cache_misses_total[1m])", "legendFormat": "Misses"}
+        {
+          "expr": "rate(cache_hits_total[1m])",
+          "legendFormat": "Hits"
+        },
+        {
+          "expr": "rate(cache_misses_total[1m])",
+          "legendFormat": "Misses"
+        }
       ],
-      "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8}
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 12,
+        "h": 8
+      },
+      "id": 6
+    },
+    {
+      "type": "row",
+      "title": "Health",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 7
+    },
+    {
+      "type": "stat",
+      "title": "Backend up",
+      "targets": [
+        {
+          "expr": "up{job=\"go-monolith\"}",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "1 = Prometheus reaches the backend on /metrics. 0 = the backend is down or not listening on 127.0.0.1:8080.",
+      "id": 8
+    },
+    {
+      "type": "stat",
+      "title": "5xx share of requests (5 min)",
+      "targets": [
+        {
+          "expr": "sum(rate(api_requests_total{status=~\"5..\"}[5m])) / sum(rate(api_requests_total[5m]))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 6,
+        "y": 26,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "description": "Колко от заявките завършват със сървърна грешка.",
+      "id": 9
+    },
+    {
+      "type": "stat",
+      "title": "Metrics from the database readable",
+      "targets": [
+        {
+          "expr": "state_collector_up",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 26,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "0 = панелите за опашката и файловете по-долу не се обновяват (базата не отговаря на /metrics).",
+      "id": 10
+    },
+    {
+      "type": "stat",
+      "title": "Failed files",
+      "targets": [
+        {
+          "expr": "ingested_files{status=\"failed\"}",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 18,
+        "y": 26,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Файлове с неуспешно обработване; остават така, докато не ги качиш наново или не пуснеш cmd/reingest.",
+      "id": 11
+    },
+    {
+      "type": "row",
+      "title": "Search",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 30,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "Search latency p50 / p95 by stage",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, stage) (rate(stage_duration_seconds_bucket{stage=~\"search.*\"}[5m])))",
+          "legendFormat": "p50 {{stage}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(stage_duration_seconds_bucket{stage=~\"search.*\"}[5m])))",
+          "legendFormat": "p95 {{stage}}",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Целта е средно време за търсене под 100 ms (задача 32). search_for_context е търсенето на всеки чат ход.",
+      "id": 13
+    },
+    {
+      "type": "timeseries",
+      "title": "Embedding latency p50 / p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(stage_duration_seconds_bucket{stage=\"embed\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(stage_duration_seconds_bucket{stage=\"embed\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Включва кеша и услугата за вграждане. Висока стойност = embedder-ът е претоварен (OCR, ингест).",
+      "id": 14
+    },
+    {
+      "type": "row",
+      "title": "LLM",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 15
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM queue wait p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, priority) (rate(llm_queue_wait_seconds_bucket[5m])))",
+          "legendFormat": "{{priority}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Колко чака заявката за свободен слот (2 слота). interactive над няколко секунди = фонова работа пречи на чата.",
+      "id": 16
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM call latency p50 / p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(stage_duration_seconds_bucket{stage=\"llm\"}[5m])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(stage_duration_seconds_bucket{stage=\"llm\"}[5m])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "id": 17
+    },
+    {
+      "type": "row",
+      "title": "Ingest",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 18
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingest attempts per hour by result",
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(ingest_jobs_total[1h]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 40
+          }
+        },
+        "overrides": []
+      },
+      "description": "failed = опит, който River ще повтори; cancelled = файл, който не може да се обработи (празен, неподдържан, твърде голям).",
+      "id": 19
+    },
+    {
+      "type": "timeseries",
+      "title": "Ingest duration p50 / p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(ingest_job_duration_seconds_bucket{result=\"completed\"}[1h])))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(ingest_job_duration_seconds_bucket{result=\"completed\"}[1h])))",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 49,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Само успешните опити. Сканирана книга с OCR отнема десетки минути.",
+      "id": 20
+    },
+    {
+      "type": "timeseries",
+      "title": "Files by ingest status",
+      "targets": [
+        {
+          "expr": "ingested_files",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "pending/processing = на опашка или в работа; failed = виж алармите.",
+      "id": 21
+    },
+    {
+      "type": "timeseries",
+      "title": "Distillation summaries per hour",
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(distillation_summaries_total[1h]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 57,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 40
+          }
+        },
+        "overrides": []
+      },
+      "description": "Фоновите резюмета от LLM (по един слот, ~4 s на резюме).",
+      "id": 22
+    },
+    {
+      "type": "row",
+      "title": "Job queue (River)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 23
+    },
+    {
+      "type": "timeseries",
+      "title": "Jobs waiting / running / retrying",
+      "targets": [
+        {
+          "expr": "sum by (kind) (river_jobs{state=\"available\"})",
+          "legendFormat": "waiting {{kind}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (kind) (river_jobs{state=\"running\"})",
+          "legendFormat": "running {{kind}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (kind) (river_jobs{state=\"retryable\"})",
+          "legendFormat": "retrying {{kind}}",
+          "refId": "C"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 66,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "distillation_worker е нормално да има дълга опашка; ingest_file чака само при много качени файлове наведнъж.",
+      "id": 24
+    },
+    {
+      "type": "timeseries",
+      "title": "Oldest waiting job",
+      "targets": [
+        {
+          "expr": "river_oldest_available_job_age_seconds",
+          "legendFormat": "{{kind}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 66,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "Колко време най-старата готова задача още не е започнала. Расте безкрайно = работниците не вървят.",
+      "id": 25
+    },
+    {
+      "type": "row",
+      "title": "Assistant",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 74,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 26
+    },
+    {
+      "type": "timeseries",
+      "title": "Proposals per day",
+      "targets": [
+        {
+          "expr": "sum by (kind, outcome) (increase(agent_proposals_total[1d]))",
+          "legendFormat": "{{kind}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 75,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Правила и спомени, които асистентът предлага; created без approved/rejected = чакат твое решение.",
+      "id": 27
+    },
+    {
+      "type": "timeseries",
+      "title": "Paid web calls per day",
+      "targets": [
+        {
+          "expr": "sum by (tool, result) (increase(agent_web_tool_requests_total[1d]))",
+          "legendFormat": "{{tool}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 75,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "web_search / web_fetch са платени (~$0.75 на 1000 заявки).",
+      "id": 28
     }
   ]
 }

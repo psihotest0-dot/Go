@@ -152,7 +152,7 @@ func (s *RetrievalService) boostFor(queryVec []float32) (string, float64) {
 	secondBestScore := float32(-1.0)
 
 	for cat, centroid := range s.catMgr.GetAllCentroids() {
-		score := cosineSimilarity(queryVec, centroid)
+		score := CosineSimilarity(queryVec, centroid)
 		if score > bestScore {
 			secondBestScore = bestScore
 			bestScore = score
@@ -357,7 +357,9 @@ func mergeConcepts(concepts, chunks []SearchResult) []SearchResult {
 	return merged
 }
 
-func cosineSimilarity(a, b []float32) float32 {
+// CosineSimilarity is the cosine of the angle between a and b; 0 when either has
+// no length. The shorter of the two decides how many dimensions are compared.
+func CosineSimilarity(a, b []float32) float32 {
 	var dotProduct, normA, normB float32
 	for i := 0; i < len(a) && i < len(b); i++ {
 		dotProduct += a[i] * b[i]

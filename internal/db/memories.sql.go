@@ -65,7 +65,7 @@ func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) (Mem
 	return i, err
 }
 
-const deleteMemory = `-- name: DeleteMemory :exec
+const deleteMemory = `-- name: DeleteMemory :execrows
 DELETE FROM memories WHERE id = $1 AND user_id = $2
 `
 
@@ -74,9 +74,12 @@ type DeleteMemoryParams struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
-func (q *Queries) DeleteMemory(ctx context.Context, arg DeleteMemoryParams) error {
-	_, err := q.db.ExecContext(ctx, deleteMemory, arg.ID, arg.UserID)
-	return err
+func (q *Queries) DeleteMemory(ctx context.Context, arg DeleteMemoryParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteMemory, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getAllMemoriesForReembedding = `-- name: GetAllMemoriesForReembedding :many

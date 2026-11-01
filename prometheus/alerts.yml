@@ -1,0 +1,108 @@
+# Alert rules for the backend. Prometheus evaluates them and shows the state at
+# http://127.0.0.1:9090/alerts (and Grafana lists them under Alerting, from its
+# Prometheus data source). There is no Alertmanager in this setup, so NOTHING IS
+# SENT anywhere: an alert is something to look at, not a notification. To get a
+# message, add an Alertmanager (or Grafana contact points) later.
+#
+# The metrics come from the backend (/metrics); the dashboard in
+# grafana/dashboards/main.json shows the same series.
+groups:
+  - name: backend
+    rules:
+      - alert: BackendDown
+        expr: up{job="go-monolith"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The backend does not answer /metrics"
+          description: "Prometheus has not been able to scrape host.docker.internal:8080 for 2 minutes: the backend is stopped, or listens on another address (LISTEN_ADDR)."
+
+      - alert: ServerErrors
+        expr: |
+          sum(rate(api_requests_total{status=~"5.."}[5m])) / sum(rate(api_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 5% of the requests end with a server error"
+          description: "Look at app.log: the LLM, the embedder or the database may be down."
+
+      - alert: StateMetricsUnavailable
+        expr: state_collector_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The job queue and file panels cannot read the database"
+          description: "The backend could not run its queue queries for 5 minutes (see 'metrics: failed to read' in app.log)."
+
+  - name: ingest
+    rules:
+      - alert: IngestAttemptsFailing
+        expr: sum(increase(ingest_jobs_total{result="failed"}[30m])) >= 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "File ingest keeps failing"
+          description: "3 or more ingest attempts failed in 30 minutes (River retries them). Usual causes: the embedder is down, or the database is unreachable."
+
+      - alert: FilesInFailedState
+        expr: ingested_files{status="failed"} > 0
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $value }} uploaded file(s) failed to ingest"
+          description: "A failed file stays failed until it is uploaded again or re-run with `go run ./cmd/reingest -file <id>`."
+
+      - alert: IngestQueueStuck
+        expr: max(river_oldest_available_job_age_seconds{kind="ingest_file"}) > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An uploaded file has waited more than 15 minutes for its turn"
+          description: "A job is ready but not started: the workers are busy with long files (OCR), or not running."
+
+      - alert: OtherJobsStuck
+        expr: max by (kind) (river_oldest_available_job_age_seconds{kind!~"distillation_worker|ingest_file"}) > 1800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A background job has waited more than 30 minutes ({{ $labels.kind }})"
+          description: "Distillation is left out on purpose: it works through a queue for days."
+
+  - name: performance
+    rules:
+      - alert: ChatSearchSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(stage_duration_seconds_bucket{stage="search_for_context"}[10m]))) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The search of a chat turn takes more than 1 s (p95)"
+          description: "The target is a few hundred milliseconds at most. Check the embedder (CPU busy with OCR?) and the database indexes."
+
+      - alert: ChatWaitsForTheLLM
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(llm_queue_wait_seconds_bucket{priority="interactive"}[10m]))) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A chat turn waits more than 30 s for a free model slot (p95)"
+          description: "Background work (summaries, distillation) or another client is using the slots."
+
+  - name: paid-services
+    rules:
+      - alert: WebToolsUsedALot
+        expr: sum(increase(agent_web_tool_requests_total{result="ok"}[1d])) > 500
+        labels:
+          severity: info
+        annotations:
+          summary: "More than 500 paid web searches/fetches in the last day"
+          description: "About $0.75 per 1000 requests; a loop in the model's tool calls would show up here first."

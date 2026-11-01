@@ -50,11 +50,6 @@ UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NO
 -- name: UpdateIngestedFileCategoryAuto :exec
 UPDATE ingested_files SET category = $2, updated_at = NOW() WHERE id = $1 AND manual_override = false;
 
--- name: CreateDocumentChunk :one
-INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING *;
-
 -- name: GetDocumentChunksByFile :many
 SELECT c.* FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id

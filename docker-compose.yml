@@ -6,21 +6,18 @@ services:
     ports:
       # Published on the loopback interface only: the host backend is the only client.
       - "127.0.0.1:8000:8000"
+    # CPU only: no GPU is requested here, and the image has no CUDA libraries.
+    # (A `deploy.resources.reservations.cpus` used to stand here; a reservation
+    # limits nothing outside Swarm. A real cap would be `cpus:` on the service, but
+    # the embedder needs every core it can get while a library is being ingested.)
     environment:
       - CUDA_VISIBLE_DEVICES=-1
-    deploy:
-      resources:
-        reservations:
-          # Ensure it doesn't request GPU
-          # (Docker compose will not allocate GPU by default unless explicitly requested,
-          # but we can enforce CPU-only if we don't declare any gpu capabilities)
-          # We just omit GPUs here.
-          cpus: '0.1'
 
   prometheus:
     image: prom/prometheus:v3.15.0
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
     ports:
       - "127.0.0.1:9090:9090"
     extra_hosts:

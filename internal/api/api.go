@@ -413,14 +413,24 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(dtos)
 }
 
+// memoryIDSegment returns the {id} of /memories/{id}. Anything after it
+// (/memories/{id}/something) is a different resource that does not exist, so it
+// is not accepted as the memory.
+func memoryIDSegment(path string) (string, bool) {
+	id := strings.TrimPrefix(path, "/memories/")
+	if id == path || id == "" || strings.Contains(id, "/") {
+		return "", false
+	}
+	return id, true
+}
+
 func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 3 {
-		slog.Warn("invalid path", slog.String("path", r.URL.Path))
-		http.Error(w, "invalid path", http.StatusBadRequest)
+	idStr, ok := memoryIDSegment(r.URL.Path)
+	if !ok {
+		slog.Warn("no such memory path", slog.String("path", r.URL.Path))
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	idStr := parts[2] // /memories/{id}
 	memoryID, err := uuid.Parse(idStr)
 	if err != nil {
 		slog.Warn("invalid memory id", slog.String("id", idStr), slog.String("path", r.URL.Path))
@@ -512,12 +522,18 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 
 	case http.MethodDelete:
-		err = a.db.Queries.DeleteMemory(r.Context(), db.DeleteMemoryParams{
+		deleted, err := a.db.Queries.DeleteMemory(r.Context(), db.DeleteMemoryParams{
 			ID:     memoryID,
 			UserID: userID,
 		})
 		if err != nil {
 			writeInternalError(w, "failed to delete memory", err)
+			return
+		}
+		// A memory that is not there (or is another user's) is a 404, as for files
+		// and rules; it used to be a 204, as if something had been deleted.
+		if deleted == 0 {
+			http.Error(w, "memory not found", http.StatusNotFound)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

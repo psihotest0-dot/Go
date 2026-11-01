@@ -15,44 +15,6 @@ import (
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
-const createDocumentChunk = `-- name: CreateDocumentChunk :one
-INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, file_id, user_id, chunk_index, text, embedding, created_at, chunk_type, metadata, embedding_model
-`
-
-type CreateDocumentChunkParams struct {
-	FileID     uuid.UUID       `json:"file_id"`
-	UserID     uuid.UUID       `json:"user_id"`
-	ChunkIndex int32           `json:"chunk_index"`
-	Text       string          `json:"text"`
-	Embedding  pgvector.Vector `json:"embedding"`
-}
-
-func (q *Queries) CreateDocumentChunk(ctx context.Context, arg CreateDocumentChunkParams) (DocumentChunk, error) {
-	row := q.db.QueryRowContext(ctx, createDocumentChunk,
-		arg.FileID,
-		arg.UserID,
-		arg.ChunkIndex,
-		arg.Text,
-		arg.Embedding,
-	)
-	var i DocumentChunk
-	err := row.Scan(
-		&i.ID,
-		&i.FileID,
-		&i.UserID,
-		&i.ChunkIndex,
-		&i.Text,
-		&i.Embedding,
-		&i.CreatedAt,
-		&i.ChunkType,
-		&i.Metadata,
-		&i.EmbeddingModel,
-	)
-	return i, err
-}
-
 const createDocumentChunksBatch = `-- name: CreateDocumentChunksBatch :exec
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
 SELECT

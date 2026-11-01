@@ -12,7 +12,6 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
-	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/retrieval"
 )
@@ -176,7 +175,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	var memoryIDs []string
 
 	skip := false
-	if config.Load().EnableAdaptiveSkip {
+	if o.adaptiveSkip {
 		skip = shouldSkipRetrieval(req.Content)
 		if skip {
 			_ = o.writeTrace(ctx, userID, req.SessionID, "adaptive_skip", map[string]interface{}{

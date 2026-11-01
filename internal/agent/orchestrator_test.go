@@ -11,6 +11,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/api"
@@ -162,4 +163,20 @@ func TestShouldSkipRetrieval(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ENABLE_ADAPTIVE_SKIP used to be read from the environment on every chat
+// request; it is read once, when the orchestrator is built.
+func TestOrchestratorReadsAdaptiveSkipOnce(t *testing.T) {
+	t.Setenv("ENABLE_ADAPTIVE_SKIP", "false")
+	off := NewOrchestrator(nil, nil, nil, nil)
+
+	t.Setenv("ENABLE_ADAPTIVE_SKIP", "true")
+	on := NewOrchestrator(nil, nil, nil, nil)
+
+	assert.False(t, off.adaptiveSkip)
+	assert.True(t, on.adaptiveSkip)
+
+	t.Setenv("ENABLE_ADAPTIVE_SKIP", "false")
+	assert.True(t, on.adaptiveSkip, "a running orchestrator does not re-read the environment")
 }

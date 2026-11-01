@@ -17,6 +17,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/ingest"
 	"go-monolith/internal/llm"
+	"go-monolith/metrics"
 )
 
 type DistillationWorkerArgs struct {
@@ -115,6 +116,8 @@ type DistillationWorker struct {
 	dbClient  *db.Database
 	llmClient llm.LLMClient
 	embedder  llm.Embedder
+	// enabled is ENABLE_DISTILLATION, read once when the worker is built.
+	enabled bool
 }
 
 func NewDistillationWorker(dbClient *db.Database, llmClient llm.LLMClient, embedder llm.Embedder) *DistillationWorker {
@@ -122,6 +125,7 @@ func NewDistillationWorker(dbClient *db.Database, llmClient llm.LLMClient, embed
 		dbClient:  dbClient,
 		llmClient: llmClient,
 		embedder:  embedder,
+		enabled:   config.Load().EnableDistillation,
 	}
 }
 
@@ -140,7 +144,7 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 	// Every LLM call below is background work and must leave a slot to the chat.
 	ctx = llm.WithBackground(ctx)
 
-	if !config.Load().EnableDistillation {
+	if !w.enabled {
 		slog.Info("Distillation skipped because EnableDistillation is false", "file_id", job.Args.FileID)
 		return nil
 	}
@@ -210,6 +214,10 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 	successCount := 0
 	skipCount := 0
 	failCount := 0
+	defer func() {
+		metrics.DistillationSummaries.WithLabelValues("ok").Add(float64(successCount))
+		metrics.DistillationSummaries.WithLabelValues("error").Add(float64(failCount))
+	}()
 
 	// A cancelled context (shutdown, job timeout) fails every remaining call, so
 	// keep going would log one error per batch and then report a partial success

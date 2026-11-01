@@ -33,19 +33,24 @@ type Orchestrator struct {
 	// budgets are the token limits requests are built with; the zero value
 	// means the built-in ones (see limits).
 	budgets budgets
+	// adaptiveSkip is ENABLE_ADAPTIVE_SKIP, read once when the orchestrator is built
+	// (it used to be read from the environment on every chat request).
+	adaptiveSkip bool
 }
 
 // NewOrchestrator creates a new Orchestrator.
 func NewOrchestrator(database *db.Database, r *retrieval.RetrievalService, l llm.LLMClient, t ToolRegistry) *Orchestrator {
-	b := newBudgets(config.Load())
+	cfg := config.Load()
+	b := newBudgets(cfg)
 	b.log()
 
 	return &Orchestrator{
-		db:        database,
-		retrieval: r,
-		llmClient: l,
-		tools:     t,
-		budgets:   b,
+		db:           database,
+		retrieval:    r,
+		llmClient:    l,
+		tools:        t,
+		budgets:      b,
+		adaptiveSkip: cfg.EnableAdaptiveSkip,
 	}
 }
 

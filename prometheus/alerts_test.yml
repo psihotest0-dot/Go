@@ -1,0 +1,231 @@
+# Unit tests of alerts.yml. Generated from the rules and edited by hand since;
+# run from the repository root:
+#
+#   docker run --rm --entrypoint promtool -v "${PWD}/prometheus:/etc/prometheus:ro" #     prom/prometheus:v3.15.0 test rules /etc/prometheus/alerts_test.yml
+
+rule_files:
+- alerts.yml
+evaluation_interval: 1m
+tests:
+- name: the backend going down fires after two minutes
+  interval: 1m
+  input_series:
+  - series: up{job="go-monolith"}
+    values: 1 1 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: BackendDown
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: BackendDown
+    exp_alerts:
+    - exp_labels:
+        severity: critical
+        job: go-monolith
+      exp_annotations:
+        summary: The backend does not answer /metrics
+        description: 'Prometheus has not been able to scrape host.docker.internal:8080 for 2 minutes: the backend is stopped, or listens on another address (LISTEN_ADDR).'
+- name: a backend that keeps answering does not fire
+  interval: 1m
+  input_series:
+  - series: up{job="go-monolith"}
+    values: 1x10
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: BackendDown
+    exp_alerts: []
+- name: more than five percent server errors
+  interval: 1m
+  input_series:
+  - series: api_requests_total{status="200"}
+    values: 0+100x30
+  - series: api_requests_total{status="500"}
+    values: 0+20x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ServerErrors
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: More than 5% of the requests end with a server error
+        description: 'Look at app.log: the LLM, the embedder or the database may be down.'
+- name: two percent server errors is normal
+  interval: 1m
+  input_series:
+  - series: api_requests_total{status="200"}
+    values: 0+100x30
+  - series: api_requests_total{status="500"}
+    values: 0+2x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ServerErrors
+    exp_alerts: []
+- name: an ingest job that waits too long fires, a long distillation queue does not
+  interval: 1m
+  input_series:
+  - series: river_oldest_available_job_age_seconds{kind="ingest_file"}
+    values: 1000x20
+  - series: river_oldest_available_job_age_seconds{kind="distillation_worker"}
+    values: 500000x20
+  - series: river_oldest_available_job_age_seconds{kind="memory_consolidation"}
+    values: 60x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: IngestQueueStuck
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: An uploaded file has waited more than 15 minutes for its turn
+        description: 'A job is ready but not started: the workers are busy with long files (OCR), or not running.'
+  - eval_time: 10m
+    alertname: OtherJobsStuck
+    exp_alerts: []
+- name: another kind of job stuck is reported with its name
+  interval: 1m
+  input_series:
+  - series: river_oldest_available_job_age_seconds{kind="memory_consolidation"}
+    values: 3000x20
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: OtherJobsStuck
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        kind: memory_consolidation
+      exp_annotations:
+        summary: A background job has waited more than 30 minutes (memory_consolidation)
+        description: 'Distillation is left out on purpose: it works through a queue for days.'
+- name: repeated ingest failures
+  interval: 1m
+  input_series:
+  - series: ingest_jobs_total{result="failed"}
+    values: 0+1x40
+  - series: ingest_jobs_total{result="completed"}
+    values: 0+5x40
+  alert_rule_test:
+  - eval_time: 35m
+    alertname: IngestAttemptsFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: File ingest keeps failing
+        description: '3 or more ingest attempts failed in 30 minutes (River retries them). Usual causes: the embedder is down, or the database is unreachable.'
+- name: a single failed attempt is not an alert
+  interval: 1m
+  input_series:
+  - series: ingest_jobs_total{result="failed"}
+    values: 0 0 0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: IngestAttemptsFailing
+    exp_alerts: []
+- name: a file stuck in the failed state
+  interval: 1m
+  input_series:
+  - series: ingested_files{status="failed"}
+    values: 2x30
+  - series: ingested_files{status="completed"}
+    values: 50x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FilesInFailedState
+    exp_alerts:
+    - exp_labels:
+        severity: info
+        status: failed
+      exp_annotations:
+        summary: 2 uploaded file(s) failed to ingest
+        description: A failed file stays failed until it is uploaded again or re-run with `go run ./cmd/reingest -file <id>`.
+- name: the search of the chat turn gets slow
+  interval: 1m
+  input_series:
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="0.5"}
+    values: '0x30'
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="1"}
+    values: '0x30'
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="2"}
+    values: 0+100x30
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="+Inf"}
+    values: 0+100x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: ChatSearchSlow
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: The search of a chat turn takes more than 1 s (p95)
+        description: The target is a few hundred milliseconds at most. Check the embedder (CPU busy with OCR?) and the database indexes.
+- name: a fast search does not fire
+  interval: 1m
+  input_series:
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="0.5"}
+    values: 0+100x30
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="2"}
+    values: 0+100x30
+  - series: stage_duration_seconds_bucket{stage="search_for_context", le="+Inf"}
+    values: 0+100x30
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: ChatSearchSlow
+    exp_alerts: []
+- name: the chat waits a long time for a model slot
+  interval: 1m
+  input_series:
+  - series: llm_queue_wait_seconds_bucket{priority="interactive", le="15"}
+    values: '0x30'
+  - series: llm_queue_wait_seconds_bucket{priority="interactive", le="60"}
+    values: 0+10x30
+  - series: llm_queue_wait_seconds_bucket{priority="interactive", le="+Inf"}
+    values: 0+10x30
+  - series: llm_queue_wait_seconds_bucket{priority="background", le="+Inf"}
+    values: 0+10x30
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: ChatWaitsForTheLLM
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: A chat turn waits more than 30 s for a free model slot (p95)
+        description: Background work (summaries, distillation) or another client is using the slots.
+- name: the database metrics going dark
+  interval: 1m
+  input_series:
+  - series: state_collector_up
+    values: 1 1 0 0 0 0 0 0 0 0
+  alert_rule_test:
+  - eval_time: 9m
+    alertname: StateMetricsUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: The job queue and file panels cannot read the database
+        description: 'The backend could not run its queue queries for 5 minutes (see ''metrics: failed to read'' in app.log).'
+- name: many paid web calls in a day
+  interval: 1m
+  input_series:
+  - series: agent_web_tool_requests_total{tool="web_search", result="ok"}
+    values: 0+1x1500
+  alert_rule_test:
+  - eval_time: 1450m
+    alertname: WebToolsUsedALot
+    exp_alerts:
+    - exp_labels:
+        severity: info
+      exp_annotations:
+        summary: More than 500 paid web searches/fetches in the last day
+        description: About $0.75 per 1000 requests; a loop in the model's tool calls would show up here first.
+- name: a few paid web calls are fine
+  interval: 1m
+  input_series:
+  - series: agent_web_tool_requests_total{tool="web_search", result="ok"}
+    values: 0+1x100
+  alert_rule_test:
+  - eval_time: 90m
+    alertname: WebToolsUsedALot
+    exp_alerts: []

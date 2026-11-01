@@ -19,6 +19,24 @@ const VectorDimension = 384
 // the dimension differs, VectorDimension and the vector(...) columns.
 const DefaultEmbedModel = "intfloat/multilingual-e5-small"
 
+// FileCategories are the categories a file can have: the ones the automatic
+// classification (retrieval.CategoryManager) chooses from and the ones the
+// category endpoint accepts. DefaultFileCategory is what a file gets when no
+// other one fits.
+var FileCategories = []string{"medicine", "economics", "programming", "law", "psychology", "literature", DefaultFileCategory}
+
+const DefaultFileCategory = "general"
+
+// IsFileCategory reports whether name is one of FileCategories.
+func IsFileCategory(name string) bool {
+	for _, category := range FileCategories {
+		if category == name {
+			return true
+		}
+	}
+	return false
+}
+
 // DefaultListenAddr keeps the API on the loopback interface: identity is a bare
 // X-User-ID header and /metrics is unauthenticated, so the server must not be
 // reachable from other machines unless LISTEN_ADDR says so explicitly.
@@ -45,6 +63,11 @@ type Config struct {
 	// PromptsDir is an optional directory of prompt templates that override the
 	// ones compiled into the binary (internal/prompts). Empty means no override.
 	PromptsDir string
+	// AutoMigrate applies pending database migrations when the backend starts
+	// (AUTO_MIGRATE, on by default). When off, a database that is behind makes the
+	// start fail with the command to run (cmd/migrate), so a schema change can be
+	// preceded by a backup.
+	AutoMigrate bool
 	LLMBaseURL string
 	// LLMModel pins the model name sent to the LLM server. Empty means the
 	// client asks the server which model it serves.
@@ -167,6 +190,7 @@ func Load() *Config {
 		ListenAddr:         listenAddr,
 		MaxUploadBytes:     maxUploadMB << 20,
 		PromptsDir:         strings.TrimSpace(os.Getenv("PROMPTS_DIR")),
+		AutoMigrate:        boolEnv("AUTO_MIGRATE", true),
 		LLMBaseURL:         os.Getenv("LLM_BASE_URL"),
 		LLMModel:           strings.TrimSpace(os.Getenv("LLM_MODEL")),
 		LLMSlots:           positiveIntEnv("LLM_SLOTS", DefaultLLMSlots),

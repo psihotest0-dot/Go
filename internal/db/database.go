@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -78,6 +79,50 @@ func (d *Database) Close() {
 	}
 }
 
+// MigrationsDir is where the migration files are read from. It is relative to the
+// working directory, so the backend (and cmd/migrate) must be started from the
+// repository root.
+const MigrationsDir = "migrations"
+
+// MigrationStatus is how far the database is from the migration files.
+type MigrationStatus struct {
+	// Current is the version the database is at (0 for a database never migrated).
+	Current int64
+	// Pending are the files of the migrations that have not been applied yet.
+	Pending []string
+}
+
+// PendingMigrations compares the database with the migration files without
+// changing the schema.
+func PendingMigrations(connString string) (MigrationStatus, error) {
+	conn, err := sql.Open("pgx", connString)
+	if err != nil {
+		return MigrationStatus{}, fmt.Errorf("failed to open database for migrations: %w", err)
+	}
+	defer conn.Close()
+
+	if err := goose.SetDialect("postgres"); err != nil {
+		return MigrationStatus{}, fmt.Errorf("failed to set goose dialect: %w", err)
+	}
+
+	current, err := goose.GetDBVersion(conn)
+	if err != nil {
+		return MigrationStatus{}, fmt.Errorf("failed to read the database version: %w", err)
+	}
+	files, err := goose.CollectMigrations(MigrationsDir, 0, goose.MaxVersion)
+	if err != nil {
+		return MigrationStatus{}, fmt.Errorf("failed to read the migration files: %w", err)
+	}
+
+	status := MigrationStatus{Current: current}
+	for _, m := range files {
+		if m.Version > current {
+			status.Pending = append(status.Pending, filepath.Base(m.Source))
+		}
+	}
+	return status, nil
+}
+
 func RunMigrations(connString string) error {
 	db, err := sql.Open("pgx", connString)
 	if err != nil {
@@ -89,7 +134,7 @@ func RunMigrations(connString string) error {
 		return fmt.Errorf("failed to set goose dialect: %w", err)
 	}
 
-	if err := goose.Up(db, "migrations"); err != nil {
+	if err := goose.Up(db, MigrationsDir); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 

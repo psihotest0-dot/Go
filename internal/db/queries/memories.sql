@@ -77,7 +77,7 @@ WHERE m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
 ORDER BY score DESC
 LIMIT sqlc.arg('match_count');
 
--- name: DeleteMemory :exec
+-- name: DeleteMemory :execrows
 DELETE FROM memories WHERE id = $1 AND user_id = $2;
 
 -- name: SupercedeMemory :exec

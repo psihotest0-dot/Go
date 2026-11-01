@@ -46,6 +46,29 @@ var (
 		Help: "Requests to the paid web search / fetch API, by tool and result.",
 	}, []string{"tool", "result"}) // tool: web_search, web_fetch; result: ok, rejected, error
 
+	// IngestJobs counts file ingest attempts by how they ended. "failed" is an attempt
+	// River will repeat (or the last one); "cancelled" is input that can never be
+	// ingested; "interrupted" is a stop (shutdown, timeout) with attempts left.
+	IngestJobs = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "ingest_jobs_total",
+		Help: "File ingest attempts by result.",
+	}, []string{"result"}) // result: completed, failed, cancelled, interrupted
+
+	// IngestDuration is how long a file ingest attempt took, by result. A long OCR of
+	// a scanned book takes an hour or more, hence the wide buckets.
+	IngestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ingest_job_duration_seconds",
+		Help:    "Duration of file ingest attempts by result.",
+		Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600, 7200, 14400},
+	}, []string{"result"})
+
+	// DistillationSummaries counts the concept summaries the background LLM pass made
+	// (ok) and the batches it could not (error).
+	DistillationSummaries = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "distillation_summaries_total",
+		Help: "Concept summaries made by the distillation pass, by result.",
+	}, []string{"result"}) // result: ok, error
+
 	CacheHits = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "cache_hits_total",
 		Help: "Total number of embedding cache hits",

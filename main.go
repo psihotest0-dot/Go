@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/rs/cors"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -114,10 +115,10 @@ func run() error {
 		logger.Info("prompt templates: files in PROMPTS_DIR override the built-in ones", "dir", promptsDir)
 	}
 
-	if err := db.RunMigrations(cfg.DatabaseURL); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
+	logWorkingPaths(logger)
+	if err := prepareSchema(logger, cfg); err != nil {
+		return err
 	}
-	logger.Info("migrations ran successfully")
 
 	startupCtx, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer startupCancel()
@@ -156,6 +157,9 @@ func run() error {
 	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
 		return fmt.Errorf("failed to migrate river: %w", err)
 	}
+
+	// The job queue and the files by ingest status, for the Grafana dashboard.
+	prometheus.MustRegister(jobs.NewStateCollector(database.SqlDB))
 
 	jobs.EnqueueIncompleteDistillations(ctx, riverClient, database)
 

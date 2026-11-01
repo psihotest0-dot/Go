@@ -206,3 +206,26 @@ func (c cancelingEmbedder) EmbedTexts(ctx context.Context, _ []string, _ bool) (
 	c.cancel()
 	return nil, ctx.Err()
 }
+
+// ENABLE_DISTILLATION is read when a worker is built, not on every job.
+func TestWorkersReadTheDistillationSwitchOnce(t *testing.T) {
+	t.Setenv("ENABLE_DISTILLATION", "false")
+	distillOff := NewDistillationWorker(nil, nil, nil)
+	ingestOff := NewIngestFileWorker(nil, nil, nil)
+
+	t.Setenv("ENABLE_DISTILLATION", "true")
+	distillOn := NewDistillationWorker(nil, nil, nil)
+	ingestOn := NewIngestFileWorker(nil, nil, nil)
+
+	assert.False(t, distillOff.enabled)
+	assert.False(t, ingestOff.distillation)
+	assert.True(t, distillOn.enabled)
+	assert.True(t, ingestOn.distillation)
+
+	t.Setenv("ENABLE_DISTILLATION", "false")
+	assert.True(t, distillOn.enabled && ingestOn.distillation, "built workers do not re-read the environment")
+
+	// A disabled worker finishes at once, without touching the database (it has none here).
+	job := &river.Job[DistillationWorkerArgs]{JobRow: &rivertype.JobRow{}, Args: DistillationWorkerArgs{FileID: uuid.New()}}
+	assert.NoError(t, distillOff.Work(context.Background(), job))
+}
