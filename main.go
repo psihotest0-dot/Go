@@ -14,10 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
-	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivermigrate"
 	"github.com/rs/cors"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -64,47 +61,6 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 		fileHandler:   h.fileHandler.WithGroup(name),
 		stdoutHandler: h.stdoutHandler.WithGroup(name),
 	}
-}
-
-func enqueueIncompleteDistillations(ctx context.Context, client *river.Client[pgx.Tx], database *db.Database) {
-	rows, err := database.SqlDB.QueryContext(ctx, `
-		SELECT f.id FROM ingested_files f
-		WHERE f.status = 'completed'
-		  AND EXISTS (SELECT 1 FROM document_chunks c1
-					  WHERE c1.file_id = f.id AND c1.chunk_type = 'raw_text')
-		  AND (
-			  SELECT COUNT(*) FROM document_chunks c2
-			  WHERE c2.file_id = f.id AND c2.chunk_type = 'concept_summary'
-		  ) < (
-			  SELECT COUNT(*) FROM document_chunks c3
-			  WHERE c3.file_id = f.id AND c3.chunk_type = 'raw_text'
-		  ) / 5 * 8 / 10
-	`)
-	if err != nil {
-		slog.Error("startup distillation scan failed", "error", err)
-		return
-	}
-	defer rows.Close()
-
-	count := 0
-	for rows.Next() {
-		var fileID uuid.UUID
-		if err := rows.Scan(&fileID); err != nil {
-			continue
-		}
-		_, err := client.Insert(ctx, jobs.DistillationWorkerArgs{
-			FileID: fileID,
-		}, &river.InsertOpts{Queue: "distillation"})
-		if err != nil {
-			slog.Error("failed to enqueue", "file_id", fileID, "error", err)
-			continue
-		}
-		count++
-	}
-	if err := rows.Err(); err != nil {
-		slog.Error("startup distillation scan failed while iterating rows", "error", err)
-	}
-	slog.Info("Startup distillation scan complete", "enqueued", count)
 }
 
 func run() error {
@@ -185,7 +141,7 @@ func run() error {
 		return fmt.Errorf("failed to migrate river: %w", err)
 	}
 
-	enqueueIncompleteDistillations(ctx, riverClient, database)
+	jobs.EnqueueIncompleteDistillations(ctx, riverClient, database)
 
 	if err := riverClient.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start river client: %w", err)

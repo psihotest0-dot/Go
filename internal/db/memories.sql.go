@@ -137,6 +137,58 @@ func (q *Queries) GetAllMemoriesForReembedding(ctx context.Context, arg GetAllMe
 	return items, nil
 }
 
+const getLiveMemoriesByFactKey = `-- name: GetLiveMemoriesByFactKey :many
+SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
+WHERE user_id = $1
+  AND status IN ('active', 'candidate')
+  AND metadata->>'fact_key' = $2::text
+ORDER BY created_at DESC
+`
+
+type GetLiveMemoriesByFactKeyParams struct {
+	UserID  uuid.UUID `json:"user_id"`
+	FactKey string    `json:"fact_key"`
+}
+
+// The memories that are still in force (active or waiting as a candidate) for
+// one fact_key. The fact_key expression index (idx_memories_fact_key) serves it.
+func (q *Queries) GetLiveMemoriesByFactKey(ctx context.Context, arg GetLiveMemoriesByFactKeyParams) ([]Memory, error) {
+	rows, err := q.db.QueryContext(ctx, getLiveMemoriesByFactKey, arg.UserID, arg.FactKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Memory{}
+	for rows.Next() {
+		var i Memory
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Content,
+			&i.Status,
+			&i.Embedding,
+			&i.EmbeddingModel,
+			&i.SourceMessageID,
+			&i.Importance,
+			&i.Metadata,
+			&i.ContentHash,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMemories = `-- name: GetMemories :many
 SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
 WHERE user_id = $1
@@ -307,12 +359,12 @@ WITH vector_search AS (
     LIMIT 100
 ),
 text_search AS (
-    SELECT id, RANK() OVER (ORDER BY similarity(content, $4) DESC) as rank,
-           similarity(content, $4) as sim_score
+    SELECT id, RANK() OVER (ORDER BY word_similarity($4::text, content) DESC) as rank,
+           word_similarity($4::text, content) as sim_score
     FROM memories
     WHERE memories.user_id = $1
       AND memories.status IN ('active', 'candidate')
-      AND similarity(content, $4) > 0.15
+      AND word_similarity($4::text, content) > $5::float8
     ORDER BY rank
     LIMIT 100
 )
@@ -337,6 +389,7 @@ type SearchHybridMemoriesParams struct {
 	MatchCount int32           `json:"match_count"`
 	Embedding  pgvector.Vector `json:"embedding"`
 	QueryText  string          `json:"query_text"`
+	MinTextSim float64         `json:"min_text_sim"`
 }
 
 type SearchHybridMemoriesRow struct {
@@ -351,6 +404,7 @@ func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemo
 		arg.MatchCount,
 		arg.Embedding,
 		arg.QueryText,
+		arg.MinTextSim,
 	)
 	if err != nil {
 		return nil, err
@@ -374,7 +428,7 @@ func (q *Queries) SearchHybridMemories(ctx context.Context, arg SearchHybridMemo
 }
 
 const searchTextMemories = `-- name: SearchTextMemories :many
-SELECT m.id, m.content, CAST(similarity(m.content, $1) AS FLOAT8) as score
+SELECT m.id, m.content, CAST(word_similarity($1::text, m.content) AS FLOAT8) as score
 FROM memories m
 WHERE m.user_id = $2 AND m.status IN ('active', 'candidate')
 ORDER BY score DESC
@@ -414,6 +468,23 @@ func (q *Queries) SearchTextMemories(ctx context.Context, arg SearchTextMemories
 		return nil, err
 	}
 	return items, nil
+}
+
+const setMemoryStatus = `-- name: SetMemoryStatus :exec
+UPDATE memories
+SET status = $3, updated_at = NOW()
+WHERE id = $1 AND user_id = $2
+`
+
+type SetMemoryStatusParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+	Status string    `json:"status"`
+}
+
+func (q *Queries) SetMemoryStatus(ctx context.Context, arg SetMemoryStatusParams) error {
+	_, err := q.db.ExecContext(ctx, setMemoryStatus, arg.ID, arg.UserID, arg.Status)
+	return err
 }
 
 const supercedeMemory = `-- name: SupercedeMemory :exec

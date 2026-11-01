@@ -17,13 +17,29 @@ import (
 	"go-monolith/internal/retrieval"
 )
 
+// expectSearchTx expects the transaction db.WithSearchSettings opens around a
+// similarity search: begin, the set_config call, and the rollback at the end.
+func expectSearchTx(mock sqlmock.Sqlmock) {
+	mock.ExpectBegin()
+	mock.ExpectExec(`set_config`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+}
+
+// expectEmptyConceptSearch expects the concept summary search that a vector
+// search runs first, and answers it with no rows.
+func expectEmptyConceptSearch(mock sqlmock.Sqlmock) {
+	expectSearchTx(mock)
+	mock.ExpectQuery(`(?i)SELECT v\.id, v\.text AS content`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "metadata", "distance"}))
+}
+
 func TestRetrieval_CreateMemory_Mock(t *testing.T) {
 	mockDB, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -47,7 +63,7 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -57,11 +73,14 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 
     mock.MatchExpectationsInOrder(false)
 
+	expectEmptyConceptSearch(mock)
+	expectSearchTx(mock) // the chunk search
+
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
-    mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).
+    mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 
@@ -77,7 +96,7 @@ func TestRetrieval_SearchChunks_Mock(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -87,11 +106,14 @@ func TestRetrieval_SearchChunks_Mock(t *testing.T) {
 
     mock.MatchExpectationsInOrder(false)
 
+	expectEmptyConceptSearch(mock)
+	expectSearchTx(mock) // the chunk search
+
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
-    mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).
+    mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 
@@ -107,7 +129,7 @@ func TestRetrieval_SearchAll_Fallback_EmptyResult(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	// Make embedder return empty slice
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
@@ -117,6 +139,8 @@ func TestRetrieval_SearchAll_Fallback_EmptyResult(t *testing.T) {
 	query := "Empty vectors test"
 
 	mock.MatchExpectationsInOrder(false)
+
+	expectSearchTx(mock) // the chunk fallback
 
 	// Fallback uses SearchTextMemories and SearchTextChunks
 	mock.ExpectQuery(`(?i)SELECT m.id, m.content`).
@@ -141,7 +165,7 @@ func TestRetrieval_SearchAll_Fallback_Error(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{Err: fmt.Errorf("mock error")}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -150,6 +174,8 @@ func TestRetrieval_SearchAll_Fallback_Error(t *testing.T) {
 	query := "Error vectors test"
 
 	mock.MatchExpectationsInOrder(false)
+
+	expectSearchTx(mock) // the chunk fallback
 
 	mock.ExpectQuery(`(?i)SELECT m.id, m.content`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
@@ -171,7 +197,7 @@ func TestRetrieval_SearchAll_InvalidDimension(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{Dim: 128} // Invalid dimension
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -222,7 +248,7 @@ func TestRetrieval_CreateMemory_DBError(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -242,7 +268,7 @@ func TestRetrieval_SearchAll_SearchError(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -252,8 +278,11 @@ func TestRetrieval_SearchAll_SearchError(t *testing.T) {
 
 	mock.MatchExpectationsInOrder(false)
 
+	expectEmptyConceptSearch(mock)
+	expectSearchTx(mock) // the chunk search
+
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).WillReturnError(fmt.Errorf("db search fail"))
-    mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).WillReturnError(fmt.Errorf("db search fail"))
+    mock.ExpectQuery(`(?i)chunk_vector_search AS`).WillReturnError(fmt.Errorf("db search fail"))
 
 	_, _, err = svc.SearchAll(context.Background(), userID, query, 10)
 	require.ErrorContains(t, err, "db search fail")
@@ -265,7 +294,7 @@ func TestRetrieval_SearchAll_WithBoost(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
     catMgr, err := retrieval.NewCategoryManager(context.Background(), embedder)
@@ -278,11 +307,14 @@ func TestRetrieval_SearchAll_WithBoost(t *testing.T) {
 
 	mock.MatchExpectationsInOrder(false)
 
+	expectEmptyConceptSearch(mock)
+	expectSearchTx(mock) // the chunk search
+
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
-    mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).
+    mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 
@@ -297,11 +329,14 @@ func TestRetrieval_SearchAll_IncludesConceptChunks(t *testing.T) {
 	require.NoError(t, err)
 	defer mockDB.Close()
 
-	d := &db.Database{Queries: db.New(mockDB)}
+	d := &db.Database{SqlDB: mockDB, Queries: db.New(mockDB)}
 	svc := retrieval.NewRetrievalService(d, &llm.MockEmbedder{}, nil)
 
 	conceptID := uuid.New()
 	mock.MatchExpectationsInOrder(false)
+
+	expectSearchTx(mock) // the concept search
+	expectSearchTx(mock) // the chunk search
 
 	mock.ExpectQuery(`(?i)chunk_type = 'concept_summary'`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "metadata", "distance"}).
@@ -310,7 +345,7 @@ func TestRetrieval_SearchAll_IncludesConceptChunks(t *testing.T) {
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}))
 
-	mock.ExpectQuery(`(?i).*WITH chunk_vector_search AS.*`).
+	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1).
 			AddRow(conceptID, "Concept summary.", "book.txt", 1))
@@ -329,7 +364,7 @@ func TestRetrieval_CreateMemory_ConflictError(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedder{}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -349,7 +384,7 @@ func TestRetrieval_SearchAll_Fallback_TextSearchError(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -358,6 +393,8 @@ func TestRetrieval_SearchAll_Fallback_TextSearchError(t *testing.T) {
 	query := "Empty vectors test"
 
 	mock.MatchExpectationsInOrder(false)
+
+	expectSearchTx(mock) // the chunk fallback
 
 	mock.ExpectQuery(`(?i)SELECT m.id, m.content`).
 		WillReturnError(fmt.Errorf("text fallback fail"))
@@ -375,7 +412,7 @@ func TestRetrieval_SearchAll_Fallback_TextSearchChunksError(t *testing.T) {
 	defer mockDB.Close()
 
 	q := db.New(mockDB)
-	d := &db.Database{Queries: q}
+	d := &db.Database{SqlDB: mockDB, Queries: q}
 
 	embedder := &llm.MockEmbedderWithConfig{EmptyVectors: true}
 	svc := retrieval.NewRetrievalService(d, embedder, nil)
@@ -384,6 +421,8 @@ func TestRetrieval_SearchAll_Fallback_TextSearchChunksError(t *testing.T) {
 	query := "Empty vectors chunk test"
 
 	mock.MatchExpectationsInOrder(false)
+
+	expectSearchTx(mock) // the chunk fallback
 
 	mock.ExpectQuery(`(?i)SELECT m.id, m.content`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}))

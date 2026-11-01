@@ -407,22 +407,33 @@ func (q *Queries) GetUserChunkCountsByFile(ctx context.Context, userID uuid.UUID
 }
 
 const searchConceptChunks = `-- name: SearchConceptChunks :many
-SELECT c.id, c.text as content, f.file_name, c.metadata,
-       CAST(c.embedding <=> $1 AS FLOAT8) as distance
-FROM document_chunks c
-JOIN ingested_files f ON c.file_id = f.id
-WHERE c.user_id = $2
+
+WITH nearest AS (
+    SELECT c.id, c.file_id, c.user_id, c.chunk_type, c.text, c.metadata,
+           (c.embedding <=> $4) AS distance
+    FROM document_chunks c
+    ORDER BY c.embedding <=> $4
+    LIMIT $5
+)
+SELECT v.id, v.text AS content, f.file_name, v.metadata,
+       CAST(v.distance AS FLOAT8) AS distance
+FROM nearest v
+JOIN ingested_files f ON v.file_id = f.id
+WHERE f.user_id = $1
   AND f.status = 'completed'
   AND f.deleted_at IS NULL
-  AND c.chunk_type = 'concept_summary'
-  AND (c.embedding <=> $1) < 0.40
-ORDER BY distance ASC
-LIMIT 3
+  AND v.chunk_type = 'concept_summary'
+  AND v.distance < $2::float8
+ORDER BY v.distance ASC
+LIMIT $3
 `
 
 type SearchConceptChunksParams struct {
-	Embedding pgvector.Vector `json:"embedding"`
-	UserID    uuid.UUID       `json:"user_id"`
+	UserID      uuid.UUID       `json:"user_id"`
+	MaxDistance float64         `json:"max_distance"`
+	MatchCount  int32           `json:"match_count"`
+	Embedding   pgvector.Vector `json:"embedding"`
+	VectorLimit int32           `json:"vector_limit"`
 }
 
 type SearchConceptChunksRow struct {
@@ -433,8 +444,32 @@ type SearchConceptChunksRow struct {
 	Distance float64         `json:"distance"`
 }
 
+// The search queries below are shaped for the indexes. They are meant to run in
+// a transaction that has set hnsw.ef_search (db.Database.WithSearchSettings);
+// without it the HNSW scan returns 40 rows, not the candidates asked for.
+//
+// Vector side: "ORDER BY embedding <=> $v LIMIT n" on the bare table is the one
+// form the HNSW index can serve (5 ms on 250 000 chunks, against 20 s for a scan
+// that filtered and ranked every row). pgvector 0.5 applies WHERE clauses after
+// the index scan, so the user, status and type filters are applied to the n
+// nearest rows, not before them; n is large enough that this does not matter for
+// one user's library.
+//
+// Text side: PostgreSQL full-text search over to_tsvector('simple', text), served
+// by a GIN index (migration 00020). ts_query is built by the caller
+// (retrieval.lexicalQuery): the significant words of the question as prefixes
+// ("столиц:* & българ:*"), which stands in for Bulgarian stemming. An empty
+// ts_query matches nothing. Trigram matching (word_similarity with "<%") was
+// tried first and measured: on 250 000 chunks the GIN index hands back a
+// hundred thousand candidates that each need a recheck, 0.5-17 s a query.
 func (q *Queries) SearchConceptChunks(ctx context.Context, arg SearchConceptChunksParams) ([]SearchConceptChunksRow, error) {
-	rows, err := q.db.QueryContext(ctx, searchConceptChunks, arg.Embedding, arg.UserID)
+	rows, err := q.db.QueryContext(ctx, searchConceptChunks,
+		arg.UserID,
+		arg.MaxDistance,
+		arg.MatchCount,
+		arg.Embedding,
+		arg.VectorLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -463,38 +498,53 @@ func (q *Queries) SearchConceptChunks(ctx context.Context, arg SearchConceptChun
 }
 
 const searchHybridChunks = `-- name: SearchHybridChunks :many
-WITH chunk_vector_search AS (
-    SELECT source_type, id, content, rank, category, distance FROM (
-        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
-               (c.embedding <=> $5) as distance,
-               RANK() OVER (ORDER BY c.embedding <=> $5) as rank,
-               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY c.embedding <=> $5) as file_rank
-        FROM document_chunks c
-        JOIN ingested_files f ON c.file_id = f.id
-        WHERE c.user_id = $3
+WITH nearest AS (
+    SELECT c.id, c.file_id, c.user_id, c.chunk_type,
+           (c.embedding <=> $5) AS distance
+    FROM document_chunks c
+    ORDER BY c.embedding <=> $5
+    LIMIT $6
+),
+per_file AS (
+    SELECT GREATEST(2, CEIL($4::float8 / GREATEST(COUNT(*), 1)))::int AS max_per_file
+    FROM ingested_files
+    WHERE user_id = $3 AND status = 'completed' AND deleted_at IS NULL
+),
+chunk_vector_search AS (
+    SELECT id, category, distance, rank FROM (
+        SELECT v.id, f.category, v.distance,
+               RANK() OVER (ORDER BY v.distance) AS rank,
+               ROW_NUMBER() OVER (PARTITION BY v.file_id ORDER BY v.distance) AS file_rank
+        FROM nearest v
+        JOIN ingested_files f ON v.file_id = f.id
+        WHERE v.user_id = $3
           AND f.status = 'completed'
           AND f.deleted_at IS NULL
-          AND c.chunk_type = 'raw_text'
-          AND (c.embedding <=> $5) < 0.45
+          AND v.chunk_type = 'raw_text'
+          AND v.distance < $7::float8
     ) sub
-    WHERE file_rank <= 2
+    WHERE file_rank <= (SELECT max_per_file FROM per_file)
     ORDER BY rank
     LIMIT 100
 ),
+text_matches AS (
+    SELECT c.id, c.file_id, f.category,
+           ts_rank_cd(to_tsvector('simple', c.text), to_tsquery('simple', NULLIF($8::text, '')), 32) AS ts_score
+    FROM document_chunks c
+    JOIN ingested_files f ON c.file_id = f.id
+    WHERE c.user_id = $3
+      AND f.status = 'completed'
+      AND f.deleted_at IS NULL
+      AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF($8::text, ''))
+),
 chunk_text_search AS (
-    SELECT source_type, id, content, rank, category, sim_score FROM (
-        SELECT 'chunk' as source_type, c.id, c.text as content, f.category,
-               similarity(c.text, $6) as sim_score,
-               RANK() OVER (ORDER BY similarity(c.text, $6) DESC) as rank,
-               ROW_NUMBER() OVER (PARTITION BY c.file_id ORDER BY similarity(c.text, $6) DESC) as file_rank
-        FROM document_chunks c
-        JOIN ingested_files f ON c.file_id = f.id
-        WHERE c.user_id = $3
-          AND f.status = 'completed'
-          AND f.deleted_at IS NULL
-          AND similarity(c.text, $6) > 0.15
+    SELECT id, category, sim_score, rank FROM (
+        SELECT t.id, t.category, 0.5 + 0.5 * t.ts_score AS sim_score,
+               RANK() OVER (ORDER BY t.ts_score DESC) AS rank,
+               ROW_NUMBER() OVER (PARTITION BY t.file_id ORDER BY t.ts_score DESC) AS file_rank
+        FROM text_matches t
     ) sub
-    WHERE file_rank <= 2
+    WHERE file_rank <= (SELECT max_per_file FROM per_file)
     ORDER BY rank
     LIMIT 100
 )
@@ -509,12 +559,11 @@ SELECT
         ) +
         (CASE WHEN COALESCE(cvs.category, cts.category) = $1::text THEN $2::FLOAT8 ELSE 0.0 END)
     AS FLOAT8) as score
-FROM document_chunks c
+FROM chunk_vector_search cvs
+FULL OUTER JOIN chunk_text_search cts ON cvs.id = cts.id
+JOIN document_chunks c ON c.id = COALESCE(cvs.id, cts.id)
 JOIN ingested_files f ON c.file_id = f.id
-LEFT JOIN chunk_vector_search cvs ON c.id = cvs.id
-LEFT JOIN chunk_text_search cts ON c.id = cts.id
-WHERE (cvs.id IS NOT NULL OR cts.id IS NOT NULL)
-  AND c.user_id = $3
+WHERE c.user_id = $3
 ORDER BY (COALESCE(1.0 / (60 + cvs.rank), 0.0) + COALESCE(1.0 / (60 + cts.rank), 0.0)) DESC
 LIMIT $4
 `
@@ -525,7 +574,9 @@ type SearchHybridChunksParams struct {
 	UserID        uuid.UUID       `json:"user_id"`
 	MatchCount    int32           `json:"match_count"`
 	Embedding     pgvector.Vector `json:"embedding"`
-	QueryText     string          `json:"query_text"`
+	VectorLimit   int32           `json:"vector_limit"`
+	MaxDistance   float64         `json:"max_distance"`
+	TsQuery       string          `json:"ts_query"`
 }
 
 type SearchHybridChunksRow struct {
@@ -535,6 +586,12 @@ type SearchHybridChunksRow struct {
 	Score    float64   `json:"score"`
 }
 
+// At most this many chunks per file, so one long book cannot fill the whole
+// result: 2 when the library has many files, more when it has few (a library of
+// one book would otherwise return two chunks in total).
+// A chunk that holds all the significant words of the question is a strong text
+// match whatever its density, so the text score starts at 0.5 and the proximity
+// of the words (ts_rank_cd, normalised to 0..1) adds up to 0.5.
 func (q *Queries) SearchHybridChunks(ctx context.Context, arg SearchHybridChunksParams) ([]SearchHybridChunksRow, error) {
 	rows, err := q.db.QueryContext(ctx, searchHybridChunks,
 		arg.BoostCategory,
@@ -542,7 +599,9 @@ func (q *Queries) SearchHybridChunks(ctx context.Context, arg SearchHybridChunks
 		arg.UserID,
 		arg.MatchCount,
 		arg.Embedding,
-		arg.QueryText,
+		arg.VectorLimit,
+		arg.MaxDistance,
+		arg.TsQuery,
 	)
 	if err != nil {
 		return nil, err
@@ -571,18 +630,20 @@ func (q *Queries) SearchHybridChunks(ctx context.Context, arg SearchHybridChunks
 }
 
 const searchTextChunks = `-- name: SearchTextChunks :many
-SELECT c.id, c.text as content, f.file_name, CAST(similarity(c.text, $1) AS FLOAT8) as score
+SELECT c.id, c.text as content, f.file_name,
+       CAST(0.5 + 0.5 * ts_rank_cd(to_tsvector('simple', c.text), to_tsquery('simple', NULLIF($1::text, '')), 32) AS FLOAT8) as score
 FROM document_chunks c
 JOIN ingested_files f ON c.file_id = f.id
 WHERE c.user_id = $2
   AND f.status = 'completed'
   AND f.deleted_at IS NULL
+  AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF($1::text, ''))
 ORDER BY score DESC
 LIMIT $3
 `
 
 type SearchTextChunksParams struct {
-	QueryText  string    `json:"query_text"`
+	TsQuery    string    `json:"ts_query"`
 	UserID     uuid.UUID `json:"user_id"`
 	MatchCount int32     `json:"match_count"`
 }
@@ -595,7 +656,7 @@ type SearchTextChunksRow struct {
 }
 
 func (q *Queries) SearchTextChunks(ctx context.Context, arg SearchTextChunksParams) ([]SearchTextChunksRow, error) {
-	rows, err := q.db.QueryContext(ctx, searchTextChunks, arg.QueryText, arg.UserID, arg.MatchCount)
+	rows, err := q.db.QueryContext(ctx, searchTextChunks, arg.TsQuery, arg.UserID, arg.MatchCount)
 	if err != nil {
 		return nil, err
 	}

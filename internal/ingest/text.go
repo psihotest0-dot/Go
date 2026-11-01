@@ -4,9 +4,6 @@ import (
 	"context"
 	"io"
 	"strings"
-	"unicode/utf8"
-
-	"golang.org/x/text/encoding/charmap"
 )
 
 type TextExtractor struct{}
@@ -43,18 +40,9 @@ func (e *TextExtractor) Supports(mimeType, ext string) bool {
 }
 
 func (e *TextExtractor) Extract(ctx context.Context, r io.Reader) (string, error) {
-	bytes, err := io.ReadAll(r)
+	raw, err := io.ReadAll(r)
 	if err != nil {
 		return "", err
 	}
-
-	if !utf8.Valid(bytes) {
-		decoder := charmap.Windows1251.NewDecoder()
-		decodedBytes, err := decoder.Bytes(bytes)
-		if err == nil {
-			return string(decodedBytes), nil
-		}
-	}
-
-	return string(bytes), nil
+	return decodeText(raw), nil
 }

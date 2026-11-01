@@ -46,12 +46,12 @@ WITH vector_search AS (
     LIMIT 100
 ),
 text_search AS (
-    SELECT id, RANK() OVER (ORDER BY similarity(content, sqlc.arg('query_text')) DESC) as rank,
-           similarity(content, sqlc.arg('query_text')) as sim_score
+    SELECT id, RANK() OVER (ORDER BY word_similarity(sqlc.arg('query_text')::text, content) DESC) as rank,
+           word_similarity(sqlc.arg('query_text')::text, content) as sim_score
     FROM memories
     WHERE memories.user_id = sqlc.arg('user_id')
       AND memories.status IN ('active', 'candidate')
-      AND similarity(content, sqlc.arg('query_text')) > 0.15
+      AND word_similarity(sqlc.arg('query_text')::text, content) > sqlc.arg('min_text_sim')::float8
     ORDER BY rank
     LIMIT 100
 )
@@ -71,7 +71,7 @@ ORDER BY (COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0
 LIMIT sqlc.arg('match_count');
 
 -- name: SearchTextMemories :many
-SELECT m.id, m.content, CAST(similarity(m.content, sqlc.arg('query_text')) AS FLOAT8) as score
+SELECT m.id, m.content, CAST(word_similarity(sqlc.arg('query_text')::text, m.content) AS FLOAT8) as score
 FROM memories m
 WHERE m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
 ORDER BY score DESC
@@ -84,6 +84,20 @@ DELETE FROM memories WHERE id = $1 AND user_id = $2;
 UPDATE memories
 SET status = 'superseded', updated_at = NOW()
 WHERE id = $1 AND user_id = $2;
+
+-- name: SetMemoryStatus :exec
+UPDATE memories
+SET status = $3, updated_at = NOW()
+WHERE id = $1 AND user_id = $2;
+
+-- The memories that are still in force (active or waiting as a candidate) for
+-- one fact_key. The fact_key expression index (idx_memories_fact_key) serves it.
+-- name: GetLiveMemoriesByFactKey :many
+SELECT * FROM memories
+WHERE user_id = sqlc.arg('user_id')
+  AND status IN ('active', 'candidate')
+  AND metadata->>'fact_key' = sqlc.arg('fact_key')::text
+ORDER BY created_at DESC;
 
 -- name: GetAllMemoriesForReembedding :many
 SELECT * FROM memories

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
 	openai "github.com/sashabaranov/go-openai"
@@ -23,6 +24,89 @@ type DistillationWorkerArgs struct {
 
 func (DistillationWorkerArgs) Kind() string {
 	return "distillation_worker"
+}
+
+// distillationBatchSize is how many raw chunks are summarised together.
+const distillationBatchSize = 5
+
+// distillationTarget is the number of concept summaries a file with rawChunks
+// raw chunks must have before its distillation counts as complete: 80 % of one
+// summary per batch. The worker (to skip a finished file) and the startup scan
+// (to find an unfinished one) both ask this, so they cannot disagree.
+func distillationTarget(rawChunks int) int {
+	batches := (rawChunks + distillationBatchSize - 1) / distillationBatchSize
+	return batches * 8 / 10
+}
+
+// distillationNeeded reports whether a file still has to be distilled.
+func distillationNeeded(rawChunks, conceptChunks int) bool {
+	return rawChunks > 0 && conceptChunks < distillationTarget(rawChunks)
+}
+
+// distillationInsertOpts allows one distillation job per file at a time. Two
+// concurrent jobs for one file (a restart during ingest, a re-ingest) would
+// both summarise the same batches: the list of already processed chunks is read
+// once at the start, so neither sees the other's concept chunks.
+func distillationInsertOpts() *river.InsertOpts {
+	return &river.InsertOpts{
+		Queue: "distillation",
+		UniqueOpts: river.UniqueOpts{
+			ByArgs:  true,
+			ByState: uniqueWhileInFlightStates(),
+		},
+	}
+}
+
+// EnqueueIncompleteDistillations queues a distillation job for every completed,
+// not deleted file whose summaries are below the target - after a restart that
+// interrupted a job, or for files ingested before distillation existed.
+// Files that already have a job queued or running are skipped by the unique
+// options.
+func EnqueueIncompleteDistillations(ctx context.Context, client *river.Client[pgx.Tx], database *db.Database) {
+	rows, err := database.SqlDB.QueryContext(ctx, `
+		SELECT f.id,
+		       COUNT(*) FILTER (WHERE c.chunk_type = 'raw_text'),
+		       COUNT(*) FILTER (WHERE c.chunk_type = 'concept_summary')
+		FROM ingested_files f
+		JOIN document_chunks c ON c.file_id = f.id
+		WHERE f.status = 'completed' AND f.deleted_at IS NULL
+		GROUP BY f.id
+	`)
+	if err != nil {
+		slog.Error("startup distillation scan failed", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	var fileIDs []uuid.UUID
+	for rows.Next() {
+		var fileID uuid.UUID
+		var raw, concepts int
+		if err := rows.Scan(&fileID, &raw, &concepts); err != nil {
+			slog.Error("startup distillation scan failed to read a row", "error", err)
+			continue
+		}
+		if distillationNeeded(raw, concepts) {
+			fileIDs = append(fileIDs, fileID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		slog.Error("startup distillation scan failed while iterating rows", "error", err)
+	}
+	rows.Close()
+
+	enqueued := 0
+	for _, fileID := range fileIDs {
+		res, err := client.Insert(ctx, DistillationWorkerArgs{FileID: fileID}, distillationInsertOpts())
+		if err != nil {
+			slog.Error("failed to enqueue distillation", "file_id", fileID, "error", err)
+			continue
+		}
+		if !res.UniqueSkippedAsDuplicate {
+			enqueued++
+		}
+	}
+	slog.Info("Startup distillation scan complete", "enqueued", enqueued, "candidates", len(fileIDs))
 }
 
 type DistillationWorker struct {
@@ -90,14 +174,12 @@ func (w *DistillationWorker) Work(ctx context.Context, job *river.Job[Distillati
 		return nil
 	}
 
-	batchSize := 5
-	totalBatches := (len(rawChunks) + batchSize - 1) / batchSize
-
-	if len(conceptChunks) >= totalBatches*8/10 {
+	batchSize := distillationBatchSize
+	if !distillationNeeded(len(rawChunks), len(conceptChunks)) {
 		slog.Info("Distillation skipped (sufficient coverage)",
 			"file_id", job.Args.FileID,
 			"have", len(conceptChunks),
-			"expected", totalBatches)
+			"needed", distillationTarget(len(rawChunks)))
 		return nil
 	}
 

@@ -9,20 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/prompts"
 
-	"database/sql"
-
 	"github.com/google/uuid"
 	pgx "github.com/jackc/pgx/v5"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	openai "github.com/sashabaranov/go-openai"
-	"github.com/sqlc-dev/pqtype"
 )
 
 type MemoryConsolidationPeriodicArgs struct{}
@@ -67,8 +62,9 @@ func (w *MemoryConsolidationPeriodicWorker) Work(ctx context.Context, job *river
 	return nil
 }
 
-// memoryConsolidationUniqueStates is the set of job states in which an already
-// existing memory_consolidation job suppresses a new one for the same user.
+// uniqueWhileInFlightStates is the set of job states in which an already
+// existing job suppresses a new one with the same args (a memory_consolidation
+// job for the same user, a distillation_worker job for the same file).
 //
 // JobStateCompleted is deliberately absent. River's default state set
 // (rivertype.UniqueOptsByStateDefault) includes it, and the partial unique
@@ -81,7 +77,7 @@ func (w *MemoryConsolidationPeriodicWorker) Work(ctx context.Context, job *river
 // Dropping `completed` keeps the deduplication that actually matters (never
 // more than one queued/running job per user) without locking the user out of
 // all future runs.
-func memoryConsolidationUniqueStates() []rivertype.JobState {
+func uniqueWhileInFlightStates() []rivertype.JobState {
 	return []rivertype.JobState{
 		rivertype.JobStateAvailable,
 		rivertype.JobStatePending,
@@ -98,7 +94,7 @@ func memoryConsolidationInsertOpts() *river.InsertOpts {
 		Queue: "memory",
 		UniqueOpts: river.UniqueOpts{
 			ByArgs:  true,
-			ByState: memoryConsolidationUniqueStates(),
+			ByState: uniqueWhileInFlightStates(),
 		},
 	}
 }
@@ -108,6 +104,10 @@ type MemoryConsolidationArgs struct {
 }
 
 func (MemoryConsolidationArgs) Kind() string { return "memory_consolidation" }
+
+// consolidationMessagesPerRun is how many messages of one user are analysed per
+// job. The job is queued again every five minutes while messages are waiting.
+const consolidationMessagesPerRun = 20
 
 type MemoryConsolidationWorker struct {
 	river.WorkerDefaults[MemoryConsolidationArgs]
@@ -141,12 +141,10 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 	// Every LLM call below is background work and must leave a slot to the chat.
 	ctx = llm.WithBackground(ctx)
 
-	// Promote existing candidate memories to active
-	_, err := w.dbClient.SqlDB.ExecContext(ctx, "UPDATE memories SET status = 'active' WHERE user_id = $1 AND status = 'candidate'", job.Args.UserID)
-	if err != nil {
-		slog.Warn("Failed to promote candidate memories to active", "user_id", job.Args.UserID, "error", err)
-	}
-
+	// A candidate (a silent change that contradicts an active fact) is promoted
+	// only when the same fact is stated again or changed explicitly: see
+	// decideFact. Promoting every candidate on each run made contradicting facts
+	// active at the same time.
 	conn, err := w.dbClient.SqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to acquire connection for advisory lock: %w", err)
@@ -244,7 +242,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		})
 
 		processedCount++
-		if processedCount >= 5 {
+		if processedCount >= consolidationMessagesPerRun {
 			break
 		}
 	}
@@ -261,7 +259,7 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 	req := openai.ChatCompletionRequest{
 		Messages: []openai.ChatCompletionMessage{
 			{
-				Role:    openai.ChatMessageRoleUser,
+				Role:    openai.ChatMessageRoleSystem,
 				Content: systemPrompt,
 			},
 			{
@@ -292,97 +290,6 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 		}
 	}
 	return facts, nil
-}
-
-func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Message, fact Fact) error {
-	if strings.TrimSpace(fact.Statement) == "" {
-		return nil
-	}
-
-	tx, err := w.dbClient.SqlDB.BeginTx(ctx, &sql.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	q := w.dbClient.Queries.WithTx(tx)
-
-	memories, err := q.GetMemories(ctx, db.GetMemoriesParams{
-		UserID: msg.UserID,
-	})
-	if err != nil {
-		return err
-	}
-
-	var conflict *db.Memory
-	for _, m := range memories {
-		if m.Status == "active" || m.Status == "candidate" {
-			var meta map[string]interface{}
-			if m.Metadata.Valid {
-				_ = json.Unmarshal(m.Metadata.RawMessage, &meta)
-				if fk, ok := meta["fact_key"].(string); ok && fk == fact.FactKey {
-					cm := m
-					conflict = &cm
-					break
-				}
-			}
-		}
-	}
-
-	status := "active"
-	if conflict != nil {
-		if fact.IsExplicitChange {
-			err = q.SupercedeMemory(ctx, db.SupercedeMemoryParams{
-				ID:     conflict.ID,
-				UserID: msg.UserID,
-			})
-			if err != nil {
-				return err
-			}
-		} else {
-			status = "candidate"
-		}
-	}
-
-	vectors, err := w.embedder.EmbedTexts(ctx, []string{fact.Statement}, false)
-	if err != nil {
-		return err
-	}
-	var vec pgvector.Vector
-	if len(vectors) == 0 {
-		return fmt.Errorf("embedder returned empty result")
-	}
-	if len(vectors[0]) != config.VectorDimension {
-		return fmt.Errorf("embedder returned invalid vector dimension: expected %d, got %d", config.VectorDimension, len(vectors[0]))
-	}
-	vec = pgvector.NewVector(vectors[0])
-
-	metaBytes, _ := json.Marshal(map[string]interface{}{
-		"fact_key":           fact.FactKey,
-		"value":              fact.Value,
-		"is_explicit_change": fact.IsExplicitChange,
-	})
-
-	nullMsgID := uuid.NullUUID{UUID: msg.ID, Valid: true}
-
-	h := fmt.Sprintf("%s-%s-%d", fact.Statement, msg.ID.String(), time.Now().UnixNano())
-
-	_, err = q.CreateMemory(ctx, db.CreateMemoryParams{
-		UserID:          msg.UserID,
-		Content:         fact.Statement,
-		Status:          status,
-		Embedding:       vec,
-		EmbeddingModel:  "intfloat/multilingual-e5-small",
-		SourceMessageID: nullMsgID,
-		Importance:      1,
-		Metadata:        pqtype.NullRawMessage{RawMessage: metaBytes, Valid: true},
-		ContentHash:     h,
-	})
-	if err != nil {
-		return err
-	}
-
-	return tx.Commit()
 }
 
 type EmbeddingCacheGCArgs struct{}

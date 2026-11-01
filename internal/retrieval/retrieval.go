@@ -27,6 +27,17 @@ const (
 	categoryBoostMargin = 0.08
 	// categoryBoostAmount is the score bonus given to chunks of the boosted category.
 	categoryBoostAmount = 0.08
+
+	// chunkMaxDistance and conceptMaxDistance are the cosine distances beyond
+	// which a chunk or a concept summary is not a vector match. They are the
+	// values the queries always had; E5 puts even unrelated texts at a distance
+	// of 0.2-0.3, so they filter little, and task 32 of ACTION_PLAN.md
+	// replaces them with values measured on the real library.
+	chunkMaxDistance   = 0.45
+	conceptMaxDistance = 0.40
+
+	// conceptMatchCount is how many concept summaries a search may return.
+	conceptMatchCount = 3
 )
 
 type RetrievalService struct {
@@ -173,6 +184,7 @@ func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID,
 		MatchCount: int32(limit),
 		Embedding:  pgvector.NewVector(queryVec),
 		QueryText:  query,
+		MinTextSim: db.SearchMinTextSimilarity,
 	})
 	if err != nil {
 		slog.Error("failed to search hybrid memories", slog.Any("error", err))
@@ -185,16 +197,22 @@ func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID,
 }
 
 // searchChunks runs the hybrid chunk search with category boosting, or the
-// text-only search when queryVec is nil. query is the text matched against
-// chunk text; it may be wider than the text that was embedded.
-func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, query string, limit int, queryVec []float32) ([]SearchResult, error) {
+// text-only search when queryVec is nil. The words of query - and of themes,
+// the topics of the concept summaries that matched - are what the lexical half
+// looks for in the chunk text.
+func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, query string, themes []string, limit int, queryVec []float32) ([]SearchResult, error) {
 	var res []SearchResult
+	tsQuery := lexicalQuery(query, themes)
 
 	if queryVec == nil {
-		rows, err := s.db.Queries.SearchTextChunks(ctx, db.SearchTextChunksParams{
-			UserID:     userID,
-			QueryText:  query,
-			MatchCount: int32(limit),
+		var rows []db.SearchTextChunksRow
+		err := s.db.WithSearchSettings(ctx, func(q *db.Queries) (err error) {
+			rows, err = q.SearchTextChunks(ctx, db.SearchTextChunksParams{
+				UserID:     userID,
+				TsQuery:    tsQuery,
+				MatchCount: int32(limit),
+			})
+			return err
 		})
 		if err != nil {
 			slog.Error("failed to search text chunks during fallback", slog.Any("error", err))
@@ -207,13 +225,19 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 	}
 
 	boostCategory, boostAmount := s.boostFor(queryVec)
-	rows, err := s.db.Queries.SearchHybridChunks(ctx, db.SearchHybridChunksParams{
-		UserID:        userID,
-		MatchCount:    int32(limit),
-		Embedding:     pgvector.NewVector(queryVec),
-		QueryText:     query,
-		BoostCategory: boostCategory,
-		BoostAmount:   boostAmount,
+	var rows []db.SearchHybridChunksRow
+	err := s.db.WithSearchSettings(ctx, func(q *db.Queries) (err error) {
+		rows, err = q.SearchHybridChunks(ctx, db.SearchHybridChunksParams{
+			UserID:        userID,
+			MatchCount:    int32(limit),
+			Embedding:     pgvector.NewVector(queryVec),
+			VectorLimit:   db.SearchVectorCandidates,
+			MaxDistance:   chunkMaxDistance,
+			TsQuery:       tsQuery,
+			BoostCategory: boostCategory,
+			BoostAmount:   boostAmount,
+		})
+		return err
 	})
 	if err != nil {
 		slog.Error("failed to search hybrid chunks", slog.Any("error", err))
@@ -228,9 +252,16 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 // searchConcepts returns the concept-summary chunks closest to queryVec along
 // with the themes recorded in their metadata.
 func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID, queryVec []float32) ([]SearchResult, []string, error) {
-	rows, err := s.db.Queries.SearchConceptChunks(ctx, db.SearchConceptChunksParams{
-		UserID:    userID,
-		Embedding: pgvector.NewVector(queryVec),
+	var rows []db.SearchConceptChunksRow
+	err := s.db.WithSearchSettings(ctx, func(q *db.Queries) (err error) {
+		rows, err = q.SearchConceptChunks(ctx, db.SearchConceptChunksParams{
+			UserID:      userID,
+			Embedding:   pgvector.NewVector(queryVec),
+			VectorLimit: db.SearchVectorCandidates,
+			MaxDistance: conceptMaxDistance,
+			MatchCount:  conceptMatchCount,
+		})
+		return err
 	})
 	if err != nil {
 		return nil, nil, err
@@ -270,15 +301,11 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	// Associative search: concept summaries are returned alongside the chunks
 	// and their themes widen the text side of the chunk search.
 	var concepts []SearchResult
-	chunkQuery := query
+	var themes []string
 	if queryVec != nil {
-		var themes []string
 		concepts, themes, err = s.searchConcepts(ctx, userID, queryVec)
 		if err != nil {
 			slog.Warn("failed to search concept chunks", "error", err)
-		}
-		if len(themes) > 0 {
-			chunkQuery += " " + strings.Join(themes, " ")
 		}
 	}
 
@@ -289,7 +316,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 		return err
 	})
 	eg.Go(func() (err error) {
-		chunks, err = s.searchChunks(childCtx, userID, chunkQuery, limit, queryVec)
+		chunks, err = s.searchChunks(childCtx, userID, query, themes, limit, queryVec)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -382,7 +409,7 @@ func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID
 	if err != nil {
 		return nil, err
 	}
-	return s.searchChunks(ctx, userID, query, limit, queryVec)
+	return s.searchChunks(ctx, userID, query, nil, limit, queryVec)
 }
 
 func (s *RetrievalService) SearchMemories(ctx context.Context, userID uuid.UUID, query string, limit int) ([]SearchResult, error) {

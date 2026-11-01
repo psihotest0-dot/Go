@@ -2,10 +2,13 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -39,17 +42,49 @@ type IngestFileWorker struct {
 	catMgr   *retrieval.CategoryManager
 }
 
+// ingestJobTimeout is only a ceiling for a job that is stuck. A PDF sets its own,
+// much tighter deadline from its page count (ingest.pdfDeadline), which is what
+// ends a slow OCR; an hour was too little for a long scanned book.
+const ingestJobTimeout = 12 * time.Hour
+
 func (w *IngestFileWorker) Timeout(job *river.Job[IngestFileArgs]) time.Duration {
-	return 1 * time.Hour // Large documents and OCR can take a significant amount of time
+	return ingestJobTimeout
+}
+
+// ocrCheckpointDir is where the OCR of a file keeps its finished pages between
+// attempts. It is in the temp directory on purpose: it is only a way to avoid
+// repeating work, and losing it costs time, not data.
+func ocrCheckpointDir(fileID uuid.UUID) string {
+	return filepath.Join(os.TempDir(), "go-monolith-ocr", fileID.String())
 }
 
 func NewIngestFileWorker(dbClient *db.Database, embedder llm.Embedder, catMgr *retrieval.CategoryManager) *IngestFileWorker {
 	return &IngestFileWorker{
 		dbClient: dbClient,
 		embedder: embedder,
-		manager:  ingest.NewManager(),
+		manager: ingest.NewManager(ingest.WithLimits(ingest.Limits{
+			MaxInputBytes: config.Load().MaxUploadBytes,
+		})),
 		catMgr:   catMgr,
 	}
+}
+
+// fail records an ingest failure and returns the error River should see.
+//
+// Input that can never be ingested (empty, unsupported, too large) is cancelled,
+// so River does not run the same doomed job up to 25 times. When the context is
+// done (shutdown, job timeout) and River will try again, the file stays
+// "processing": marking it failed would show a transient state as the outcome.
+func (w *IngestFileWorker) fail(ctx context.Context, job *river.Job[IngestFileArgs], file db.IngestedFile, err error) error {
+	if ctx.Err() != nil && job.Attempt < job.MaxAttempts {
+		slog.Warn("IngestFileWorker interrupted, the job will be retried", "file_id", file.ID, "error", err)
+		return err
+	}
+	w.markFileFailed(file.ID, file.UserID, err)
+	if ingest.IsPermanent(err) {
+		return river.JobCancel(err)
+	}
+	return err
 }
 
 func (w *IngestFileWorker) markFileFailed(fileID uuid.UUID, userID uuid.UUID, err error) {
@@ -72,6 +107,11 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	}
 
 	file, err := w.dbClient.Queries.GetIngestedFileByID(ctx, job.Args.FileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The row is gone (deleted, or an old job from before a restore): no
+		// retry will bring it back.
+		return river.JobCancel(fmt.Errorf("ingested file %s does not exist: %w", job.Args.FileID, err))
+	}
 	if err != nil {
 		return fmt.Errorf("failed to get ingested file: %w", err)
 	}
@@ -87,15 +127,19 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	f, err := os.Open(file.LocalPath)
 	if err != nil {
-		w.markFileFailed(file.ID, file.UserID, err)
-		return fmt.Errorf("failed to open file: %w", err)
+		return w.fail(ctx, job, file, fmt.Errorf("failed to open file: %w", err))
 	}
 
-	text, err := w.manager.Extract(ctx, file.FileName, f)
+	cpDir := ocrCheckpointDir(file.ID)
+	text, err := w.manager.Extract(ingest.WithCheckpointDir(ctx, cpDir), file.FileName, f)
 	f.Close()
+	if err == nil || ingest.IsPermanent(err) || job.Attempt >= job.MaxAttempts {
+		// Nothing will resume from the saved pages any more. After any other
+		// failure they stay, and the next attempt carries on from them.
+		_ = ingest.ClearCheckpoint(cpDir)
+	}
 	if err != nil {
-		w.markFileFailed(file.ID, file.UserID, err)
-		return fmt.Errorf("failed to extract text: %w", err)
+		return w.fail(ctx, job, file, fmt.Errorf("failed to extract text: %w", err))
 	}
 
 	cyrillicCount := 0
@@ -114,6 +158,11 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 	}
 
 	chunks := w.chunkText(text, chunkSize, overlap)
+	if len(chunks) == 0 {
+		// Text that is all noise (a table of contents of dots) filters down to
+		// nothing; a "completed" file with no chunks cannot be searched.
+		return w.fail(ctx, job, file, fmt.Errorf("%w: nothing is left after filtering noise", ingest.ErrNoText))
+	}
 
 	var allVectors [][]float32
 	batchSize := 50
@@ -132,15 +181,12 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 		vectors, embedErr := w.embedder.EmbedTexts(ctx, enrichedBatch, false)
 		if embedErr != nil {
-			w.markFileFailed(file.ID, file.UserID, embedErr)
-			return fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, embedErr)
+			return w.fail(ctx, job, file, fmt.Errorf("failed to embed batch starting at chunk %d: %w", i, embedErr))
 		}
 
 		// Check if vectors match the number of chunks. If not, return an error.
 		if len(vectors) != len(enrichedBatch) {
-			err = fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors))
-			w.markFileFailed(file.ID, file.UserID, err)
-			return err
+			return w.fail(ctx, job, file, fmt.Errorf("mismatch in vector count vs chunks in batch: expected %d, got %d", len(enrichedBatch), len(vectors)))
 		}
 
 		allVectors = append(allVectors, vectors...)
@@ -162,9 +208,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			metadatas = append(metadatas, "{}")
 
 			if len(vectors[j]) != config.VectorDimension {
-				err = fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j]))
-				w.markFileFailed(file.ID, file.UserID, err)
-				return err
+				return w.fail(ctx, job, file, fmt.Errorf("invalid vector dimension at chunk %d: %d", i+j, len(vectors[j])))
 			}
 			embeddings = append(embeddings, pgvector.NewVector(vectors[j]))
 		}
@@ -175,13 +219,11 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 		   len(embeddings) != len(texts) ||
 		   len(chunkTypes) != len(texts) ||
 		   len(metadatas) != len(texts) {
-		    err = fmt.Errorf(
-		        "array length mismatch: fileIDs=%d userIDs=%d chunkIndices=%d texts=%d embeddings=%d chunkTypes=%d metadatas=%d",
-		        len(fileIDs), len(userIDs), len(chunkIndices), len(texts),
-		        len(embeddings), len(chunkTypes), len(metadatas),
-		    )
-		    w.markFileFailed(file.ID, file.UserID, err)
-		    return err
+			return w.fail(ctx, job, file, fmt.Errorf(
+				"array length mismatch: fileIDs=%d userIDs=%d chunkIndices=%d texts=%d embeddings=%d chunkTypes=%d metadatas=%d",
+				len(fileIDs), len(userIDs), len(chunkIndices), len(texts),
+				len(embeddings), len(chunkTypes), len(metadatas),
+			))
 		}
 
 		err = w.dbClient.Queries.CreateDocumentChunksBatch(ctx, db.CreateDocumentChunksBatchParams{
@@ -194,8 +236,7 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 			Metadatas:    metadatas,
 		})
 		if err != nil {
-			w.markFileFailed(file.ID, file.UserID, err)
-			return fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err)
+			return w.fail(ctx, job, file, fmt.Errorf("failed to save batch starting at chunk %d: %w", i, err))
 		}
 	}
 
@@ -270,12 +311,9 @@ func (w *IngestFileWorker) Work(ctx context.Context, job *river.Job[IngestFileAr
 
 	// Enqueue distillation worker
 	if config.Load().EnableDistillation {
-		pgxClient := river.ClientFromContext[pgx.Tx](ctx)
-		if pgxClient != nil {
-			_, err = pgxClient.Insert(ctx, DistillationWorkerArgs{FileID: file.ID},
-				&river.InsertOpts{
-					Queue: "distillation",
-				})
+		pgxClient, clientErr := river.ClientFromContextSafely[pgx.Tx](ctx)
+		if clientErr == nil {
+			_, err = pgxClient.Insert(ctx, DistillationWorkerArgs{FileID: file.ID}, distillationInsertOpts())
 			if err != nil {
 				slog.Error("Failed to enqueue DistillationWorkerArgs", "file_id", file.ID, "error", err)
 			}
