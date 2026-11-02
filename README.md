@@ -95,7 +95,10 @@ The backend reads the environment, and a `.env` file in the working directory is
 | `LLM_BACKGROUND_SLOTS` | `1` | How many of those slots background work (summaries, consolidation, distillation) may use. |
 | `LLM_CONTEXT_TOKENS` | `0` (unknown) | Context window of **one request** = server context / slots (`32768 / 2 = 16384`). While it is unknown the agent keeps conservative budgets sized for ~8k; set it and every budget below is derived from it. |
 | `LLM_ANSWER_TOKENS`, `LLM_PROMPT_CONTEXT_TOKENS`, `LLM_HISTORY_TOKENS`, `LLM_HISTORY_MESSAGES`, `LLM_TOOL_RESULT_TOKENS` | `0` (derive) | Override a single budget: the answer reserve, the dynamic part of the system prompt, the replayed history (tokens / messages) and all tool results of a round. |
-| `LLM_ENABLE_THINKING` | `true` | Let the model reason before it answers. The reasoning is hidden in the clients; turning it off saves time and tokens. |
+| `LLM_ENABLE_THINKING` | `false` | Let the model reason before it answers. Off by default: Qwen 3.5 9B leaked its reasoning into the chat with it on. The reasoning is hidden in the clients; turning it on costs time and tokens. |
+| `LLM_TEMPERATURE` | `0.7` | Temperature of every chat request (0 to 2). Lemonade starts Qwen 3.5 with 1.0 (the model's thinking-mode value); at that setting the 9B model made roughly 2.5 times as many non-words in Bulgarian as at 0.7. |
+| `LLM_TOP_P` | `0.8` | Top-p of every chat request (0.01 to 1). |
+| `LLM_PRESENCE_PENALTY` | `0` (off) | Presence penalty sent with every chat request (0 to 2); `0` is not sent. Tried at 0.5 and 1.0 on 2026-11-02: no clear effect on the replies, so it stays off. |
 | `ENABLE_ADAPTIVE_SKIP` | `true` | Skip retrieval for messages that obviously do not need it. |
 | `ENABLE_DISTILLATION` | `true` | Background concept summaries of ingested files. |
 | `EMBEDDER_URL` | – | URL of the embedder service, e.g. `http://localhost:8000`. |

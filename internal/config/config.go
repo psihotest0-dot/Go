@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -102,9 +104,22 @@ type Config struct {
 	LLMHistoryMessages     int
 	LLMToolResultTokens    int
 	// LLMEnableThinking lets the model reason before it answers in the chat. It
-	// is on by default because that is what the model does when asked nothing.
+	// is off by default: with Qwen 3.5 9B the reasoning leaked into the answer
+	// (a closing </think> with no opening one, followed by a repeated reply) and
+	// did not make a Bulgarian conversation better.
 	LLMEnableThinking bool
-	EmbedderURL       string
+	// LLMTemperature and LLMTopP are sent with every chat request, so the answer
+	// style does not depend on how the model server was started. Lemonade starts
+	// Qwen 3.5 with temperature 1.0 and top_p 0.95 (Qwen's values for thinking
+	// mode); with those the 9B model produced non-words in Bulgarian about
+	// 2.5 times as often as with 0.7 and 0.8, measured on 2026-11-02.
+	LLMTemperature float32
+	LLMTopP        float32
+	// LLMPresencePenalty is sent with every chat request (LLM_PRESENCE_PENALTY, 0 to
+	// 2). Zero is the default and is not sent at all, so the model server keeps its
+	// own setting.
+	LLMPresencePenalty float32
+	EmbedderURL        string
 	// EmbedderTimeout bounds one call to the embedding service, with its cache reads
 	// and writes (EMBEDDER_TIMEOUT_SECONDS).
 	EmbedderTimeout  time.Duration
@@ -167,6 +182,22 @@ func boolEnv(name string, def bool) bool {
 	return value
 }
 
+// floatEnv reads a number from lo to hi from the environment. An unset variable
+// gives def silently; an unparsable, NaN or out-of-range one gives def with a
+// warning.
+func floatEnv(name string, def, lo, hi float64) float32 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return float32(def)
+	}
+	value, err := strconv.ParseFloat(raw, 32)
+	if err != nil || math.IsNaN(value) || value < lo || value > hi {
+		slog.Warn(fmt.Sprintf("ignoring invalid %s (expected %g to %g)", name, lo, hi), slog.String("value", raw), slog.Float64("using", def))
+		return float32(def)
+	}
+	return float32(value)
+}
+
 func Load() *Config {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -217,7 +248,10 @@ func Load() *Config {
 		LLMHistoryTokens:       positiveIntEnv("LLM_HISTORY_TOKENS", 0),
 		LLMHistoryMessages:     positiveIntEnv("LLM_HISTORY_MESSAGES", 0),
 		LLMToolResultTokens:    positiveIntEnv("LLM_TOOL_RESULT_TOKENS", 0),
-		LLMEnableThinking:      boolEnv("LLM_ENABLE_THINKING", true),
+		LLMEnableThinking:      boolEnv("LLM_ENABLE_THINKING", false),
+		LLMTemperature:         floatEnv("LLM_TEMPERATURE", 0.7, 0, 2),
+		LLMTopP:                floatEnv("LLM_TOP_P", 0.8, 0.01, 1),
+		LLMPresencePenalty:     floatEnv("LLM_PRESENCE_PENALTY", 0, 0, 2),
 
 		EmbedderURL:        os.Getenv("EMBEDDER_URL"),
 		EmbedderTimeout:    time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,

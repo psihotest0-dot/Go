@@ -145,6 +145,14 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 		return fmt.Errorf("failed to get ingested file: %w", err)
 	}
 
+	// A deleted file is gone for the user, and its row and chunks are kept only so
+	// the delete can be undone. A job that was still queued when the file was
+	// deleted must leave it alone: running it would wipe the chunks and turn the
+	// "deleted" status into "failed", and a retry cannot make the file wanted again.
+	if file.DeletedAt.Valid {
+		return river.JobCancel(fmt.Errorf("ingested file %s was deleted, so it is not ingested", file.ID))
+	}
+
 	// A finished file whose original is gone (KEEP_ORIGINALS=false, or a file
 	// deleted by hand) cannot be ingested again. This has to be said before
 	// anything is touched: the old chunks are deleted next, and the file would
@@ -168,6 +176,14 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 	}
 
 	f, err := os.Open(file.LocalPath)
+	if errors.Is(err, os.ErrNotExist) {
+		// The original is not in storage (KEEP_ORIGINALS=false, or it was deleted by
+		// hand). Retrying cannot bring it back: 25 attempts over two weeks only fill
+		// the log with the same error.
+		err = fmt.Errorf("failed to open file: %w", err)
+		w.markFileFailed(file.ID, file.UserID, err)
+		return river.JobCancel(err)
+	}
 	if err != nil {
 		return w.fail(ctx, job, file, fmt.Errorf("failed to open file: %w", err))
 	}

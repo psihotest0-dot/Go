@@ -20,7 +20,9 @@ const (
 	// streamFilterThinkTail is how many bytes are kept while inside a <think>
 	// block so a split closing marker is still detected.
 	streamFilterThinkTail = 7
-	// streamFilterThinkClose is the marker that ends a thinking block.
+	// streamFilterThinkOpen and streamFilterThinkClose are the markers that start
+	// and end a thinking block.
+	streamFilterThinkOpen  = "<think>"
 	streamFilterThinkClose = "</think>"
 )
 
@@ -78,13 +80,17 @@ func (f *streamFilter) Process(chunk string) string {
 
 		tag := f.buffer[:endIdx+1]
 
-		if tag == "<think>" {
+		if tag == streamFilterThinkOpen {
 			f.inThink = true
 			f.buffer = f.buffer[endIdx+1:]
 			continue
 		}
 
-		if tag == "<tool_call>" || tag == "</tool_call>" || tag == "</function>" || tag == "</parameter>" {
+		// A closing think marker outside a think block closes a block whose opening
+		// tag the model server put into the prompt. The tag itself is never shown;
+		// the reasoning before it was already sent and cannot be taken back here
+		// (sanitizeAssistantText removes it from the stored answer).
+		if tag == "<tool_call>" || tag == "</tool_call>" || tag == "</function>" || tag == "</parameter>" || tag == streamFilterThinkClose {
 			f.buffer = f.buffer[endIdx+1:]
 			continue
 		}
@@ -118,12 +124,31 @@ func (f *streamFilter) Reset() {
 	f.buffer = ""
 }
 
+// dropOrphanThinking removes everything up to a </think> that closes no <think>.
+// The chat template of some models opens the block in the prompt, so the reply
+// is "reasoning</think>answer" with no opening tag. Keeping the text before it
+// stored a draft and a thought as part of the answer.
+func dropOrphanThinking(s string) string {
+	for {
+		closeIdx := strings.Index(s, streamFilterThinkClose)
+		if closeIdx == -1 {
+			return s
+		}
+		if openIdx := strings.Index(s, streamFilterThinkOpen); openIdx != -1 && openIdx < closeIdx {
+			return s
+		}
+		s = s[closeIdx+len(streamFilterThinkClose):]
+	}
+}
+
 // sanitizeAssistantText applies the live stream's filter to a complete answer:
 // <think> blocks (an unterminated one included) and tool-call markup are removed,
-// so the stored and Telegram text equals what the web client was shown.
+// so the stored and Telegram text equals what the web client was shown. The one
+// difference is reasoning that ends in a </think> with no opening tag: the live
+// stream has already sent it, but it is not stored.
 func sanitizeAssistantText(s string) string {
 	f := &streamFilter{}
-	return strings.TrimSpace(f.Process(s) + f.Flush())
+	return strings.TrimSpace(f.Process(dropOrphanThinking(s)) + f.Flush())
 }
 
 func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (assistantContent string, toolCalls []openai.ToolCall, err error) {

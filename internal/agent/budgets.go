@@ -50,7 +50,10 @@ const (
 	// fixedPromptTokens reserves room for the system template and the tool
 	// definitions. Measured on 2026-11-01 with the llama-server tokenizer
 	// (Qwen3.5-9B): template 1402 tokens, tool definitions 831, together 2233.
-	fixedPromptTokens = 2500
+	// On 2026-11-02 the template grew by 389 tokens (the same tokenizer, the old
+	// and the new text rendered the same way: 1531 and 1920), so together they
+	// are now about 2620; the rest is the slack the first figure also had.
+	fixedPromptTokens = 2900
 
 	// toolFloorTokens is what the derived budgets leave free for tool results
 	// even when the conversation and the dynamic prompt are as large as they may
@@ -91,6 +94,12 @@ type budgets struct {
 	toolResultTokens    int
 	// thinking lets the model reason before it answers.
 	thinking bool
+	// The sampling settings sent with the chat requests. Zero is left out of the
+	// request, so the server's own value stays in force (what tests that build an
+	// Orchestrator without the configuration get).
+	temperature     float32
+	topP            float32
+	presencePenalty float32
 }
 
 // legacyBudgets are the built-in budgets for an unknown window.
@@ -116,6 +125,9 @@ func newBudgets(cfg *config.Config) budgets {
 		historyMessages:     cfg.LLMHistoryMessages,
 		toolResultTokens:    cfg.LLMToolResultTokens,
 		thinking:            cfg.LLMEnableThinking,
+		temperature:         cfg.LLMTemperature,
+		topP:                cfg.LLMTopP,
+		presencePenalty:     cfg.LLMPresencePenalty,
 	}
 
 	if b.contextTokens > 0 {

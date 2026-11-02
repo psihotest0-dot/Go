@@ -177,6 +177,40 @@ func TestIngestWorkerCancelsWhenTheFileRowIsGone(t *testing.T) {
 	assert.True(t, isCancelled(err), "got %v", err)
 }
 
+// A job queued before the file was deleted kept coming back for two weeks, wiped
+// the chunks of the deleted row and turned its "deleted" status into "failed".
+func TestIngestWorkerLeavesADeletedFileAlone(t *testing.T) {
+	e := newIngestEnv(t)
+	file := e.addFile(t, "book.txt", []byte("Първи ред на книгата. Втори ред на книгата."))
+	require.NoError(t, e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25)))
+	before := e.chunks(t, file.ID)
+	require.NotEmpty(t, before)
+	require.NoError(t, e.database.Queries.SoftDeleteIngestedFile(context.Background(),
+		db.SoftDeleteIngestedFileParams{ID: file.ID, UserID: e.user.ID}))
+
+	err := e.worker.Work(context.Background(), ingestJob(file.ID, 13, 25))
+
+	require.Error(t, err)
+	assert.True(t, isCancelled(err), "a deleted file will not come back, so no retries: %v", err)
+	assert.Equal(t, "deleted", e.status(t, file.ID))
+	assert.Equal(t, before, e.chunks(t, file.ID), "the chunks are what an undo of the delete needs")
+}
+
+// With the original gone every retry fails the same way (the live log showed 13
+// of them for one deleted book), so the first failure is the last.
+func TestIngestWorkerCancelsWhenTheOriginalIsMissing(t *testing.T) {
+	e := newIngestEnv(t)
+	file := e.addFile(t, "book.txt", []byte("Първи ред на книгата."))
+	require.NoError(t, os.Remove(file.LocalPath))
+
+	err := e.worker.Work(context.Background(), ingestJob(file.ID, 1, 25))
+
+	require.Error(t, err)
+	assert.True(t, isCancelled(err), "nothing will bring the file back, so no retries: %v", err)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	assert.Equal(t, "failed", e.status(t, file.ID))
+}
+
 // On shutdown River cancels the context and runs the job again later. The file
 // must not be shown as "failed" in between.
 func TestIngestWorkerKeepsProcessingStateWhenInterrupted(t *testing.T) {

@@ -192,6 +192,34 @@ func TestGenerateResponseSendsAnswerLimitAndThinkingSwitch(t *testing.T) {
 	}
 }
 
+func TestGenerateResponseSendsTheSamplingSettings(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  config.Config
+	}{
+		{name: "none configured (left to the server)", cfg: config.Config{}},
+		{name: "all configured", cfg: config.Config{LLMTemperature: 0.7, LLMTopP: 0.8, LLMPresencePenalty: 0.6}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("ok")}}
+			o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
+			tt.cfg.LLMContextTokens = 16384
+			o.budgets = newBudgets(&tt.cfg)
+
+			_, _, _, err := o.generateResponse(context.Background(),
+				[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
+			require.NoError(t, err)
+
+			require.Len(t, mock.Requests, 1)
+			req := mock.Requests[0]
+			assert.Equal(t, tt.cfg.LLMTemperature, req.Temperature)
+			assert.Equal(t, tt.cfg.LLMTopP, req.TopP)
+			assert.Equal(t, tt.cfg.LLMPresencePenalty, req.PresencePenalty)
+		})
+	}
+}
+
 func TestGenerateResponseWithoutKnownWindowSendsNoAnswerLimit(t *testing.T) {
 	mock := &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("ok")}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{})

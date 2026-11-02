@@ -162,21 +162,80 @@ func TestLoadLLMEnableThinking(t *testing.T) {
 		env  string
 		want bool
 	}{
-		{env: "", want: true},
+		{env: "", want: false},
 		{env: "true", want: true},
 		{env: "TRUE", want: true},
 		{env: "1", want: true},
+		{env: " true ", want: true},
 		{env: "false", want: false},
 		{env: "False", want: false},
 		{env: "0", want: false},
 		{env: " false ", want: false},
-		{env: "maybe", want: true},
+		{env: "maybe", want: false},
 	}
 	for _, tt := range tests {
 		t.Run("["+tt.env+"]", func(t *testing.T) {
 			t.Setenv("LLM_ENABLE_THINKING", tt.env)
 			if got := Load().LLMEnableThinking; got != tt.want {
 				t.Fatalf("LLMEnableThinking = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadLLMSamplingDefaultsAndRanges(t *testing.T) {
+	t.Setenv("LLM_TEMPERATURE", "")
+	t.Setenv("LLM_TOP_P", "")
+	cfg := Load()
+	if cfg.LLMTemperature != 0.7 || cfg.LLMTopP != 0.8 {
+		t.Fatalf("defaults must be temperature 0.7 and top_p 0.8, got %v and %v", cfg.LLMTemperature, cfg.LLMTopP)
+	}
+
+	tests := []struct {
+		name, env, value string
+		get              func(*Config) float32
+		want             float32
+	}{
+		{"temperature set", "LLM_TEMPERATURE", "0.4", func(c *Config) float32 { return c.LLMTemperature }, 0.4},
+		{"temperature zero is allowed", "LLM_TEMPERATURE", "0", func(c *Config) float32 { return c.LLMTemperature }, 0},
+		{"temperature too high", "LLM_TEMPERATURE", "3", func(c *Config) float32 { return c.LLMTemperature }, 0.7},
+		{"temperature negative", "LLM_TEMPERATURE", "-1", func(c *Config) float32 { return c.LLMTemperature }, 0.7},
+		{"temperature garbage", "LLM_TEMPERATURE", "топло", func(c *Config) float32 { return c.LLMTemperature }, 0.7},
+		{"top_p set", "LLM_TOP_P", "0.95", func(c *Config) float32 { return c.LLMTopP }, 0.95},
+		{"top_p zero is not a nucleus", "LLM_TOP_P", "0", func(c *Config) float32 { return c.LLMTopP }, 0.8},
+		{"top_p above one", "LLM_TOP_P", "1.5", func(c *Config) float32 { return c.LLMTopP }, 0.8},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.env, tt.value)
+			if got := tt.get(Load()); got != tt.want {
+				t.Fatalf("%s=%q gave %v, want %v", tt.env, tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadLLMPresencePenalty(t *testing.T) {
+	tests := []struct {
+		env  string
+		want float32
+	}{
+		{env: "", want: 0},
+		{env: "0", want: 0},
+		{env: "0.5", want: 0.5},
+		{env: " 1.5 ", want: 1.5},
+		{env: "2", want: 2},
+		{env: "-0.5", want: 0},
+		{env: "2.1", want: 0},
+		{env: "NaN", want: 0},
+		{env: "Inf", want: 0},
+		{env: "много", want: 0},
+	}
+	for _, tt := range tests {
+		t.Run("["+tt.env+"]", func(t *testing.T) {
+			t.Setenv("LLM_PRESENCE_PENALTY", tt.env)
+			if got := Load().LLMPresencePenalty; got != tt.want {
+				t.Fatalf("LLMPresencePenalty = %v, want %v", got, tt.want)
 			}
 		})
 	}

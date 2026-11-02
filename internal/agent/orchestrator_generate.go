@@ -40,8 +40,8 @@ type streamResult struct {
 	toolCalls []openai.ToolCall
 }
 
-// chatRequest builds one chat completion request with the answer limit and the
-// thinking switch of the configured budgets.
+// chatRequest builds one chat completion request with the answer limit, the
+// thinking switch and the sampling settings of the configuration.
 func (o *Orchestrator) chatRequest(messages []openai.ChatCompletionMessage, tools []openai.Tool) openai.ChatCompletionRequest {
 	limits := o.limits()
 	return openai.ChatCompletionRequest{
@@ -49,6 +49,11 @@ func (o *Orchestrator) chatRequest(messages []openai.ChatCompletionMessage, tool
 		Stream:    true,
 		Tools:     tools,
 		MaxTokens: limits.answerTokens,
+		// A zero value is left out of the request (omitempty), so the server's own
+		// setting stays in force.
+		Temperature:     limits.temperature,
+		TopP:            limits.topP,
+		PresencePenalty: limits.presencePenalty,
 		// Sent explicitly so the behaviour does not depend on how the model
 		// server was started.
 		ChatTemplateKwargs: map[string]any{"enable_thinking": limits.thinking},
