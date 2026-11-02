@@ -73,7 +73,6 @@
 ### `internal/llm`
 * **`LemonadeClient`** (`client.go`): OpenAI-съвместим клиент към LLM сървъра — `Chat`, `ChatStream`, `ChatWithJSONSchema` (суров HTTP път). Ограничител на слотовете (`limiter.go`): интерактивните заявки изпреварват фоновите, а фоновата работа (резюмета, консолидация, дистилация) ползва най-много `LLM_BACKGROUND_SLOTS`. Повторения с нарастващо изчакване само за грешки, които могат да минат (`retry.go`). Метрики за токени и чакане.
 * **`HTTPEmbedder`** (`embedder.go`): клиент към embedder-а — `EmbedTexts` с кеш в `embedding_cache` (ключ = модел + текст; едно четене и един запис на партида), `CheckModel` (отказва работа с друг модел или размер). Таймаут `EMBEDDER_TIMEOUT_SECONDS`.
-* `ContextManager` (`context_manager.go`) е декоратор за подрязване на история; **в момента не е включен** никъде в приложението — реже се в `agent`.
 
 ### `internal/prompts`
 Шаблони, компилирани в бинарния файл (`go:embed`): `chat_system.tmpl`, `memory_reflector.tmpl`, `rolling_summary.tmpl`, `rolling_summary_input.tmpl`. Файлове със същите имена в `PROMPTS_DIR` ги заместват; при старт всички се зареждат предварително.
