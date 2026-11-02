@@ -149,7 +149,10 @@ func (tm *TemplateManager) getTemplate(name string) (*template.Template, error) 
 		return nil, fmt.Errorf("failed to load template %s: %w", name, loadErr)
 	}
 
-	newTmpl, err := template.New(name).Parse(string(content))
+	// The templates are compiled in as they are on disk. A checkout with CRLF line
+	// endings (git's autocrlf on Windows) would put "\r\n" into every prompt: about
+	// 120 more tokens and a prompt that differs from the one built on Linux.
+	newTmpl, err := template.New(name).Parse(strings.ReplaceAll(string(content), "\r\n", "\n"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse template %s: %w", name, err)
 	}

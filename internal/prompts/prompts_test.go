@@ -24,6 +24,33 @@ func TestEveryEmbeddedTemplateLoads(t *testing.T) {
 	require.NoError(t, manager.Preload(names...))
 }
 
+// The prompt is the same whatever the line endings of the checkout were: on
+// Windows git turns the templates into CRLF files and they are embedded as they
+// are, which put 111 carriage returns (about 120 tokens) into the chat prompt.
+func TestRenderedPromptsHaveNoCarriageReturns(t *testing.T) {
+	manager := NewTemplateManager("")
+	data := map[string]interface{}{
+		"CurrentDate": "2026-11-02 10:00:00", "Rules": []string{"правило"}, "TopMemories": []string{"факт"},
+		"RollingSummary": "обобщение", "RelevantMemories": []string{"спомен"}, "Chunks": []string{"откъс"},
+		"PreviousSummary": "старо", "MessagesText": "нови",
+	}
+	for _, name := range TemplateNames() {
+		out, err := manager.Render(name, data)
+		require.NoError(t, err, name)
+		assert.NotContains(t, out, "\r", name)
+	}
+}
+
+func TestOverrideWithCRLFRendersWithoutCarriageReturns(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "rolling_summary.tmpl"), []byte("първи ред\r\nвтори ред\r\n"), 0o644))
+
+	out, err := NewTemplateManager(dir).Render("rolling_summary.tmpl", nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "първи ред\nвтори ред\n", out)
+}
+
 func TestEmbeddedTemplatesRender(t *testing.T) {
 	manager := NewTemplateManager("")
 
