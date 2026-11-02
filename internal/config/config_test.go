@@ -355,7 +355,7 @@ func TestLoadMetricsLogMaxMB(t *testing.T) {
 }
 
 func TestFileCategories(t *testing.T) {
-	for _, name := range []string{"medicine", "economics", "programming", "law", "psychology", "literature", "general"} {
+	for _, name := range []string{"medicine", "economics", "programming", "law", "psychology", "literature", "philosophy", "self_help", "history", "general"} {
 		if !IsFileCategory(name) {
 			t.Errorf("%q should be a category", name)
 		}

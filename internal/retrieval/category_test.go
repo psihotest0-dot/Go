@@ -30,6 +30,19 @@ func TestCategoryManager_Initialize(t *testing.T) {
 	assert.Len(t, centroid, config.VectorDimension)
 }
 
+// A category in config.FileCategories without example sentences would never be
+// chosen for a file and the file would silently fall back to "general".
+func TestEveryFileCategoryHasACentroid(t *testing.T) {
+	cm, err := retrieval.NewCategoryManager(context.Background(), &llm.MockEmbedder{})
+	require.NoError(t, err)
+
+	for _, category := range config.FileCategories {
+		_, ok := cm.GetCentroid(category)
+		assert.True(t, ok, "category %q has no example sentences in category.go", category)
+	}
+	assert.Len(t, cm.GetAllCentroids(), len(config.FileCategories))
+}
+
 func TestCategoryManager_Initialize_EmbedderError(t *testing.T) {
 	embedder := &llm.MockEmbedderWithConfig{Err: fmt.Errorf("embed error")}
 	_, err := retrieval.NewCategoryManager(context.Background(), embedder)
@@ -52,7 +65,7 @@ func TestCategoryManager_Initialize_MismatchVectorsCount(t *testing.T) {
 	// Custom mock to return fewer vectors
 	embedder := &CustomEmbedder{}
 	_, err := retrieval.NewCategoryManager(context.Background(), embedder)
-	require.ErrorContains(t, err, "expected 42 vectors, got 1") // 3 * 7 = 21
+	require.ErrorContains(t, err, fmt.Sprintf("expected %d vectors, got 1", 6*len(config.FileCategories))) // 6 example sentences per category
 }
 
 type CustomEmbedder struct{}

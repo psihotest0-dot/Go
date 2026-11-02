@@ -25,7 +25,7 @@ const DefaultEmbedModel = "intfloat/multilingual-e5-small"
 // classification (retrieval.CategoryManager) chooses from and the ones the
 // category endpoint accepts. DefaultFileCategory is what a file gets when no
 // other one fits.
-var FileCategories = []string{"medicine", "economics", "programming", "law", "psychology", "literature", DefaultFileCategory}
+var FileCategories = []string{"medicine", "economics", "programming", "law", "psychology", "literature", "philosophy", "self_help", "history", DefaultFileCategory}
 
 const DefaultFileCategory = "general"
 

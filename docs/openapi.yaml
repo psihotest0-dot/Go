@@ -445,7 +445,7 @@ paths:
             text/plain:
               schema:
                 type: string
-                example: 'category must be one of: medicine, economics, programming, law, psychology, literature, general'
+                example: 'category must be one of: medicine, economics, programming, law, psychology, literature, philosophy, self_help, history, general'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -863,6 +863,9 @@ components:
         - law
         - psychology
         - literature
+        - philosophy
+        - self_help
+        - history
         - general
     IngestedFile:
       type: object

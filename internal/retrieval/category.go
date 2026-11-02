@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/llm"
-"go-monolith/internal/config"
 )
 
 // CategoryManager holds one centroid per file category and chooses the category of
@@ -86,6 +86,30 @@ func (cm *CategoryManager) initializeCentroids(ctx context.Context) error {
 			"The novel explores the complex relationships between the characters against the backdrop of historical cataclysms.",
 			"Symbolist poetry is characterized by rich metaphors and musicality of the verse.",
 			"The author uses stream of consciousness to reveal the inner world of the main character.",
+		},
+		"philosophy": {
+			"Стоиците учат, че човек трябва да приема спокойно нещата, които не зависят от него, и да се грижи за добродетелта си.",
+			"Екзистенциалната философия поставя въпроса за смисъла на живота и за свободата на избора.",
+			"Етиката разглежда какво е добро и справедливо и как трябва да постъпваме спрямо другите.",
+			"The Stoics teach that one should calmly accept what is not up to us and take care of one's own virtue.",
+			"Existentialist philosophy asks about the meaning of life and the freedom of choice.",
+			"Ethics examines what is good and just and how we ought to treat others.",
+		},
+		"self_help": {
+			"Ако поставяте ясни цели и ги следвате всеки ден, ще изградите навици, които променят живота ви.",
+			"Историята на този човек ни вдъхновява да не се предаваме пред трудностите и да вярваме в себе си.",
+			"Принципите, по които живея и работя, ми помагат да вземам по-добри решения и да управлявам екипа си.",
+			"If you set clear goals and pursue them every day, you will build habits that change your life.",
+			"This person's story inspires us not to give up in the face of difficulties and to believe in ourselves.",
+			"The principles by which I live and work help me make better decisions and lead my team.",
+		},
+		"history": {
+			"Империята се разпада след поредица от войни, въстания и икономически кризи през четвърти век.",
+			"Биографията проследява живота на изобретателя от детството му до създаването на първата компания.",
+			"Революцията промени политическия строй и обществото в страната за няколко години.",
+			"The empire collapsed after a series of wars, uprisings and economic crises in the fourth century.",
+			"The biography follows the life of the inventor from his childhood to the founding of his first company.",
+			"The revolution changed the political system and the society of the country within a few years.",
 		},
 		"general": {
 			"Днес времето ще бъде предимно слънчево с леки превалявания в следобедните часове.",
