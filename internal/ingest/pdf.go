@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -396,7 +397,16 @@ feed:
 }
 
 // recogniseOne runs the OCR of one page, holding one of the process-wide slots.
-func (e *PDFExtractor) recogniseOne(ctx context.Context, pdfPath string, page int) (string, error) {
+func (e *PDFExtractor) recogniseOne(ctx context.Context, pdfPath string, page int) (text string, err error) {
+	// The page workers are goroutines of their own, outside River's recovery: a
+	// panic in the rasteriser or OCR code would end the whole process. It becomes
+	// the failure of this page instead, which the caller already counts.
+	defer func() {
+		if rcv := recover(); rcv != nil {
+			slog.Error("panic while recognising a PDF page", slog.Int("page", page), slog.Any("panic", rcv), slog.String("stack", string(debug.Stack())))
+			text, err = "", fmt.Errorf("OCR of page %d panicked: %v", page, rcv)
+		}
+	}()
 	release, err := acquireOCR(ctx)
 	if err != nil {
 		return "", err

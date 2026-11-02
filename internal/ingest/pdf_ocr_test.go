@@ -360,3 +360,25 @@ func TestPDFTextHasItsBrokenWordsJoined(t *testing.T) {
 		t.Errorf("the saved page was changed: %q", saved)
 	}
 }
+
+// The page workers are goroutines outside River's recovery: a panic in one of
+// them would end the whole process, not just this book. recogniseOne turns it
+// into the failure of that page, which the extractor already counts.
+func TestRecogniseOneTurnsAPanicIntoAPageError(t *testing.T) {
+	e := NewPDFExtractor()
+	e.ocrPageFn = func(context.Context, string, int) (string, error) { panic("tesseract bindings blew up") }
+
+	text, err := e.recogniseOne(context.Background(), "book.pdf", 7)
+
+	if err == nil || !strings.Contains(err.Error(), "page 7 panicked") {
+		t.Fatalf("err = %v, want a 'page 7 panicked' error", err)
+	}
+	if text != "" {
+		t.Errorf("text = %q, want empty", text)
+	}
+	// The OCR slot was released: the next page is not stuck behind the panic.
+	e.ocrPageFn = func(context.Context, string, int) (string, error) { return "ok", nil }
+	if got, err := e.recogniseOne(context.Background(), "book.pdf", 8); err != nil || got != "ok" {
+		t.Errorf("after the panic: %q, %v", got, err)
+	}
+}

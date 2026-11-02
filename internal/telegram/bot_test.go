@@ -473,3 +473,38 @@ func TestParseCommand(t *testing.T) {
 		assert.Equal(t, tc.args, args, tc.in)
 	}
 }
+
+// A turn runs in a goroutine of its own, outside the HTTP recovery middleware
+// and River. Without recoverTurn a panic in it (a bug in the model client, a
+// nil map in a tool) ends the whole backend: this test would crash the test
+// binary instead of failing.
+func TestAPanicInOneTurnDoesNotTakeTheProcessDown(t *testing.T) {
+	f := newFixture(42)
+	f.processor.onCall = func(context.Context, uuid.UUID, agent.ChatRequest) {
+		panic("model client blew up")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer f.bot.recoverTurn(42)
+		f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+	}()
+	<-done
+
+	require.Len(t, f.sender.texts(), 1, "the user is told something went wrong instead of getting silence")
+	assert.Contains(t, f.sender.texts()[0], "грешка")
+
+	// The bot keeps serving the same chat afterwards.
+	f.processor.onCall = nil
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Пак здравей"))
+	assert.Equal(t, "отговор", f.sender.texts()[len(f.sender.texts())-1])
+}
+
+func TestRecoverTurnDoesNothingWithoutAPanic(t *testing.T) {
+	f := newFixture(42)
+
+	func() { defer f.bot.recoverTurn(42) }()
+
+	assert.Empty(t, f.sender.texts())
+}

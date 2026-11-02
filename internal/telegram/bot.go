@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -209,11 +210,24 @@ func (b *Bot) Start(ctx context.Context) {
 				b.wg.Add(1)
 				go func() {
 					defer b.wg.Done()
+					defer b.recoverTurn(update.Message.Chat.ID)
 					b.handleMessage(ctx, update.Message)
 				}()
 			}
 		}
 	}
+}
+
+// recoverTurn stops a panic in one conversation from taking the whole backend
+// down: the goroutine of a turn is not covered by the HTTP recovery middleware
+// or by River. It must be deferred directly so that recover works.
+func (b *Bot) recoverTurn(chatID int64) {
+	rcv := recover()
+	if rcv == nil {
+		return
+	}
+	slog.Error("panic while handling a Telegram message", "panic", rcv, "chat_id", chatID, "stack", string(debug.Stack()))
+	b.sendReply(chatID, "Възникна грешка. Опитай отново.")
 }
 
 // waitForTurns gives in-flight turns a short time to notice the cancelled context.
