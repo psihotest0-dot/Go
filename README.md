@@ -8,7 +8,7 @@ A high-performance Go monolith backing an AI Agent service, providing vector sim
 * **SQL Query Builder**: `sqlc` (with `pgvector-go` overriding PostgreSQL vector types)
 * **Migrations**: `goose`
 * **Job Queue / Background Tasks**: River (PostgreSQL-backed, replacing Redis)
-* **LLM Integration**: Standard OpenAI Go SDK pointing to a custom "Lemonade" provider (OpenAI-compatible server; the tuned setup is Qwen 3.5 9B with a 32k context split into two 16k slots)
+* **LLM Integration**: Standard OpenAI Go SDK pointing to a custom "Lemonade" provider (OpenAI-compatible server; the tuned setup is Gemma 4 12B instruction-tuned, `Gemma-4-12B-it-GGUF`, with a 32k context split into two 16k slots; Qwen 3.5 9B was used before and still works)
 * **Embedding Model**: `intfloat/multilingual-e5-small` via FastAPI Python sidecar (CPU only)
 * **Chat front ends**: the Flet desktop client (separate repository) and an optional Telegram bot
 * **Observability**: Prometheus & Grafana (JSON logging via standard `slog`)
@@ -97,7 +97,7 @@ The backend reads the environment, and a `.env` file in the working directory is
 | `LLM_CONTEXT_TOKENS` | `0` (unknown) | Context window of **one request** = server context / slots (`32768 / 2 = 16384`). While it is unknown the agent keeps conservative budgets sized for ~8k; set it and every budget below is derived from it. |
 | `LLM_ANSWER_TOKENS`, `LLM_PROMPT_CONTEXT_TOKENS`, `LLM_HISTORY_TOKENS`, `LLM_HISTORY_MESSAGES`, `LLM_TOOL_RESULT_TOKENS` | `0` (derive) | Override a single budget: the answer reserve, the dynamic part of the system prompt, the replayed history (tokens / messages) and all tool results of a round. |
 | `LLM_ENABLE_THINKING` | `false` | Let the model reason before it answers. Off by default: Qwen 3.5 9B leaked its reasoning into the chat with it on. The reasoning is hidden in the clients; turning it on costs time and tokens. |
-| `LLM_TEMPERATURE` | `0.7` | Temperature of every chat request (0 to 2). Lemonade starts Qwen 3.5 with 1.0 (the model's thinking-mode value); at that setting the 9B model made roughly 2.5 times as many non-words in Bulgarian as at 0.7. |
+| `LLM_TEMPERATURE` | `0.7` | Temperature of every chat request (0 to 2). Lemonade starts Qwen 3.5 and Gemma 4 with 1.0; measured on 2026-11-02 in Bulgarian conversations, 0.7 with `LLM_TOP_P=0.8` gave far fewer non-words (Qwen 3.5 9B: about 2.5 times fewer; Gemma 4 12B: about 5 times fewer) and fewer closing questions. |
 | `LLM_TOP_P` | `0.8` | Top-p of every chat request (0.01 to 1). |
 | `LLM_PRESENCE_PENALTY` | `0` (off) | Presence penalty sent with every chat request (0 to 2); `0` is not sent. Tried at 0.5 and 1.0 on 2026-11-02: no clear effect on the replies, so it stays off. |
 | `ENABLE_ADAPTIVE_SKIP` | `true` | Skip retrieval for messages that obviously do not need it. |
@@ -109,6 +109,16 @@ The backend reads the environment, and a `.env` file in the working directory is
 | `DEEPSEEK_API_KEY` | empty | Key of the paid search service behind `web_search` / `web_fetch`. Without it the web tools report that they are unavailable. |
 | `PDFTOTEXT_PATH`, `PDFTOPPM_PATH`, `PDFINFO_PATH` | auto | Poppler executables. On Windows an installed Poppler (`C:\poppler*\Library\bin`) is found by itself and preferred over whatever is first in `PATH` — Git for Windows ships Xpdf's `pdftotext`, which is a different program. Set these when Poppler lives elsewhere. |
 | `OCR_DPI`, `OCR_CONCURRENCY` | `250`, `6` | Resolution and number of pages recognized at once when OCR'ing scans. |
+
+### The model server (Lemonade)
+
+These settings live in Lemonade, not in this backend. They are what the chat was tuned and measured with on 2026-11-02: `Gemma-4-12B-it-GGUF` on a 16 GB GPU with 32 GB of RAM.
+
+* **Context.** `ctx_size` 32768 with `--parallel 2` gives 16384 tokens per slot, which is what `LLM_CONTEXT_TOKENS` assumes. Lemonade's automatic size can come out smaller (31022 gave 15616 per slot). After loading, look for `n_ctx_slot` in Lemonade's log (`%TEMP%\lemonade-server.log`).
+* **Options per model** go through `POST /v1/models/<id>/options`, for example `{"ctx_size": 32768, "llamacpp_args": "--no-mmproj-offload --cache-ram 0 --ctx-checkpoints 2"}`. The model's own sampler defaults from Lemonade stay in force that way; a `llamacpp_args` sent with the load request replaces them.
+* `--no-mmproj-offload` keeps the vision projector off the GPU (the chat sends no images).
+* `--cache-ram 0 --ctx-checkpoints 2` stop llama.cpp from keeping prompt snapshots in RAM. Without them the server grew from 7.8 to 15-17 GB of RAM during a short test; with them it stays at 8.5 GB and the speed is the same (about 62 tokens/s, a reply in about 1.7 s).
+* **One model at a time.** The 12B takes 11.9 GB of the GPU and the 9B 9.7 GB, so they do not fit together. Set `LLM_MODEL`: when it is empty the backend takes the first model by name from `/v1/models`, and a newly downloaded model can change that.
 
 Scripts and tests: `TEST_DATABASE_URL` (integration tests; the database name must contain `test`), `BACKUP_DIR`, `BACKUP_KEEP` (backups), `GRAFANA_ADMIN_PASSWORD` (required by `docker compose`).
 

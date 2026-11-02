@@ -9,7 +9,7 @@
 ```
  Flet клиент ─┐                     ┌─ PostgreSQL 15 + pgvector   (Docker, том go_pgdata)
  Telegram бот ┼─► main.exe (Go) ────┼─ embedder (FastAPI, E5-small, CPU)   (Docker)
- cmd/* (CLI) ─┘   на хоста         ├─ LLM сървър (Lemonade, Qwen 3.5 9B, 2 слота)
+ cmd/* (CLI) ─┘   на хоста         ├─ LLM сървър (Lemonade, Gemma 4 12B, 2 слота)
                                     └─ Tesseract, Poppler (процеси на хоста)
  Prometheus + Grafana (Docker) четат /metrics
 ```
