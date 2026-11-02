@@ -178,7 +178,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	if o.adaptiveSkip {
 		skip = shouldSkipRetrieval(req.Content)
 		if skip {
-			_ = o.writeTrace(ctx, userID, req.SessionID, "adaptive_skip", map[string]interface{}{
+			o.trace(ctx, userID, req.SessionID, "adaptive_skip", map[string]interface{}{
 				"query": req.Content,
 			})
 			slog.Info("Adaptive skip triggered for query", "query", req.Content)
@@ -196,7 +196,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		// not cost the user their answer, so the error is logged and the chat
 		// continues without retrieved context.
 		if searchErr != nil {
-			slog.Warn("Failed to search for context", "error", searchErr, "session_id", req.SessionID)
+			slog.WarnContext(ctx, "Failed to search for context", "error", searchErr, "session_id", req.SessionID)
 		}
 	}
 
@@ -247,7 +247,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	// failing the whole request.
 	rules, err := o.db.Queries.GetGlobalRules(ctx, userID)
 	if err != nil {
-		slog.Error("failed to get global rules", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to get global rules", "err", err, "session_id", req.SessionID)
 	} else {
 		chatCtx.Rules = rules
 	}
@@ -259,7 +259,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		Limit:  15,
 	})
 	if err != nil {
-		slog.Error("failed to get top memories", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to get top memories", "err", err, "session_id", req.SessionID)
 	}
 	for _, m := range topMemoriesDb {
 		chatCtx.TopMemories = append(chatCtx.TopMemories, m.Content)
@@ -272,7 +272,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		Limit:     int32(o.limits().historyMessages),
 	})
 	if err != nil {
-		slog.Error("failed to get messages", "err", err)
+		slog.ErrorContext(ctx, "failed to get messages", "err", err)
 		return chatCtx, memoryIDs, err
 	}
 

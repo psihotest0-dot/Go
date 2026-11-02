@@ -69,23 +69,23 @@ func NewRetrievalService(database *db.Database, embedder llm.Embedder) *Retrieva
 
 func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, content string, importance int, status string, metadata pqtype.NullRawMessage) (db.Memory, error) {
 	if strings.TrimSpace(content) == "" {
-		slog.Error("cannot create memory with empty content")
+		slog.ErrorContext(ctx, "cannot create memory with empty content")
 		return db.Memory{}, fmt.Errorf("cannot create memory with empty content")
 	}
 
 	// Generate embeddings
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{content}, false)
 	if err != nil {
-		slog.Error("failed to generate embedding", slog.Any("error", err))
+		slog.ErrorContext(ctx, "failed to generate embedding", slog.Any("error", err))
 		return db.Memory{}, fmt.Errorf("failed to generate embedding: %w", err)
 	}
 
 	if len(vectors) == 0 {
-		slog.Error("no embedding returned")
+		slog.ErrorContext(ctx, "no embedding returned")
 		return db.Memory{}, fmt.Errorf("no embedding returned")
 	}
 	if len(vectors[0]) != config.VectorDimension {
-		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
+		slog.ErrorContext(ctx, "invalid vector dimension", slog.Int("dim", len(vectors[0])))
 		return db.Memory{}, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
 	}
 
@@ -107,7 +107,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		if errors.Is(err, db.ErrMemoryExists) {
 			return mem, err
 		}
-		slog.Error("failed to create memory", slog.Any("error", err))
+		slog.ErrorContext(ctx, "failed to create memory", slog.Any("error", err))
 		return db.Memory{}, fmt.Errorf("failed to create memory: %w", err)
 	}
 
@@ -129,15 +129,15 @@ type SearchResult struct {
 func (s *RetrievalService) embedQuery(ctx context.Context, query string) ([]float32, error) {
 	vectors, err := s.embedder.EmbedTexts(ctx, []string{query}, true)
 	if err != nil {
-		slog.Warn("embedder failed, falling back to text-only search", "error", err)
+		slog.WarnContext(ctx, "embedder failed, falling back to text-only search", "error", err)
 		return nil, nil
 	}
 	if len(vectors) == 0 {
-		slog.Error("embedder returned empty result")
+		slog.ErrorContext(ctx, "embedder returned empty result")
 		return nil, nil
 	}
 	if len(vectors[0]) != config.VectorDimension {
-		slog.Error("invalid vector dimension", slog.Int("dim", len(vectors[0])))
+		slog.ErrorContext(ctx, "invalid vector dimension", slog.Int("dim", len(vectors[0])))
 		return nil, fmt.Errorf("invalid vector dimension: %d", len(vectors[0]))
 	}
 	return vectors[0], nil
@@ -155,7 +155,7 @@ func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID,
 			MatchCount: int32(limit),
 		})
 		if err != nil {
-			slog.Error("failed to search text memories during fallback", slog.Any("error", err))
+			slog.ErrorContext(ctx, "failed to search text memories during fallback", slog.Any("error", err))
 			return nil, fmt.Errorf("failed to search text memories during fallback: %w", err)
 		}
 		for _, m := range rows {
@@ -172,7 +172,7 @@ func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID,
 		MinTextSim: db.SearchMinTextSimilarity,
 	})
 	if err != nil {
-		slog.Error("failed to search hybrid memories", slog.Any("error", err))
+		slog.ErrorContext(ctx, "failed to search hybrid memories", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to search hybrid memories: %w", err)
 	}
 	for _, row := range rows {
@@ -200,7 +200,7 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 			return err
 		})
 		if err != nil {
-			slog.Error("failed to search text chunks during fallback", slog.Any("error", err))
+			slog.ErrorContext(ctx, "failed to search text chunks during fallback", slog.Any("error", err))
 			return nil, fmt.Errorf("failed to search text chunks during fallback: %w", err)
 		}
 		for _, m := range rows {
@@ -224,7 +224,7 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 		return err
 	})
 	if err != nil {
-		slog.Error("failed to search hybrid chunks", slog.Any("error", err))
+		slog.ErrorContext(ctx, "failed to search hybrid chunks", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to search hybrid chunks: %w", err)
 	}
 	for _, row := range rows {
@@ -289,7 +289,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	if queryVec != nil {
 		concepts, themes, err = s.searchConcepts(ctx, userID, queryVec)
 		if err != nil {
-			slog.Warn("failed to search concept chunks", "error", err)
+			slog.WarnContext(ctx, "failed to search concept chunks", "error", err)
 		}
 	}
 
@@ -374,7 +374,7 @@ func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUI
 		var conceptErr error
 		conceptChunks, _, conceptErr = s.searchConcepts(childCtx, userID, queryVec)
 		if conceptErr != nil {
-			slog.Warn("failed to search concept chunks", "error", conceptErr)
+			slog.WarnContext(ctx, "failed to search concept chunks", "error", conceptErr)
 		}
 		return nil
 	})
@@ -406,7 +406,7 @@ func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID
 	if queryVec != nil {
 		// The themes only widen the search; without them it still works.
 		if _, themes, err = s.searchConcepts(ctx, userID, queryVec); err != nil {
-			slog.Warn("failed to search concept chunks for themes", "error", err)
+			slog.WarnContext(ctx, "failed to search concept chunks for themes", "error", err)
 			themes = nil
 		}
 	}

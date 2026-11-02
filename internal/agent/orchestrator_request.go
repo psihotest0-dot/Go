@@ -39,7 +39,7 @@ func readJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		slog.Warn("request body too large",
+		slog.WarnContext(r.Context(), "request body too large",
 			slog.Int64("limit", tooLarge.Limit),
 			slog.String("path", r.URL.Path))
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
@@ -48,7 +48,7 @@ func readJSONBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 	// The decoding error quotes struct field names and byte offsets, so it is
 	// logged rather than echoed back to the caller.
-	slog.Warn("invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
+	slog.WarnContext(r.Context(), "invalid request body", slog.Any("error", err), slog.String("path", r.URL.Path))
 	http.Error(w, "invalid request body", http.StatusBadRequest)
 	return false
 }

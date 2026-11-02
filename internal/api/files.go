@@ -45,7 +45,7 @@ func (a *API) RegisterFileRoutes(mux *http.ServeMux, riverClient *river.Client[p
 		case http.MethodGet:
 			a.GetFilesHandler(w, r)
 		default:
-			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
@@ -102,7 +102,7 @@ func parseFileRequest(w http.ResponseWriter, r *http.Request) (uuid.UUID, bool, 
 		if errors.Is(err, errInvalidFileID) {
 			msg = "invalid file id"
 		}
-		slog.Warn(msg, slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), msg, slog.String("path", r.URL.Path))
 		http.Error(w, msg, http.StatusBadRequest)
 		return uuid.Nil, false, false
 	}
@@ -118,7 +118,7 @@ func (a *API) fileChunkCount(ctx context.Context, fileID, userID uuid.UUID) int6
 		UserID: userID,
 	})
 	if err != nil {
-		slog.Error("failed to count file chunks",
+		slog.ErrorContext(ctx, "failed to count file chunks",
 			slog.Any("error", err),
 			slog.String("file_id", fileID.String()))
 		return 0
@@ -129,14 +129,14 @@ func (a *API) fileChunkCount(ctx context.Context, fileID, userID uuid.UUID) int6
 func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 
 		userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 		if !ok {
-			slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+			slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -148,14 +148,14 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			var clientErr *clientError
 			if errors.As(err, &clientErr) {
 				if clientErr.status >= http.StatusInternalServerError {
-					slog.Error("failed to accept upload", slog.Any("error", err), slog.String("path", r.URL.Path))
+					slog.ErrorContext(r.Context(), "failed to accept upload", slog.Any("error", err), slog.String("path", r.URL.Path))
 				} else {
-					slog.Warn("rejected upload", slog.String("reason", clientErr.msg), slog.String("path", r.URL.Path))
+					slog.WarnContext(r.Context(), "rejected upload", slog.String("reason", clientErr.msg), slog.String("path", r.URL.Path))
 				}
 				http.Error(w, clientErr.msg, clientErr.status)
 				return
 			}
-			writeInternalError(w, "failed to accept upload", err)
+			writeInternalError(w, r, "failed to accept upload", err)
 			return
 		}
 
@@ -173,7 +173,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			FileHash: upload.hash,
 		})
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			writeInternalError(w, "failed to check existing file by hash", err)
+			writeInternalError(w, r, "failed to check existing file by hash", err)
 			return
 		}
 		if err == nil && existingFile.ID != uuid.Nil {
@@ -193,7 +193,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			LocalPath: upload.path,
 		})
 		if err != nil {
-			writeInternalError(w, "failed to record file in database", err)
+			writeInternalError(w, r, "failed to record file in database", err)
 			return
 		}
 
@@ -207,7 +207,7 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 				// upload back instead of answering 201 for work that will not
 				// happen; the deferred discard removes the spooled file.
 				a.deleteIngestRow(r.Context(), ingestedFile.ID, userID)
-				writeInternalError(w, "failed to enqueue ingest job", jobErr)
+				writeInternalError(w, r, "failed to enqueue ingest job", jobErr)
 				return
 			}
 		}
@@ -229,7 +229,7 @@ func (a *API) deleteIngestRow(ctx context.Context, id, userID uuid.UUID) {
 		ID:     id,
 		UserID: userID,
 	}); err != nil {
-		slog.Error("failed to roll back ingest row",
+		slog.ErrorContext(ctx, "failed to roll back ingest row",
 			slog.Any("error", err),
 			slog.String("file_id", id.String()))
 	}
@@ -237,21 +237,21 @@ func (a *API) deleteIngestRow(ctx context.Context, id, userID uuid.UUID) {
 
 func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	filesDB, err := a.db.Queries.GetIngestedFiles(r.Context(), userID)
 	if err != nil {
-		slog.Error("failed to get files", slog.Any("error", err))
+		slog.ErrorContext(r.Context(), "failed to get files", slog.Any("error", err))
 		http.Error(w, "failed to get files", http.StatusInternalServerError)
 		return
 	}
@@ -260,7 +260,7 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 	// file, so a large library stays a constant number of round trips.
 	chunkCounts, err := a.db.Queries.GetUserChunkCountsByFile(r.Context(), userID)
 	if err != nil {
-		slog.Error("failed to get file chunk counts", slog.Any("error", err))
+		slog.ErrorContext(r.Context(), "failed to get file chunk counts", slog.Any("error", err))
 		http.Error(w, "failed to get files", http.StatusInternalServerError)
 		return
 	}
@@ -286,7 +286,7 @@ func (a *API) GetFilesHandler(w http.ResponseWriter, r *http.Request) {
 func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -297,14 +297,14 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if category {
 		// The category sub-resource is routed to its own handler.
-		slog.Warn("invalid path", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "invalid path", slog.String("path", r.URL.Path))
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
 
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.Warn("file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -312,7 +312,7 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	// Another user's file is answered exactly like a missing one: a 403 would tell
 	// which ids exist.
 	if file.UserID != userID {
-		slog.Warn("access to another user's file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "access to another user's file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -320,7 +320,7 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 	// A soft deleted row is kept so the delete can be undone, but it is gone as
 	// far as clients are concerned.
 	if file.DeletedAt.Valid {
-		slog.Warn("access to soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "access to soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -340,7 +340,7 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 			UserID: userID,
 		})
 		if err != nil {
-			slog.Error("failed to delete file from db", slog.Any("error", err))
+			slog.ErrorContext(r.Context(), "failed to delete file from db", slog.Any("error", err))
 			http.Error(w, "failed to delete file from db", http.StatusInternalServerError)
 			return
 		}
@@ -351,21 +351,21 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 		w.WriteHeader(http.StatusNoContent)
 	default:
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
 func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -375,7 +375,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !category {
-		slog.Warn("invalid path", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "invalid path", slog.String("path", r.URL.Path))
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
@@ -394,18 +394,18 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	// First verify the file exists and belongs to the user
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.Warn("file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 
 	if file.UserID != userID {
-		slog.Warn("access to another user's file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "access to another user's file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
 	if file.DeletedAt.Valid {
-		slog.Warn("category of a soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "category of a soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
 	}
@@ -416,7 +416,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 		UserID:   userID,
 	})
 	if err != nil {
-		slog.Error("failed to update file category", slog.Any("error", err))
+		slog.ErrorContext(r.Context(), "failed to update file category", slog.Any("error", err))
 		http.Error(w, "failed to update file category", http.StatusInternalServerError)
 		return
 	}
@@ -424,7 +424,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	// Fetch updated file to return
 	updatedFile, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.Error("failed to fetch updated file", slog.Any("error", err))
+		slog.ErrorContext(r.Context(), "failed to fetch updated file", slog.Any("error", err))
 		http.Error(w, "failed to fetch updated file", http.StatusInternalServerError)
 		return
 	}

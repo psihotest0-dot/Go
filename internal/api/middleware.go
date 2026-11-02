@@ -268,14 +268,14 @@ func newUserMiddleware(users userUpserter) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			userIDStr := r.Header.Get("X-User-ID")
 			if userIDStr == "" {
-				slog.Warn("missing X-User-ID header", slog.String("path", r.URL.Path))
+				slog.WarnContext(r.Context(), "missing X-User-ID header", slog.String("path", r.URL.Path))
 				http.Error(w, "missing X-User-ID header", http.StatusUnauthorized)
 				return
 			}
 
 			userID, err := uuid.Parse(userIDStr)
 			if err != nil {
-				slog.Warn("invalid X-User-ID header", slog.String("header", userIDStr), slog.String("path", r.URL.Path))
+				slog.WarnContext(r.Context(), "invalid X-User-ID header", slog.String("header", truncateRunes(userIDStr, maxLoggedHeaderRunes)), slog.String("path", r.URL.Path))
 				http.Error(w, "invalid X-User-ID header", http.StatusBadRequest)
 				return
 			}
@@ -283,7 +283,7 @@ func newUserMiddleware(users userUpserter) func(http.Handler) http.Handler {
 			now := time.Now()
 			if !known.contains(userID, now) {
 				if err := users.UpsertUser(r.Context(), userID); err != nil {
-					slog.Error("failed to upsert user", slog.Any("error", err))
+					slog.ErrorContext(r.Context(), "failed to upsert user", slog.Any("error", err), slog.String("user_id", userID.String()))
 					http.Error(w, "internal server error", http.StatusInternalServerError)
 					return
 				}

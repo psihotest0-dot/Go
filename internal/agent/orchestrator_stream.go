@@ -154,7 +154,7 @@ func sanitizeAssistantText(s string) string {
 func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (assistantContent string, toolCalls []openai.ToolCall, err error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		slog.Error("streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
+		slog.ErrorContext(r.Context(), "streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return "", nil, errors.New("streaming unsupported")
 	}
@@ -166,7 +166,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	// on every path so it does not keep buffered content alive.
 	defer func() {
 		if rcv := recover(); rcv != nil {
-			slog.Error("panic in streamResponse", "panic", rcv, "session_id", sessionID)
+			slog.ErrorContext(r.Context(), "panic in streamResponse", "panic", rcv, "session_id", sessionID)
 			writeSSEError(w, flusher, "Internal error occurred")
 			assistantContent, toolCalls = "", nil
 			err = fmt.Errorf("panic while streaming response: %v", rcv)

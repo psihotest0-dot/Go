@@ -34,7 +34,7 @@ func (s *Service) listHandler(w http.ResponseWriter, r *http.Request) {
 
 	list, err := s.Pending(r.Context(), userID)
 	if err != nil {
-		slog.Error("failed to list proposals", "err", err)
+		slog.ErrorContext(r.Context(), "failed to list proposals", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -67,7 +67,7 @@ func (s *Service) decideHandler(decide func(ctx context.Context, userID uuid.UUI
 			// lets the user approve it again.
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		default:
-			slog.Error("failed to decide a proposal", "id", id, "err", err)
+			slog.ErrorContext(r.Context(), "failed to decide a proposal", "id", id, "err", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
 	}

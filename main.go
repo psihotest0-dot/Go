@@ -106,10 +106,12 @@ func run() error {
 	fileHandler := slog.NewJSONHandler(logFile, nil)
 	stdoutHandler := slog.NewJSONHandler(os.Stdout, nil)
 
-	logger := slog.New(&LevelFilterHandler{
+	// The context handler adds request_id and user_id to every line logged with a
+	// request context, so a failure can be found by the X-Request-ID the client saw.
+	logger := slog.New(api.NewContextHandler(&LevelFilterHandler{
 		fileHandler:   fileHandler,
 		stdoutHandler: stdoutHandler,
-	})
+	}))
 	slog.SetDefault(logger)
 
 	fmt.Println("Starting server...")
@@ -225,7 +227,7 @@ func run() error {
 		case http.MethodGet:
 			apiService.GetMessagesHandler(w, r)
 		default:
-			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
@@ -237,7 +239,7 @@ func run() error {
 		case http.MethodGet:
 			apiService.GetMemoriesHandler(w, r)
 		default:
-			slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})

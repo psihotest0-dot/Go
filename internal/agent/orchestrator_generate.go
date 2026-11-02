@@ -63,7 +63,7 @@ func (o *Orchestrator) chatRequest(messages []openai.ChatCompletionMessage, tool
 // logUsage reports what a finished completion really cost next to the estimate
 // the budgets were planned with, so the estimates can be checked and the
 // budgets tuned. usage is nil when the server did not report any.
-func (o *Orchestrator) logUsage(req openai.ChatCompletionRequest, usage *openai.Usage, finishReason openai.FinishReason) {
+func (o *Orchestrator) logUsage(ctx context.Context, req openai.ChatCompletionRequest, usage *openai.Usage, finishReason openai.FinishReason) {
 	limits := o.limits()
 	attrs := []any{
 		"estimated_prompt_tokens", estimatePromptTokens(req.Messages, req.Tools),
@@ -79,7 +79,7 @@ func (o *Orchestrator) logUsage(req openai.ChatCompletionRequest, usage *openai.
 	slog.Info("LLM completion finished", attrs...)
 
 	if finishReason == openai.FinishReasonLength {
-		slog.Warn("LLM answer was cut at the token limit; raise LLM_ANSWER_TOKENS or turn thinking off (LLM_ENABLE_THINKING=false)",
+		slog.WarnContext(ctx, "LLM answer was cut at the token limit; raise LLM_ANSWER_TOKENS or turn thinking off (LLM_ENABLE_THINKING=false)",
 			"answer_budget", limits.answerTokens)
 	}
 }
@@ -110,7 +110,7 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 	for {
 		resp, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
-			o.logUsage(req, usage, finishReason)
+			o.logUsage(ctx, req, usage, finishReason)
 			break
 		}
 		if recvErr != nil {
@@ -198,7 +198,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 		if tc.Function.Name == "" {
 			// The conversation still needs a tool message for this call ID,
 			// otherwise the next request is rejected as malformed.
-			slog.Warn("tool call without a name", "id", tc.ID)
+			slog.WarnContext(ctx, "tool call without a name", "id", tc.ID)
 			content = "Error: tool name missing"
 		} else {
 			args := map[string]interface{}{}
@@ -216,7 +216,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 				// A half parsed map would make the tool look for arguments that
 				// are not there and report a misleading error, so the model is
 				// asked to repeat the call instead.
-				slog.Warn("tool arguments are unusable",
+				slog.WarnContext(ctx, "tool arguments are unusable",
 					"tool", tc.Function.Name,
 					"err", parseErr,
 					"raw", truncateRunes(rawArgs, maxLoggedToolArgsRunes))
@@ -230,15 +230,15 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 					if errors.As(err, &argErr) {
 						// The model got the call wrong, the server did not fail;
 						// the reason goes back to the model as tool output.
-						slog.Warn("tool call rejected", "tool", tc.Function.Name, "err", err)
+						slog.WarnContext(ctx, "tool call rejected", "tool", tc.Function.Name, "err", err)
 					} else {
-						slog.Error("tool execution failed", "tool", tc.Function.Name, "err", err)
+						slog.ErrorContext(ctx, "tool execution failed", "tool", tc.Function.Name, "err", err)
 					}
 					content = fmt.Sprintf("Error: %v", err)
 				default:
 					resBytes, marshalErr := json.Marshal(res)
 					if marshalErr != nil {
-						slog.Error("failed to marshal tool result", "tool", tc.Function.Name, "err", marshalErr)
+						slog.ErrorContext(ctx, "failed to marshal tool result", "tool", tc.Function.Name, "err", marshalErr)
 						content = fmt.Sprintf("Error: %v", marshalErr)
 						break
 					}
@@ -261,7 +261,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 	for i, tc := range calls {
 		content := contents[i]
 		if sizes[i] > allowed[i] {
-			slog.Warn("tool result cut to fit the context window",
+			slog.WarnContext(ctx, "tool result cut to fit the context window",
 				"tool", tc.Function.Name, "result_tokens", sizes[i], "allowed_tokens", allowed[i], "round_budget", budgetTokens)
 			content = fitToolResult(content, allowed[i])
 		}
@@ -306,7 +306,7 @@ func (o *Orchestrator) generateResponse(
 		}
 
 		if toolRounds >= maxToolRounds {
-			slog.Warn("tool round limit reached, answering without further tools",
+			slog.WarnContext(ctx, "tool round limit reached, answering without further tools",
 				"rounds", toolRounds,
 				"pending_tool_calls", len(result.toolCalls))
 			break

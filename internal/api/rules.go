@@ -38,14 +38,14 @@ func (a *API) RegisterRuleRoutes(mux *http.ServeMux) {
 func (a *API) ListRulesHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	rules, err := a.db.Queries.ListGlobalRules(r.Context(), userID)
 	if err != nil {
-		writeInternalError(w, "failed to list global rules", err)
+		writeInternalError(w, r, "failed to list global rules", err)
 		return
 	}
 
@@ -62,7 +62,7 @@ func (a *API) ListRulesHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(dtos); err != nil {
-		slog.Error("failed to write rules", slog.Any("error", err))
+		slog.ErrorContext(r.Context(), "failed to write rules", slog.Any("error", err))
 	}
 }
 
@@ -71,7 +71,7 @@ func (a *API) ListRulesHandler(w http.ResponseWriter, r *http.Request) {
 func (a *API) DeleteRuleHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -87,7 +87,7 @@ func (a *API) DeleteRuleHandler(w http.ResponseWriter, r *http.Request) {
 		UserID: userID,
 	})
 	if err != nil {
-		writeInternalError(w, "failed to delete a global rule", err)
+		writeInternalError(w, r, "failed to delete a global rule", err)
 		return
 	}
 	if deleted == 0 {

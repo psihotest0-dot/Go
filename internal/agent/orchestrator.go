@@ -66,7 +66,7 @@ func (o *Orchestrator) limits() budgets {
 // HandleStreamChat handles incoming chat messages and streams the response.
 func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -77,7 +77,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	userID, ok := r.Context().Value(api.ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(ctx, "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -88,13 +88,13 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if req.SessionID == "" || req.Content == "" {
-		slog.Warn("missing session_id or content", slog.String("path", r.URL.Path))
+		slog.WarnContext(ctx, "missing session_id or content", slog.String("path", r.URL.Path))
 		http.Error(w, "session_id and content are required", http.StatusBadRequest)
 		return
 	}
 
 	if err := validateUserMessage(req.Content); err != nil {
-		slog.Warn("message too long",
+		slog.WarnContext(ctx, "message too long",
 			slog.Any("error", err),
 			slog.String("session_id", req.SessionID))
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -112,7 +112,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	// turn is deliberately kept instead of being rolled back on every transient
 	// LLM error.
 	if err := o.saveUserMessage(r.Context(), userID, req.SessionID, req.Content); err != nil {
-		slog.Error("failed to save user message", "err", err)
+		slog.ErrorContext(ctx, "failed to save user message", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -122,7 +122,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		// Streaming has not started, so the client can still receive a normal
 		// HTTP error instead of a "200 OK" with an empty body that leaves the
 		// caller waiting for events that never arrive.
-		slog.Error("failed to load context", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to load context", "err", err, "session_id", req.SessionID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -132,7 +132,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	turnCtx, _ := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
 	r = r.WithContext(turnCtx)
 
-	_ = o.writeTrace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
+	o.trace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
 		"memory_ids": memoryIDs,
 	})
@@ -142,7 +142,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
-		slog.Error("failed to render system prompt", "err", err)
+		slog.ErrorContext(ctx, "failed to render system prompt", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -151,7 +151,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	finalMessages = append(finalMessages, systemMessage)
 	finalMessages = append(finalMessages, history...)
 
-	_ = o.writeTrace(r.Context(), userID, req.SessionID, "prune", map[string]interface{}{
+	o.trace(r.Context(), userID, req.SessionID, "prune", map[string]interface{}{
 		"total_messages": len(chatCtx.History) + 1,
 		"pruned_to":      len(finalMessages),
 	})
@@ -163,15 +163,15 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		// The response is already committed and the reason has been sent to the
 		// client as an SSE error frame, so only log it here and skip persisting
 		// a partial answer.
-		slog.Error("stream failed", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "stream failed", "err", err, "session_id", req.SessionID)
 		return
 	}
 
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
 
-	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
+	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
 }
@@ -183,7 +183,7 @@ type RegenerateRequest struct {
 // HandleRegenerate handles regenerating the last assistant response.
 func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -194,7 +194,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	userID, ok := r.Context().Value(api.ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(ctx, "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -205,7 +205,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if regenReq.SessionID == "" {
-		slog.Warn("missing session_id", slog.String("path", r.URL.Path))
+		slog.WarnContext(ctx, "missing session_id", slog.String("path", r.URL.Path))
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
@@ -216,7 +216,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		Limit:     int32(o.limits().historyMessages),
 	})
 	if err != nil {
-		slog.Error("failed to get messages", "err", err)
+		slog.ErrorContext(ctx, "failed to get messages", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -230,7 +230,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if lastUserContent == "" {
-		slog.Warn("no user message found to regenerate from", slog.String("session_id", regenReq.SessionID))
+		slog.WarnContext(ctx, "no user message found to regenerate from", slog.String("session_id", regenReq.SessionID))
 		http.Error(w, "no user message found to regenerate from", http.StatusBadRequest)
 		return
 	}
@@ -248,7 +248,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		// Streaming has not started, so the client can still receive a normal
 		// HTTP error instead of a "200 OK" with an empty body.
-		slog.Error("failed to load context", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to load context", "err", err, "session_id", req.SessionID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -266,7 +266,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	turnCtx, _ := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
 	r = r.WithContext(turnCtx)
 
-	_ = o.writeTrace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
+	o.trace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
 		"memory_ids": memoryIDs,
 	})
@@ -276,7 +276,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
-		slog.Error("failed to render system prompt", "err", err)
+		slog.ErrorContext(ctx, "failed to render system prompt", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -285,7 +285,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	finalMessages = append(finalMessages, systemMessage)
 	finalMessages = append(finalMessages, history...)
 
-	_ = o.writeTrace(r.Context(), userID, req.SessionID, "prune", map[string]interface{}{
+	o.trace(r.Context(), userID, req.SessionID, "prune", map[string]interface{}{
 		"total_messages": len(chatCtx.History) + 1,
 		"pruned_to":      len(finalMessages),
 	})
@@ -296,7 +296,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		// The previous answer is untouched, so a failed regeneration leaves the
 		// session as it was instead of losing the reply it replaced.
-		slog.Error("stream failed", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "stream failed", "err", err, "session_id", req.SessionID)
 		return
 	}
 
@@ -308,7 +308,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// A model that only "thought" leaves nothing to show; keep the old answer
 	// rather than replacing it with an empty one.
 	if sanitizeAssistantText(assistantContent) == "" && len(toolCalls) == 0 {
-		slog.Warn("regenerated answer is empty; keeping the previous one", "session_id", req.SessionID)
+		slog.WarnContext(ctx, "regenerated answer is empty; keeping the previous one", "session_id", req.SessionID)
 		return
 	}
 
@@ -319,13 +319,13 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	}); err != nil {
 		// Persisting as well would leave two answers for the same question, so
 		// keep the stored history consistent and drop the new one.
-		slog.Error("failed to delete last assistant message", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to delete last assistant message", "err", err, "session_id", req.SessionID)
 		return
 	}
 
-	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
 
-	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
+	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
 }
@@ -359,7 +359,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	// See HandleStreamChat: the user turn is persisted up front so that it is
 	// part of the history the prompt is built from.
 	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
-		slog.Error("failed to save user message", "err", err)
+		slog.ErrorContext(ctx, "failed to save user message", "err", err)
 		return ChatTurn{}, fmt.Errorf("failed to save user message: %w", err)
 	}
 
@@ -370,7 +370,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
 
-	_ = o.writeTrace(ctx, userID, req.SessionID, "search", map[string]interface{}{
+	o.trace(ctx, userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
 		"memory_ids": memoryIDs,
 	})
@@ -380,7 +380,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
-		slog.Error("failed to render system prompt", "err", err)
+		slog.ErrorContext(ctx, "failed to render system prompt", "err", err)
 		return ChatTurn{}, fmt.Errorf("failed to render system prompt: %w", err)
 	}
 
@@ -388,7 +388,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	finalMessages = append(finalMessages, systemMessage)
 	finalMessages = append(finalMessages, history...)
 
-	_ = o.writeTrace(ctx, userID, req.SessionID, "prune", map[string]interface{}{
+	o.trace(ctx, userID, req.SessionID, "prune", map[string]interface{}{
 		"total_messages": len(chatCtx.History) + 1,
 		"pruned_to":      len(finalMessages),
 	})
@@ -404,9 +404,9 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	_ = o.persistAssistantMessage(bgCtx, userID, req.SessionID, answer, toolCalls, chatCtx.Sources)
+	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, chatCtx.Sources)
 
-	_ = o.writeTrace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
+	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(answer),
 	})
 

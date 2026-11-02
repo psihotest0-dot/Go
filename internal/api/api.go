@@ -74,14 +74,14 @@ func (a *API) MetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -96,7 +96,7 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateMessageInput(req.SessionID, req.Role, req.Content); err != nil {
-		slog.Warn("invalid message payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "invalid message payload", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -108,7 +108,7 @@ func (a *API) CreateMessageHandler(w http.ResponseWriter, r *http.Request) {
 		Content:   req.Content,
 	})
 	if err != nil {
-		writeInternalError(w, "failed to create message", err)
+		writeInternalError(w, r, "failed to create message", err)
 		return
 	}
 
@@ -146,14 +146,14 @@ func parseMessagesLimit(raw string) (int32, error) {
 
 func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -162,7 +162,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 	limit, err := parseMessagesLimit(r.URL.Query().Get("limit"))
 	if err != nil {
-		slog.Warn("invalid limit parameter", slog.Any("error", err), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "invalid limit parameter", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -187,7 +187,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err != nil {
-		writeInternalError(w, "failed to get messages", err)
+		writeInternalError(w, r, "failed to get messages", err)
 		return
 	}
 
@@ -220,7 +220,7 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 				chunksMap[chunk.ID] = chunk
 			}
 		} else {
-			slog.Error("failed to get document chunks with file", slog.Any("error", chunkErr))
+			slog.ErrorContext(r.Context(), "failed to get document chunks with file", slog.Any("error", chunkErr))
 		}
 	}
 
@@ -275,14 +275,14 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -303,7 +303,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateMemoryInput(req.Content, req.Status, req.Importance); err != nil {
-		slog.Warn("invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -314,7 +314,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		ContentHash: contentHash,
 	})
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		writeInternalError(w, "failed to get memory by hash", err)
+		writeInternalError(w, r, "failed to get memory by hash", err)
 		return
 	}
 	if err == nil {
@@ -330,16 +330,16 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.Content) != "" {
 		vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content}, false)
 		if embedErr != nil {
-			writeInternalError(w, "failed to generate embedding", embedErr)
+			writeInternalError(w, r, "failed to generate embedding", embedErr)
 			return
 		}
 		if len(vectors) == 0 {
-			slog.Error("embedder returned no vectors")
+			slog.ErrorContext(r.Context(), "embedder returned no vectors")
 			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 			return
 		}
 		if len(vectors[0]) != config.VectorDimension {
-			slog.Error("embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
+			slog.ErrorContext(r.Context(), "embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
 			http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 			return
 		}
@@ -364,7 +364,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(toMemoryDTO(mem))
 		return
 	} else if err != nil {
-		writeInternalError(w, "failed to create memory", err)
+		writeInternalError(w, r, "failed to create memory", err)
 		return
 	}
 
@@ -375,14 +375,14 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -398,7 +398,7 @@ func (a *API) GetMemoriesHandler(w http.ResponseWriter, r *http.Request) {
 		Status: statusParam,
 	})
 	if err != nil {
-		writeInternalError(w, "failed to get memories", err)
+		writeInternalError(w, r, "failed to get memories", err)
 		return
 	}
 
@@ -427,20 +427,20 @@ func memoryIDSegment(path string) (string, bool) {
 func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 	idStr, ok := memoryIDSegment(r.URL.Path)
 	if !ok {
-		slog.Warn("no such memory path", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "no such memory path", slog.String("path", r.URL.Path))
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
 	memoryID, err := uuid.Parse(idStr)
 	if err != nil {
-		slog.Warn("invalid memory id", slog.String("id", idStr), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "invalid memory id", slog.String("id", idStr), slog.String("path", r.URL.Path))
 		http.Error(w, "invalid memory id", http.StatusBadRequest)
 		return
 	}
 
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
-		slog.Warn("unauthorized access attempt", slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -458,7 +458,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := validateMemoryInput(req.Content, req.Status, req.Importance); err != nil {
-			slog.Warn("invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+			slog.WarnContext(r.Context(), "invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -471,7 +471,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(dbErr, sql.ErrNoRows) {
 				http.Error(w, "memory not found", http.StatusNotFound)
 			} else {
-				writeInternalError(w, "failed to get existing memory", dbErr)
+				writeInternalError(w, r, "failed to get existing memory", dbErr)
 			}
 			return
 		}
@@ -483,16 +483,16 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		if newContentHash != existingMem.ContentHash {
 			vectors, embedErr := a.embedder.EmbedTexts(r.Context(), []string{req.Content}, false)
 			if embedErr != nil {
-				writeInternalError(w, "failed to generate embedding", embedErr)
+				writeInternalError(w, r, "failed to generate embedding", embedErr)
 				return
 			}
 			if len(vectors) == 0 {
-				slog.Error("embedder returned no vectors")
+				slog.ErrorContext(r.Context(), "embedder returned no vectors")
 				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 				return
 			}
 			if len(vectors[0]) != config.VectorDimension {
-				slog.Error("embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
+				slog.ErrorContext(r.Context(), "embedder returned vector with invalid dimension", slog.Int("dim", len(vectors[0])))
 				http.Error(w, "failed to generate valid embedding", http.StatusInternalServerError)
 				return
 			}
@@ -515,7 +515,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Memory already exists", http.StatusConflict)
 			return
 		} else if dbErr != nil {
-			writeInternalError(w, "failed to update memory", dbErr)
+			writeInternalError(w, r, "failed to update memory", dbErr)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -527,7 +527,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			UserID: userID,
 		})
 		if err != nil {
-			writeInternalError(w, "failed to delete memory", err)
+			writeInternalError(w, r, "failed to delete memory", err)
 			return
 		}
 		// A memory that is not there (or is another user's) is a 404, as for files
@@ -539,7 +539,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
-		slog.Warn("method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+		slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }

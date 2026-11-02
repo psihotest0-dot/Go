@@ -34,7 +34,7 @@ func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.
 	contentToSave := sanitizeAssistantText(content)
 	if contentToSave == "" {
 		if len(toolCalls) == 0 {
-			slog.Warn("assistant answer is empty once hidden reasoning is removed; not stored",
+			slog.WarnContext(ctx, "assistant answer is empty once hidden reasoning is removed; not stored",
 				"session_id", sessionID)
 			return nil
 		}
@@ -62,6 +62,23 @@ func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.
 		},
 	})
 	return err
+}
+
+// storeAnswer saves the finished answer. The user already has the text on
+// screen, so a failure is not returned, but it must not pass silently: the
+// answer is then missing from the history and from every later context.
+func (o *Orchestrator) storeAnswer(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) {
+	if err := o.persistAssistantMessage(ctx, userID, sessionID, content, toolCalls, sources); err != nil {
+		slog.ErrorContext(ctx, "failed to store the assistant answer", "err", err, "session_id", sessionID)
+	}
+}
+
+// trace writes a diagnostic step. The trace is for debugging only, so a failure
+// is logged as a warning and never stops the answer.
+func (o *Orchestrator) trace(ctx context.Context, userID uuid.UUID, sessionID, step string, details interface{}) {
+	if err := o.writeTrace(ctx, userID, sessionID, step, details); err != nil {
+		slog.WarnContext(ctx, "failed to write the agent trace", "step", step, "err", err, "session_id", sessionID)
+	}
 }
 
 func (o *Orchestrator) writeTrace(ctx context.Context, userID uuid.UUID, sessionID, step string, details interface{}) error {

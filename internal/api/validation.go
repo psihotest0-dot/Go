@@ -60,14 +60,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		slog.Warn("request body too large",
+		slog.WarnContext(r.Context(), "request body too large",
 			slog.Int64("limit", tooLarge.Limit),
 			slog.String("path", r.URL.Path))
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return false
 	}
 
-	writeInvalidBody(w, r.URL.Path, err)
+	writeInvalidBody(w, r, err)
 	return false
 }
 

@@ -140,7 +140,7 @@ func TestKnownUsersStaysBounded(t *testing.T) {
 func TestWriteInternalErrorHidesDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	writeInternalError(rec, "failed to create message", errors.New("pq: duplicate key value violates unique constraint"))
+	writeInternalError(rec, httptest.NewRequest(http.MethodPost, "/messages", nil), "failed to create message", errors.New("pq: duplicate key value violates unique constraint"))
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
 	body := strings.TrimSpace(rec.Body.String())
@@ -151,7 +151,7 @@ func TestWriteInternalErrorHidesDetails(t *testing.T) {
 func TestWriteInvalidBodyHidesDecodeDetails(t *testing.T) {
 	rec := httptest.NewRecorder()
 
-	writeInvalidBody(rec, "/v1/messages", errors.New("json: cannot unmarshal string into Go struct field ChatRequest.content"))
+	writeInvalidBody(rec, httptest.NewRequest(http.MethodPost, "/v1/messages", nil), errors.New("json: cannot unmarshal string into Go struct field ChatRequest.content"))
 
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	body := strings.TrimSpace(rec.Body.String())
