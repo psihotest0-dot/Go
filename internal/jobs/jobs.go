@@ -190,10 +190,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		if msg.Role != "user" || strings.TrimSpace(msg.Content) == "" {
-			_ = w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
-				ID:     msg.ID,
-				UserID: msg.UserID,
-			})
+			w.markAnalyzed(ctx, msg.ID, msg.UserID)
 			continue
 		}
 
@@ -201,10 +198,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			slog.Warn("skipping permanently failed message",
 				"msg_id", msg.ID,
 				"attempts", msg.AnalysisAttempts)
-			_ = w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
-				ID:     msg.ID,
-				UserID: msg.UserID,
-			})
+			w.markAnalyzed(ctx, msg.ID, msg.UserID)
 			continue
 		}
 
@@ -214,7 +208,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 
 		if err != nil {
 			slog.Error("failed to analyze message", "msg_id", msg.ID, "error", err)
-			_ = w.dbClient.Queries.IncrementAnalysisAttempts(ctx, msg.ID)
+			w.countFailedAnalysis(ctx, msg.ID)
 			continue
 		}
 
@@ -232,14 +226,11 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		if hasErrors {
-			_ = w.dbClient.Queries.IncrementAnalysisAttempts(ctx, msg.ID)
+			w.countFailedAnalysis(ctx, msg.ID)
 			continue
 		}
 
-		_ = w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
-			ID:     msg.ID,
-			UserID: msg.UserID,
-		})
+		w.markAnalyzed(ctx, msg.ID, msg.UserID)
 
 		processedCount++
 		if processedCount >= consolidationMessagesPerRun {
@@ -247,6 +238,27 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 	}
 	return nil
+}
+
+// markAnalyzed records that a message needs no further analysis. When this write
+// fails the message is picked up and analysed again on the next run, which costs
+// model time, so the failure is logged instead of dropped.
+func (w *MemoryConsolidationWorker) markAnalyzed(ctx context.Context, msgID, userID uuid.UUID) {
+	if err := w.dbClient.Queries.MarkMessageAnalyzed(ctx, db.MarkMessageAnalyzedParams{
+		ID:     msgID,
+		UserID: userID,
+	}); err != nil {
+		slog.Error("failed to mark a message as analysed; it will be analysed again", "msg_id", msgID, "error", err)
+	}
+}
+
+// countFailedAnalysis counts one failed attempt. If the counter cannot be
+// written the message never reaches the attempt limit and is retried on every
+// run, so the failure is logged.
+func (w *MemoryConsolidationWorker) countFailedAnalysis(ctx context.Context, msgID uuid.UUID) {
+	if err := w.dbClient.Queries.IncrementAnalysisAttempts(ctx, msgID); err != nil {
+		slog.Error("failed to count a failed analysis attempt", "msg_id", msgID, "error", err)
+	}
 }
 
 func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content string) ([]Fact, error) {

@@ -305,7 +305,7 @@ Constraints:
 
 			err = json.Unmarshal([]byte(content), &result)
 			if err != nil {
-				slog.Error("failed to parse distillation response", "batch_start", i, "error", err, "content", content)
+				slog.Error("failed to parse distillation response", "batch_start", i, "error", err, "content", logExcerpt(content, maxLoggedModelRunes))
 				failCount++
 				continue
 			}

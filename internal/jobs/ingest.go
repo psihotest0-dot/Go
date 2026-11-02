@@ -100,11 +100,14 @@ func (w *IngestFileWorker) markFileFailed(fileID uuid.UUID, userID uuid.UUID, er
 	slog.Error("IngestFileWorker failed", "file_id", fileID, "error", err)
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = w.dbClient.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
+	if updateErr := w.dbClient.Queries.UpdateIngestedFileStatus(cleanupCtx, db.UpdateIngestedFileStatusParams{
 		ID:     fileID,
 		Status: "failed",
 		UserID: userID,
-	})
+	}); updateErr != nil {
+		// The file then stays "processing" in the library although the job is over.
+		slog.Error("failed to mark the file as failed", "file_id", fileID, "error", updateErr)
+	}
 }
 
 // ingestResult names how an ingest attempt ended, for the metrics.
