@@ -50,6 +50,10 @@ const DefaultMaxUploadMB = 100
 // DefaultLogMaxMB is the size at which backend.log is rotated (LOG_MAX_MB).
 const DefaultLogMaxMB = 10
 
+// DefaultMetricsLogMaxMB is the size at which metrics.log is emptied
+// (METRICS_LOG_MAX_MB). It holds only the Prometheus scrapes, so nothing is kept.
+const DefaultMetricsLogMaxMB = 5
+
 // DefaultLLMSlots is how many completions the model server runs in parallel
 // (Lemonade is started with two slots). DefaultLLMBackgroundSlots is the share
 // of them background work (summaries, consolidation, distillation) may use.
@@ -83,8 +87,13 @@ type Config struct {
 	// LogMaxMB is the size, in megabytes, at which backend.log is rotated
 	// (LOG_MAX_MB): the old file is compressed and kept as one backup, so the logs
 	// take about this much and no more.
-	LogMaxMB   int
-	LLMBaseURL string
+	LogMaxMB int
+	// MetricsLogMaxMB is the size, in megabytes, at which metrics.log is emptied
+	// (METRICS_LOG_MAX_MB). That file holds the "incoming request" lines of the
+	// Prometheus scrapes, which would otherwise be most of backend.log; it keeps no
+	// backup.
+	MetricsLogMaxMB int
+	LLMBaseURL      string
 	// LLMModel pins the model name sent to the LLM server. Empty means the
 	// client asks the server which model it serves.
 	LLMModel string
@@ -237,6 +246,7 @@ func Load() *Config {
 		AutoMigrate:        boolEnv("AUTO_MIGRATE", true),
 		KeepOriginals:      boolEnv("KEEP_ORIGINALS", true),
 		LogMaxMB:           positiveIntEnv("LOG_MAX_MB", DefaultLogMaxMB),
+		MetricsLogMaxMB:    positiveIntEnv("METRICS_LOG_MAX_MB", DefaultMetricsLogMaxMB),
 		LLMBaseURL:         os.Getenv("LLM_BASE_URL"),
 		LLMModel:           strings.TrimSpace(os.Getenv("LLM_MODEL")),
 		LLMSlots:           positiveIntEnv("LLM_SLOTS", DefaultLLMSlots),

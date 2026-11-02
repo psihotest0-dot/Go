@@ -332,6 +332,28 @@ func TestLoadLogMaxMB(t *testing.T) {
 	}
 }
 
+func TestLoadMetricsLogMaxMB(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want int
+	}{
+		{name: "five megabytes by default", env: "", want: 5},
+		{name: "custom", env: "2", want: 2},
+		{name: "zero is not a limit", env: "0", want: 5},
+		{name: "negative", env: "-1", want: 5},
+		{name: "garbage", env: "много", want: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("METRICS_LOG_MAX_MB", tt.env)
+			if got := Load().MetricsLogMaxMB; got != tt.want {
+				t.Fatalf("MetricsLogMaxMB = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFileCategories(t *testing.T) {
 	for _, name := range []string{"medicine", "economics", "programming", "law", "psychology", "literature", "general"} {
 		if !IsFileCategory(name) {

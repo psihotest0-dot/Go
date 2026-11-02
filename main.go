@@ -27,6 +27,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
 	"go-monolith/internal/llm"
+	"go-monolith/internal/logfile"
 	"go-monolith/internal/prompts"
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
@@ -94,6 +95,13 @@ func run() error {
 
 	logFile := newLogFile(cfg.LogMaxMB)
 	defer logFile.Close()
+
+	// The Prometheus scrapes ask /metrics every 15 s; their "incoming request" lines
+	// go to their own file, which is emptied at METRICS_LOG_MAX_MB, instead of
+	// burying backend.log.
+	metricsLog := logfile.NewTruncating("metrics.log", int64(cfg.MetricsLogMaxMB)<<20)
+	defer metricsLog.Close()
+	metricsLogger := slog.New(slog.NewJSONHandler(metricsLog, nil))
 
 	fileHandler := slog.NewJSONHandler(logFile, nil)
 	stdoutHandler := slog.NewJSONHandler(os.Stdout, nil)
@@ -276,7 +284,7 @@ func run() error {
 		AllowCredentials: true,
 	})
 
-	handler := api.Middleware(logger)(api.RecoveryMiddleware(logger)(c.Handler(api.RecordRoute(mux))))
+	handler := api.Middleware(logger, api.WithMetricsLogger(metricsLogger))(api.RecoveryMiddleware(logger)(c.Handler(api.RecordRoute(mux))))
 
 	// LISTEN_ADDR defaults to loopback only (config.DefaultListenAddr). Bind
 	// before announcing the address so that a port already taken by a stale

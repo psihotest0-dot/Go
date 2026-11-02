@@ -99,7 +99,29 @@ func RecoveryMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
+// metricsPath is the Prometheus scrape endpoint. It is asked every few seconds,
+// so its "incoming request" lines would fill the main log.
+const metricsPath = "/metrics"
+
+// MiddlewareOption changes how Middleware logs.
+type MiddlewareOption func(*middlewareConfig)
+
+type middlewareConfig struct {
+	metricsLogger *slog.Logger
+}
+
+// WithMetricsLogger sends the "incoming request" line of every /metrics request
+// to l instead of the main logger, so the scrapes do not bury the real traffic.
+func WithMetricsLogger(l *slog.Logger) MiddlewareOption {
+	return func(c *middlewareConfig) { c.metricsLogger = l }
+}
+
+func Middleware(logger *slog.Logger, opts ...MiddlewareOption) func(http.Handler) http.Handler {
+	var cfg middlewareConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
@@ -121,7 +143,14 @@ func Middleware(logger *slog.Logger) func(http.Handler) http.Handler {
 			)
 
 			if r.URL.Path != "/healthz" {
-				reqLogger.Info("incoming request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+				accessLogger := reqLogger
+				if r.URL.Path == metricsPath && cfg.metricsLogger != nil {
+					accessLogger = cfg.metricsLogger.With(
+						slog.String("request_id", reqID),
+						slog.String("user_id", userID),
+					)
+				}
+				accessLogger.Info("incoming request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			}
 
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}

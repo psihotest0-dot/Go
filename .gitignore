@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 backend.log
 backend-*.log*
+metrics.log
 storage/
 .env
 backups/
