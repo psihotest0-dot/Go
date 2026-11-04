@@ -37,5 +37,12 @@ ENV HF_HUB_OFFLINE=1
 # 503 until it is loaded.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 CMD python -c "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"
 
-# 1 worker as per requirement
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# 1 worker as per requirement.
+#
+# --timeout-keep-alive 120 is deliberately longer than the 90 s net/http keeps an
+# idle connection (internal/llm/embedder.go): uvicorn's default of 5 s closed
+# connections the backend still had in its pool, and a POST is not retried by
+# net/http, so a request that landed in that window failed with "EOF" (seen on
+# 2026-11-04 in a distillation job). The backend now closes idle connections
+# first, which it does cleanly.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--timeout-keep-alive", "120"]

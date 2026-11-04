@@ -72,7 +72,7 @@
 
 ### `internal/llm`
 * **`LemonadeClient`** (`client.go`): OpenAI-съвместим клиент към LLM сървъра — `Chat`, `ChatStream`, `ChatWithJSONSchema` (суров HTTP път). Ограничител на слотовете (`limiter.go`): интерактивните заявки изпреварват фоновите, а фоновата работа (резюмета, консолидация, дистилация) ползва най-много `LLM_BACKGROUND_SLOTS`. Повторения с нарастващо изчакване само за грешки, които могат да минат (`retry.go`). Метрики за токени и чакане.
-* **`HTTPEmbedder`** (`embedder.go`): клиент към embedder-а — `EmbedTexts` с кеш в `embedding_cache` (ключ = модел + текст; едно четене и един запис на партида), `CheckModel` (отказва работа с друг модел или размер). Таймаут `EMBEDDER_TIMEOUT_SECONDS`.
+* **`HTTPEmbedder`** (`embedder.go`): клиент към embedder-а — `EmbedTexts` с кеш в `embedding_cache` (ключ = модел + текст; едно четене и един запис на партида), `CheckModel` (отказва работа с друг модел или размер). Таймаут `EMBEDDER_TIMEOUT_SECONDS`. Отпаднала връзка, 5xx и отрязан отговор се повтарят (до 3 опита, в същия таймаут): `net/http` не повтаря `POST` сам, а uvicorn затваря безшумно връзките за многократна употреба, които са бездействали 5 s.
 
 ### `internal/prompts`
 Шаблони, компилирани в бинарния файл (`go:embed`): `chat_system.tmpl`, `memory_reflector.tmpl`, `rolling_summary.tmpl`, `rolling_summary_input.tmpl`. Файлове със същите имена в `PROMPTS_DIR` ги заместват; при старт всички се зареждат предварително.
@@ -87,7 +87,7 @@
 Prometheus метрики (регистрирани при импорт): заявки и латентност, етапи на конвейера, токени и чакане за слот на LLM, кеш успехи/неуспехи, ингест и дистилация, предложения и платени уеб инструменти. Аларми — `prometheus/alerts.yml`; дашборд — `grafana/dashboards/main.json`.
 
 ### `services/embedder`
-FastAPI услуга (`/embed`, `/health`), модел `intfloat/multilingual-e5-small`, само процесор, непривилегиран потребител и `HEALTHCHECK`; върнатият модел и размерът се проверяват от бекенда.
+FastAPI услуга (`/embed`, `/health`), модел `intfloat/multilingual-e5-small`, само процесор, непривилегиран потребител и `HEALTHCHECK`; върнатият модел и размерът се проверяват от бекенда. uvicorn се пуска с `--timeout-keep-alive 120` — по-дълго от 90-те секунди на `net/http` в бекенда, за да затваря бездействащите връзки клиентът, а не сървърът.
 
 ### `cmd/*`
 * `cmd/migrate` — прилага миграциите на ръка (`-status` само показва).

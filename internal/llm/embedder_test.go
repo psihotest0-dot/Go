@@ -208,3 +208,102 @@ func TestEmbedTextsRefusesWrongDimension(t *testing.T) {
 	_, err := e.EmbedTexts(context.Background(), []string{"текст " + uuid.NewString()}, false)
 	require.ErrorIs(t, err, ErrEmbedderModel)
 }
+
+// embedOnly is the client of one service without the database: these tests are
+// about a single HTTP call, not about the cache.
+func embedOnly(url string) *HTTPEmbedder {
+	return &HTTPEmbedder{baseURL: url, client: &http.Client{}, timeout: config.DefaultEmbedderTimeout}
+}
+
+func answerWithOneVector(w http.ResponseWriter) {
+	_ = json.NewEncoder(w).Encode(EmbedResponse{
+		Model:   config.DefaultEmbedModel,
+		Dim:     config.VectorDimension,
+		Vectors: [][]float32{constVector(0.5)},
+	})
+}
+
+// dropConnection closes the connection without a single byte of answer, which is
+// what uvicorn did on 2026-11-04 to a keep-alive connection net/http had just
+// taken out of its pool.
+func dropConnection(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		t.Errorf("hijack: %v", err)
+		return
+	}
+	_ = conn.Close()
+}
+
+func TestEmbedRemoteRetriesADroppedConnection(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			dropConnection(t, w)
+			return
+		}
+		answerWithOneVector(w)
+	}))
+	t.Cleanup(srv.Close)
+
+	vectors, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 1)
+	assert.Equal(t, constVector(0.5), vectors[0])
+	assert.EqualValues(t, 2, calls.Load(), "the call that lost its connection was repeated")
+}
+
+func TestEmbedRemoteRetriesAServiceThatIsStarting(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			http.Error(w, "Model not loaded yet", http.StatusServiceUnavailable)
+			return
+		}
+		answerWithOneVector(w)
+	}))
+	t.Cleanup(srv.Close)
+
+	vectors, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 1)
+	assert.EqualValues(t, 2, calls.Load(), "the service answered 503 while it was loading its model")
+}
+
+func TestEmbedRemoteGivesUpAfterTheLastAttempt(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		dropConnection(t, w)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "embed request failed after 3 attempts")
+	assert.EqualValues(t, embedAttempts, calls.Load())
+}
+
+func TestEmbedRemoteDoesNotRetryARefusedRequest(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "Each text must be at most 10000 characters long", http.StatusUnprocessableEntity)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "422")
+	assert.EqualValues(t, 1, calls.Load(), "a request the service refuses is refused again")
+}
+
+func TestEmbedRemoteDoesNotRetryAWrongModel(t *testing.T) {
+	f := newFakeEmbedderService(t)
+	f.model = "paraphrase-multilingual-MiniLM-L12-v2"
+
+	_, err := embedOnly(f.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.ErrorIs(t, err, ErrEmbedderModel)
+	assert.EqualValues(t, 1, f.embeds.Load(), "the wrong model would answer the same way again")
+}

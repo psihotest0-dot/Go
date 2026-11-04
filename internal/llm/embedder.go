@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -219,12 +220,102 @@ func (c *HTTPEmbedder) readCache(ctx context.Context, keys []string) map[string]
 	return found
 }
 
-// embedRemote asks the embedding service for the vectors of texts and refuses an
-// answer from the wrong model.
-func (c *HTTPEmbedder) embedRemote(ctx context.Context, texts []string) ([][]float32, error) {
-	jsonBody, _ := json.Marshal(EmbedRequest{Texts: texts})
+// embedAttempts is one call plus two retries. Embedding is idempotent, so asking
+// again is safe, and the failures that do happen here are gone by the second
+// attempt: a keep-alive connection the service had already closed, and a service
+// that is still starting. On 2026-11-04 a distillation job lost a summary to
+// "Post \"http://localhost:8000/embed\": EOF": uvicorn closes an idle keep-alive
+// connection after 5 s (its default), this client keeps it for 90 s (the net/http
+// default), and net/http does not retry a POST on its own, so the race reached the
+// caller. The Dockerfile now asks uvicorn for a keep-alive longer than ours, which
+// removes the race; this retry covers a restart and anything else that drops the
+// connection (the Docker Desktop proxy in between, the CPU being busy).
+const embedAttempts = 3
 
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/embed", bytes.NewBuffer(jsonBody))
+// embedRetryDelay is the pause before the third attempt; the second follows at
+// once, since a connection that is gone fails fast anyway.
+const embedRetryDelay = 200 * time.Millisecond
+
+// embedTransportError is a failure to talk to the service at all: the connection
+// was refused, dropped or cut before a whole answer arrived. Only these, a 5xx
+// and a body cut short are worth repeating (see embedRetryable).
+type embedTransportError struct{ err error }
+
+func (e *embedTransportError) Error() string { return "embed request failed: " + e.err.Error() }
+
+func (e *embedTransportError) Unwrap() error { return e.err }
+
+// embedStatusError is a non-200 answer. It is kept apart from the other failures
+// so the retry can tell "the service is starting or is momentarily overloaded"
+// (5xx, 429, 408) from "this request is wrong and will be refused again" (4xx).
+type embedStatusError struct{ status int }
+
+func (e *embedStatusError) Error() string { return fmt.Sprintf("embed service returned status %d", e.status) }
+
+// embedRetryable reports whether repeating the request could help. A wrong model
+// or vector size (ErrEmbedderModel) says the service is not the one the database
+// was built with, a refused request is the service's answer to the request
+// itself, and a wrong number of vectors is a bug on its side: none of them
+// changes on the next try. A finished context is never worth another attempt.
+func embedRetryable(ctx context.Context, err error) bool {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if errors.Is(err, ErrEmbedderModel) {
+		return false
+	}
+	var transportErr *embedTransportError
+	if errors.As(err, &transportErr) {
+		return true
+	}
+	var statusErr *embedStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.status >= 500 ||
+			statusErr.status == http.StatusRequestTimeout ||
+			statusErr.status == http.StatusTooManyRequests
+	}
+	// A 200 whose body stopped in the middle (the connection was cut): the answer
+	// is idempotent, so ask again.
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// embedRemote asks the embedding service for the vectors of texts and refuses an
+// answer from the wrong model. A failure that may pass is retried, within the
+// same context: the limit set by WithTimeout bounds all attempts together.
+func (c *HTTPEmbedder) embedRemote(ctx context.Context, texts []string) ([][]float32, error) {
+	jsonBody, err := json.Marshal(EmbedRequest{Texts: texts})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode the embed request: %w", err)
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= embedAttempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-time.After(embedRetryDelay):
+			case <-ctx.Done():
+				return nil, fmt.Errorf("embed request failed after %d attempt(s): %w", attempt-1, errors.Join(lastErr, ctx.Err()))
+			}
+		}
+
+		vectors, err := c.embedOnce(ctx, jsonBody, len(texts))
+		if err == nil {
+			return vectors, nil
+		}
+		lastErr = err
+		if !embedRetryable(ctx, err) {
+			return nil, err
+		}
+		if attempt < embedAttempts {
+			slog.Warn("embed request failed, retrying", "attempt", attempt, "attempts", embedAttempts, "error", err)
+		}
+	}
+	return nil, fmt.Errorf("embed request failed after %d attempts: %w", embedAttempts, lastErr)
+}
+
+// embedOnce is one POST to the service, answer checked.
+func (c *HTTPEmbedder) embedOnce(ctx context.Context, jsonBody []byte, textCount int) ([][]float32, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/embed", bytes.NewReader(jsonBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -232,12 +323,12 @@ func (c *HTTPEmbedder) embedRemote(ctx context.Context, texts []string) ([][]flo
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("embed request failed: %w", err)
+		return nil, &embedTransportError{err: err}
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("embed service returned status %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return nil, &embedStatusError{status: resp.StatusCode}
 	}
 
 	var embedResp EmbedResponse
@@ -249,8 +340,8 @@ func (c *HTTPEmbedder) embedRemote(ctx context.Context, texts []string) ([][]flo
 		return nil, err
 	}
 
-	if len(embedResp.Vectors) != len(texts) {
-		return nil, fmt.Errorf("returned vectors count %d does not match request %d", len(embedResp.Vectors), len(texts))
+	if len(embedResp.Vectors) != textCount {
+		return nil, fmt.Errorf("returned vectors count %d does not match request %d", len(embedResp.Vectors), textCount)
 	}
 	return embedResp.Vectors, nil
 }
