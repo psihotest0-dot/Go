@@ -28,6 +28,7 @@ import (
 	"go-monolith/internal/jobs"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/logfile"
+	"go-monolith/internal/oracle"
 	"go-monolith/internal/prompts"
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
@@ -249,6 +250,23 @@ func run() error {
 	// global rules can be read and deleted.
 	proposalService.RegisterRoutes(protectedMux)
 	apiService.RegisterRuleRoutes(protectedMux)
+
+	// The Oracle: the trading bot's second opinion on a signal (APPROVE / VETO / HOLD).
+	// The bot's routes carry their own token and sit outside the user check; without a
+	// usable ORACLE_TOKEN they are not served at all. The journal of the answers is read
+	// through the ordinary user check.
+	oracleStore := oracle.NewDBStore(database.Queries)
+	oracleHandler := oracle.NewHandler(oracle.NewService(llmClient, oracleStore), oracleStore, cfg.OracleToken)
+	oracleHandler.RegisterReadRoutes(protectedMux)
+	switch {
+	case oracle.TokenUsable(cfg.OracleToken):
+		oracleHandler.RegisterBotRoutes(mux)
+		logger.Info("Oracle route is on", slog.String("path", "/oracle/evaluate"))
+	case cfg.OracleToken != "":
+		logger.Warn("ORACLE_TOKEN is too short: the Oracle route is off", slog.Int("min_length", oracle.MinTokenLength))
+	default:
+		logger.Info("Oracle route is off (ORACLE_TOKEN is not set)")
+	}
 
 	// File endpoints are served under both /v1/files and /files; see
 	// api.RegisterFileRoutes for why both prefixes exist.

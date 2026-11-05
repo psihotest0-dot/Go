@@ -35,6 +35,19 @@ func TestLoadTelegramAllowedChatIDs(t *testing.T) {
 	}
 }
 
+func TestLoadOracleToken(t *testing.T) {
+	t.Setenv("ORACLE_TOKEN", "")
+	if got := Load().OracleToken; got != "" {
+		t.Fatalf("unset ORACLE_TOKEN = %q, want empty (the Oracle routes stay off)", got)
+	}
+
+	// Spaces or a newline from a copied .env line are not part of the token.
+	t.Setenv("ORACLE_TOKEN", "  abc123  \r\n")
+	if got := Load().OracleToken; got != "abc123" {
+		t.Fatalf("ORACLE_TOKEN = %q, want it trimmed", got)
+	}
+}
+
 func TestLoadMaxUploadBytes(t *testing.T) {
 	tests := []struct {
 		name string

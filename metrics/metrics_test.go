@@ -19,6 +19,9 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 	LLMQueueWait.WithLabelValues("interactive").Observe(0.01)
 	Proposals.WithLabelValues("save_global_rule", "created").Inc()
 	WebToolRequests.WithLabelValues("web_search", "ok").Inc()
+	OracleRequests.WithLabelValues("answered").Inc()
+	OracleVerdicts.WithLabelValues("HOLD").Inc()
+	OracleLatency.Observe(1)
 	IngestJobs.WithLabelValues("completed").Inc()
 	IngestDuration.WithLabelValues("completed").Observe(1)
 	DistillationSummaries.WithLabelValues("ok").Inc()
@@ -40,6 +43,9 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 		"llm_queue_wait_seconds",
 		"agent_proposals_total",
 		"agent_web_tool_requests_total",
+		"oracle_requests_total",
+		"oracle_verdicts_total",
+		"oracle_latency_seconds",
 		"ingest_jobs_total",
 		"ingest_job_duration_seconds",
 		"distillation_summaries_total",

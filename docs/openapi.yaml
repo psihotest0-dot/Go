@@ -3,10 +3,13 @@ info:
   title: Agent API & Memory Backend
   version: 1.0.0
   description: >-
-    HTTP API of the go-monolith backend. Every route except `/healthz` and
-    `/metrics` is called on behalf of a user named by the `X-User-ID` header (a
-    UUID; the user is created on first use). There is no token: the server
-    listens on 127.0.0.1 unless `LISTEN_ADDR` says otherwise.
+    HTTP API of the go-monolith backend. Every route except `/healthz`,
+    `/metrics` and the two routes the trading bot calls (`/oracle/evaluate` and
+    `/oracle/ping`) is called on behalf of a user named by the `X-User-ID`
+    header (a UUID; the user is created on first use). There is no user token:
+    the server listens on 127.0.0.1 unless `LISTEN_ADDR` says otherwise. The
+    two bot routes take no `X-User-ID`; they need the bearer token
+    `ORACLE_TOKEN` instead.
 
 
     Errors of the plain routes are `text/plain` messages. Not found is always
@@ -703,7 +706,158 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /oracle/evaluate:
+    post:
+      summary: Second opinion on a trading signal (called by the trading bot)
+      description: >-
+        The trading bot sends one signal of its strategy with the numbers
+        around it and a few cleaned news headlines; the model answers
+        `APPROVE`, `VETO` or `HOLD` with a short reason in Bulgarian. The model
+        has no tools, no memory and no access to the database, and the news is
+        quoted to it as data.
+
+
+        The route is not served at all unless `ORACLE_TOKEN` is set to at
+        least 32 characters. Asking again about the same `signal_id` returns the
+        earlier verdict with `cached: true`: a `HOLD` for 3 minutes, an
+        `APPROVE` or `VETO` for 30. A call that finds the same signal already on
+        its way to the model waits for that answer. Every answered or failed
+        call is written to the journal (`GET /oracle/decisions`).
+
+
+        Any status other than 200 carries no verdict: the caller must treat it
+        as a `HOLD`, never as a yes.
+      security:
+      - OracleBearer: []
+      requestBody:
+        required: true
+        description: At most 64 KB. Fields this API does not know are ignored.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OracleRequest'
+      responses:
+        '200':
+          description: The verdict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleResult'
+        '400':
+          description: The body is not usable; `detail` names the field, never its content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+        '401':
+          description: Missing or wrong token
+          headers:
+            WWW-Authenticate:
+              schema:
+                type: string
+                example: Bearer realm="oracle"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+        '413':
+          description: The body is over 64 KB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+        '500':
+          description: A fault on the server side (the cause is in the log)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+        '502':
+          description: >-
+            The model did not answer (`model_unavailable`) or answered twice
+            with something that is not a verdict (`unusable_reply`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+        '504':
+          description: The model did not answer in time (`model_timeout`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+  /oracle/ping:
+    get:
+      summary: Is the Oracle route on, and is the token right?
+      description: >-
+        For the bot's `doctor` and `health` checks. It does not call the model.
+      security:
+      - OracleBearer: []
+      responses:
+        '200':
+          description: The route is on and the token is accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '401':
+          description: Missing or wrong token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleError'
+  /oracle/decisions:
+    get:
+      summary: The journal of the Oracle
+      description: >-
+        Every question the bot asked and what the model answered (or why it
+        did not), newest first. In shadow mode, when the bot ignores the
+        verdicts, this is the whole result. The journal belongs to the system,
+        not to a user. The request bodies are left out of the list.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      - name: before_id
+        in: query
+        description: The `next_before_id` of the previous page; 0 or absent starts at the newest.
+        schema:
+          type: integer
+          format: int64
+          minimum: 0
+      - name: symbol
+        in: query
+        description: Only this symbol (upper case).
+        schema:
+          type: string
+      responses:
+        '200':
+          description: A page of the journal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OracleDecisionList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
+  securitySchemes:
+    OracleBearer:
+      type: http
+      scheme: bearer
+      description: The value of `ORACLE_TOKEN` (at least 32 characters). Only the trading bot has it.
   parameters:
     UserId:
       name: X-User-ID
@@ -768,6 +922,182 @@ components:
     InternalError:
       description: Internal server error (the cause is in the server log)
   schemas:
+    OracleRequest:
+      type: object
+      required: [schema_version, signal]
+      properties:
+        schema_version:
+          type: integer
+          enum: [1]
+        mode:
+          type: string
+          enum: ['', shadow, active]
+          description: >-
+            What the bot does with the verdict. Only kept in the journal; the
+            model is not told.
+        signal:
+          $ref: '#/components/schemas/OracleSignal'
+        rationale:
+          type: string
+          description: Why the strategy produced the signal.
+        technicals:
+          type: object
+          additionalProperties: true
+          description: Indicators of the last closed bar; shown to the model as they come, sorted by name.
+        recent_bars:
+          type: array
+          description: The latest closed bars, oldest first (the newest 24 are kept).
+          items:
+            type: object
+            additionalProperties: true
+        volume_ratio:
+          description: Volume of the last bar against its norm.
+          oneOf:
+          - type: number
+          - type: string
+        live_price:
+          oneOf:
+          - type: number
+          - type: string
+        context:
+          type: object
+          additionalProperties: true
+          description: The account and the risk limits.
+        news:
+          type: array
+          description: Newest first; at most 5 are kept.
+          items:
+            $ref: '#/components/schemas/OracleNewsItem'
+    OracleSignal:
+      type: object
+      required: [signal_id, symbol, direction]
+      properties:
+        signal_id:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{1,128}$'
+        symbol:
+          type: string
+          pattern: '^[A-Z0-9][A-Z0-9./-]{0,14}$'
+        direction:
+          type: string
+          enum: [LONG, SHORT, FLAT]
+        timeframe:
+          type: string
+        version:
+          type: string
+        closed_bar_timestamp:
+          type: string
+        expires_at:
+          type: string
+        confidence:
+          type: number
+    OracleNewsItem:
+      type: object
+      description: >-
+        One article, already cleaned by the bot; it is cleaned and cut again
+        here (headline 160 characters, summary 300, one line, no addresses or
+        markup).
+      properties:
+        article_id:
+          description: For the journal; the model does not see it.
+        published_at:
+          type: string
+        source:
+          type: string
+        headline:
+          type: string
+        summary:
+          type: string
+        other_symbols:
+          type: integer
+          minimum: 0
+          description: How many other stocks the article names.
+    OracleResult:
+      type: object
+      required: [verdict, reason, request_id, model, cached, latency_ms]
+      properties:
+        verdict:
+          type: string
+          enum: [APPROVE, VETO, HOLD]
+        reason:
+          type: string
+          description: One short sentence in Bulgarian (at most 200 characters).
+        request_id:
+          type: string
+          description: The `X-Request-ID` of this call, to find it in the log.
+        model:
+          type: string
+        cached:
+          type: boolean
+          description: The verdict was given a moment ago for the same signal.
+        latency_ms:
+          type: integer
+          format: int64
+          description: 0 for a cached verdict.
+    OracleError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [unauthorized, invalid_request, unreadable_body, body_too_large, method_not_allowed, model_unavailable, model_timeout, unusable_reply, internal_error]
+        detail:
+          type: string
+          description: Only on `invalid_request`.
+    OracleEvaluation:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        request_id:
+          type: string
+        signal_id:
+          type: string
+        symbol:
+          type: string
+        mode:
+          type: string
+        status:
+          type: string
+          enum: [answered, failed]
+        verdict:
+          type: string
+          enum: [APPROVE, VETO, HOLD]
+          description: Absent when the status is `failed`.
+        reason:
+          type: string
+        model:
+          type: string
+        attempts:
+          type: integer
+          description: How many times the model was asked (1 or 2).
+        finish_reason:
+          type: string
+          description: '`length` means the reply was cut off at the token limit.'
+        prompt_tokens:
+          type: integer
+        completion_tokens:
+          type: integer
+        latency_ms:
+          type: integer
+        error:
+          type: string
+          description: Only when the status is `failed`.
+    OracleDecisionList:
+      type: object
+      properties:
+        decisions:
+          type: array
+          items:
+            $ref: '#/components/schemas/OracleEvaluation'
+        next_before_id:
+          type: integer
+          format: int64
+          description: The `before_id` of the next page; 0 when this was the last one.
     Message:
       type: object
       properties:

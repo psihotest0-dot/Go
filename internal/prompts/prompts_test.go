@@ -13,7 +13,7 @@ import (
 func TestEveryEmbeddedTemplateLoads(t *testing.T) {
 	names := TemplateNames()
 	require.NotEmpty(t, names)
-	for _, want := range []string{"chat_system.tmpl", "memory_reflector.tmpl", "rolling_summary.tmpl", "rolling_summary_input.tmpl"} {
+	for _, want := range []string{"chat_system.tmpl", "memory_reflector.tmpl", "oracle_system.tmpl", "rolling_summary.tmpl", "rolling_summary_input.tmpl"} {
 		assert.Contains(t, names, want)
 	}
 

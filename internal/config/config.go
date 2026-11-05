@@ -139,6 +139,10 @@ type Config struct {
 	TelegramAllowedChatIDs []int64
 	EnableAdaptiveSkip     bool
 	EnableDistillation     bool
+	// OracleToken is the bearer token the trading bot presents to POST
+	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
+	// accepts, means the Oracle routes are not served at all.
+	OracleToken string
 }
 
 // parseChatIDs reads a comma, semicolon or space separated list of Telegram chat
@@ -271,5 +275,6 @@ func Load() *Config {
 		EnableDistillation: distillation,
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
+		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),
 	}
 }

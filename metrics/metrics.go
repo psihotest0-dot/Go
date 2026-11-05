@@ -40,6 +40,28 @@ var (
 		Help: "Rule and memory proposals made by the model, by kind and outcome.",
 	}, []string{"kind", "outcome"}) // kind: save_global_rule, create_memory; outcome: created, approved, rejected
 
+	// OracleRequests counts the calls of the trading bot to POST /oracle/evaluate by how they
+	// ended. "answered" is a verdict from the model, "cached" one repeated from memory,
+	// "failed" a call the model could not answer (the bot treats it as a HOLD),
+	// "unauthorized" a wrong or missing token and "bad_request" a body that cannot be used.
+	OracleRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "oracle_requests_total",
+		Help: "Calls to the Oracle route by outcome.",
+	}, []string{"outcome"}) // outcome: answered, cached, failed, unauthorized, bad_request
+
+	// OracleVerdicts counts the verdicts the model gave (cached repeats are not counted again).
+	OracleVerdicts = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "oracle_verdicts_total",
+		Help: "Verdicts given by the Oracle model.",
+	}, []string{"verdict"}) // verdict: APPROVE, VETO, HOLD
+
+	// OracleLatency is the time of one call that reached the model, with its repeat.
+	OracleLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "oracle_latency_seconds",
+		Help:    "Time to answer one Oracle call that went to the model.",
+		Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 20, 30},
+	})
+
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_web_tool_requests_total",
