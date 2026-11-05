@@ -191,6 +191,18 @@ func TestUserMessageShowsUnknownFactsAndSortsThem(t *testing.T) {
 	assert.Less(t, a, strings.Index(msg, "- alpha: 2"))
 }
 
+func TestABarIsReadInTheUsualOrder(t *testing.T) {
+	req, _ := mustDecode(t, func(b map[string]any) {
+		b["recent_bars"] = []any{map[string]any{
+			"volume": 1000, "close": 3.5, "z_extra": "x", "start": "2026-11-05T14:45:00+00:00",
+			"low": 3.2, "open": 3.1, "high": 3.6, "a_extra": 7,
+		}}
+	})
+
+	assert.Contains(t, req.userMessage(),
+		"- start=2026-11-05T14:45:00+00:00 open=3.1 high=3.6 low=3.2 close=3.5 volume=1000 a_extra=7 z_extra=x\n")
+}
+
 func TestUserMessageWithoutNewsSaysSo(t *testing.T) {
 	req, _ := mustDecode(t, func(b map[string]any) { b["news"] = []any{} })
 	assert.Contains(t, req.userMessage(), "News about the stock: none in the last day.")

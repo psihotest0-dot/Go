@@ -232,10 +232,22 @@ func formatNews(n NewsItem) string {
 	return line
 }
 
+// barFieldOrder is the order a bar is read in; a field it does not name follows, sorted.
+var barFieldOrder = []string{"start", "open", "high", "low", "close", "volume"}
+
 func formatBar(bar map[string]any) string {
 	var parts []string
+	seen := map[string]bool{}
+	for _, key := range barFieldOrder {
+		if v, ok := bar[key]; ok {
+			parts = append(parts, key+"="+formatValue(v))
+			seen[key] = true
+		}
+	}
 	for _, key := range sortedKeys(bar) {
-		parts = append(parts, key+"="+formatValue(bar[key]))
+		if !seen[key] {
+			parts = append(parts, cleanText(key, 64)+"="+formatValue(bar[key]))
+		}
 	}
 	return strings.Join(parts, " ")
 }
