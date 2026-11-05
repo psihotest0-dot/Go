@@ -133,7 +133,7 @@ Scripts and tests: `TEST_DATABASE_URL` (integration tests; the database name mus
 ## How to Run
 
 ### Windows (PowerShell, the primary setup)
-Prerequisites: Go, Docker Desktop, [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) with the `bul` and `eng` language data, and [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows) (for example in `C:\poppler-<version>\Library\bin`); a model server (Lemonade) listening on `LLM_BASE_URL`.
+Prerequisites: Go, Docker Desktop, [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) with the `bul` and `eng` language data, and [Poppler for Windows](https://github.com/oschwartz10612/poppler-windows) (for example in `C:\poppler-<version>\Library\bin`) — the exact steps are in [Poppler and Tesseract on Windows](#poppler-and-tesseract-on-windows-pdf-text-and-ocr) below; a model server (Lemonade) listening on `LLM_BASE_URL`.
 
 ```powershell
 # 1. Settings: copy the template and fill it in (GRAFANA_ADMIN_PASSWORD is required)
@@ -148,6 +148,38 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 ```
 
 Start the backend **from the repository root**: `migrations`, `prompts` overrides, `storage` and `.env` are relative to the working directory (the start logs their absolute paths). `main.exe` loads `.env` by itself; for a single run you can also set a variable in the shell: `$env:LISTEN_ADDR = "127.0.0.1:8081"`. To pick up a new build, stop the old `main.exe` first (it keeps the file locked). A port that is already taken is reported at start: `netstat -ano | findstr :8080`.
+
+### Poppler and Tesseract on Windows (PDF text and OCR)
+Two programs outside Go and Docker read the PDFs and the images: **Poppler** (`pdftotext`, `pdfinfo`, `pdftoppm`) and **Tesseract**. The backend starts them as child processes of the host, so they must be installed on the machine that runs `main.exe`; the Docker containers do not need them. This is how the development machine is set up:
+
+| | Version | Where | Where it comes from |
+|---|---|---|---|
+| Poppler | 26.09.0 | `C:\poppler-26.09.0\` (the programs are in `Library\bin`) | the zip of a [poppler-windows release](https://github.com/oschwartz10612/poppler-windows/releases), unpacked; there is no installer |
+| Tesseract | 5.4.0.20240606 | `C:\Program Files\Tesseract-OCR\` | the Windows installer of the [UB Mannheim build](https://github.com/UB-Mannheim/tesseract/wiki) |
+| Language data | `bul`, `eng` (the installer adds `osd` and `script\Cyrillic`) | `C:\Program Files\Tesseract-OCR\tessdata\` | `eng` from the installer, `bul.traineddata` from [tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) |
+
+**Poppler**
+1. Download the release zip (`Release-<version>.zip`) and unpack it so that the `poppler-<version>` folder it contains sits directly under `C:\`. The result must be `C:\poppler-26.09.0\Library\bin\pdftotext.exe`. Keep one Poppler folder only: when several match, the last one by name is used.
+2. That is all the backend needs. It looks in `C:\poppler*\Library\bin` (then `C:\poppler*\bin` and `C:\Program Files\poppler*\...`) **before** `PATH`, and logs the programs it picked at startup (`PDF tool … version`). The order matters: Git for Windows ships `pdftotext` from Xpdf, a different program, and it can come first in `PATH`. If Poppler lives elsewhere, set `PDFTOTEXT_PATH`, `PDFTOPPM_PATH` and `PDFINFO_PATH` in `.env`.
+3. On the development machine `C:\poppler-26.09.0\Library\bin` is also in the system `PATH`, so the tools can be run by hand; the backend does not depend on it.
+
+**Tesseract**
+1. Run the installer (administrator rights) and keep the default folder, `C:\Program Files\Tesseract-OCR`.
+2. Bulgarian is not installed by default. Either tick it under "Additional language data" in the installer, or download `bul.traineddata` from [tessdata_fast](https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/bul.traineddata) and copy it to `C:\Program Files\Tesseract-OCR\tessdata\` (administrator rights). The development machine has the `tessdata_fast` file (1 675 212 bytes) next to the installer's own `eng.traineddata`, which is a `tessdata_fast` file too; the larger `tessdata_best` models have not been tried here.
+3. Put `C:\Program Files\Tesseract-OCR` into the system `PATH`. The backend runs the bare command `tesseract` and there is no setting for its location. A running process keeps the environment it started with, so open a new terminal and restart `main.exe` afterwards.
+4. Check both from a new PowerShell window:
+
+```powershell
+tesseract --version        # first line: tesseract v5.4.0.20240606
+tesseract --list-langs     # must list bul and eng
+& (Get-ChildItem C:\poppler*\Library\bin\pdftotext.exe | Select-Object -Last 1).FullName -v   # pdftotext version 26.09.0
+```
+
+**How the backend uses them** (to read a failure):
+- A PDF is read with `pdftotext`, its page count comes from `pdfinfo`. Pages with almost no text are treated as scans: `pdftoppm` renders the page at `OCR_DPI` (250 by default) and `tesseract stdin stdout -l bul+eng --psm 3 -c preserve_interword_spaces=1` reads it. An image file goes to the same command directly.
+- Tesseract is started single-threaded (`OMP_THREAD_LIMIT=1`), `OCR_CONCURRENCY` pages (6 by default) at a time, and one run is cut off after 2 minutes. These numbers were measured on the development machine (16 threads); see the comments in `internal/ingest/ocr.go`.
+- Only Poppler is reported at startup. A missing or broken Tesseract shows up when the first scan or image is ingested: every page fails, the backend gives up after about ten failed pages, and `backend.log` has `tesseract OCR failed`. Run the three commands above to find out which part is missing.
+- On Linux the same programs come from the packages `poppler-utils`, `tesseract-ocr`, `tesseract-ocr-bul` and `tesseract-ocr-eng` (not tried with this project).
 
 ### Linux / macOS
 ```bash
