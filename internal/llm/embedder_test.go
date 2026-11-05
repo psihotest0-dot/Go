@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
@@ -306,4 +308,137 @@ func TestEmbedRemoteDoesNotRetryAWrongModel(t *testing.T) {
 	_, err := embedOnly(f.URL).embedRemote(context.Background(), []string{"passage: текст"})
 	require.ErrorIs(t, err, ErrEmbedderModel)
 	assert.EqualValues(t, 1, f.embeds.Load(), "the wrong model would answer the same way again")
+}
+
+// cutAnswerShort sends the headers of a 200 and the first bytes of the body, then
+// closes the connection: the answer stops in the middle, short of its
+// Content-Length.
+func cutAnswerShort(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		t.Errorf("hijack: %v", err)
+		return
+	}
+	_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 5000\r\n\r\n{\"model\":\"intfl"))
+	_ = conn.Close()
+}
+
+func TestEmbedRemoteRetriesAnAnswerCutShort(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			cutAnswerShort(t, w)
+			return
+		}
+		answerWithOneVector(w)
+	}))
+	t.Cleanup(srv.Close)
+
+	vectors, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 1)
+	assert.EqualValues(t, 2, calls.Load(), "an answer that stopped in the middle was asked for again")
+}
+
+func TestEmbedRemoteRetriesAnEmptyAnswer(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusOK) // a 200 with no body at all
+			return
+		}
+		answerWithOneVector(w)
+	}))
+	t.Cleanup(srv.Close)
+
+	vectors, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+	require.NoError(t, err)
+	require.Len(t, vectors, 1)
+	assert.EqualValues(t, 2, calls.Load(), "an empty answer was asked for again")
+}
+
+// Only the statuses that say "not now" are repeated; the others say "not this
+// request", and the same request gets the same answer.
+func TestEmbedRemoteRetriesOnlyTheStatusesThatMayPass(t *testing.T) {
+	tests := []struct {
+		status  int
+		retried bool
+	}{
+		{http.StatusInternalServerError, true},
+		{http.StatusBadGateway, true},
+		{http.StatusServiceUnavailable, true},
+		{http.StatusGatewayTimeout, true},
+		{http.StatusRequestTimeout, true},
+		{http.StatusTooManyRequests, true},
+		{http.StatusBadRequest, false},
+		{http.StatusUnauthorized, false},
+		{http.StatusNotFound, false},
+		{http.StatusRequestEntityTooLarge, false},
+		{http.StatusUnprocessableEntity, false},
+	}
+	for _, tt := range tests {
+		t.Run(strconv.Itoa(tt.status), func(t *testing.T) {
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					http.Error(w, "no", tt.status)
+					return
+				}
+				answerWithOneVector(w)
+			}))
+			t.Cleanup(srv.Close)
+
+			vectors, err := embedOnly(srv.URL).embedRemote(context.Background(), []string{"passage: текст"})
+			if tt.retried {
+				require.NoError(t, err)
+				require.Len(t, vectors, 1)
+				assert.EqualValues(t, 2, calls.Load())
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), strconv.Itoa(tt.status))
+			assert.EqualValues(t, 1, calls.Load())
+		})
+	}
+}
+
+// A call whose context is done is not worth another attempt: the caller has
+// stopped waiting, whatever the error looks like.
+func TestEmbedRemoteDoesNotRetryOnceTheContextIsDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		cancel()
+		dropConnection(t, w)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := embedOnly(srv.URL).embedRemote(ctx, []string{"passage: текст"})
+	require.Error(t, err)
+	assert.EqualValues(t, 1, calls.Load(), "the caller gave up, so the call was not repeated")
+}
+
+// The time limit of EmbedTexts bounds all attempts together, the pause between
+// them included: when it runs out during the pause, the next attempt is not made.
+func TestEmbedRemoteStopsWaitingWhenTheLimitRunsOutBetweenAttempts(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		dropConnection(t, w)
+	}))
+	t.Cleanup(srv.Close)
+
+	// Shorter than embedRetryDelay, so the limit ends inside the first pause.
+	ctx, cancel := context.WithTimeout(context.Background(), embedRetryDelay/2)
+	t.Cleanup(cancel)
+
+	start := time.Now()
+	_, err := embedOnly(srv.URL).embedRemote(ctx, []string{"passage: текст"})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.EqualValues(t, 1, calls.Load(), "no second attempt after the limit")
+	assert.Less(t, time.Since(start), embedRetryDelay*4, "the call returned when the limit ran out, not after all attempts")
 }

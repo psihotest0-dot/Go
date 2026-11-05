@@ -232,8 +232,10 @@ func (c *HTTPEmbedder) readCache(ctx context.Context, keys []string) map[string]
 // connection (the Docker Desktop proxy in between, the CPU being busy).
 const embedAttempts = 3
 
-// embedRetryDelay is the pause before the third attempt; the second follows at
-// once, since a connection that is gone fails fast anyway.
+// embedRetryDelay is the pause before every retry, the first one included. It is
+// short on purpose: a dropped connection is replaced by a new one at once, so the
+// failures worth repeating need no more, and a service that stays down is
+// reported by the last attempt. The wait ends early when the context is done.
 const embedRetryDelay = 200 * time.Millisecond
 
 // embedTransportError is a failure to talk to the service at all: the connection
@@ -250,7 +252,9 @@ func (e *embedTransportError) Unwrap() error { return e.err }
 // (5xx, 429, 408) from "this request is wrong and will be refused again" (4xx).
 type embedStatusError struct{ status int }
 
-func (e *embedStatusError) Error() string { return fmt.Sprintf("embed service returned status %d", e.status) }
+func (e *embedStatusError) Error() string {
+	return fmt.Sprintf("embed service returned status %d", e.status)
+}
 
 // embedRetryable reports whether repeating the request could help. A wrong model
 // or vector size (ErrEmbedderModel) says the service is not the one the database
