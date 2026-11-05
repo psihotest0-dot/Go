@@ -1,5 +1,7 @@
 # Agent API & Memory Backend
 
+***English** · [Български](README.bg.md)*
+
 A high-performance Go monolith backing an AI Agent service, providing vector similarity search, long-term memory consolidation, and standard chat streaming. It runs on the host (Windows is the primary target, Linux/macOS work too); PostgreSQL, the embedder, Prometheus and Grafana run in Docker.
 
 ## Tech Stack
@@ -166,7 +168,7 @@ Two programs outside Go and Docker read the PDFs and the images: **Poppler** (`p
 **Tesseract**
 1. Run the installer (administrator rights) and keep the default folder, `C:\Program Files\Tesseract-OCR`.
 2. Bulgarian is not installed by default. Either tick it under "Additional language data" in the installer, or download `bul.traineddata` from [tessdata_fast](https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/bul.traineddata) and copy it to `C:\Program Files\Tesseract-OCR\tessdata\` (administrator rights). The development machine has the `tessdata_fast` file (1 675 212 bytes) next to the installer's own `eng.traineddata`, which is a `tessdata_fast` file too; the larger `tessdata_best` models have not been tried here.
-3. Put `C:\Program Files\Tesseract-OCR` into the system `PATH`. The backend runs the bare command `tesseract` and there is no setting for its location. A running process keeps the environment it started with, so open a new terminal and restart `main.exe` afterwards.
+3. Put `C:\Program Files\Tesseract-OCR` into the system `PATH` (on the development machine this was done by hand). The backend runs the bare command `tesseract` and there is no setting for its location. A running process keeps the environment it started with, so open a new terminal and restart `main.exe` afterwards.
 4. Check both from a new PowerShell window:
 
 ```powershell
