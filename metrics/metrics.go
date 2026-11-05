@@ -101,3 +101,16 @@ var (
 		Help: "Total number of embedding cache misses",
 	})
 )
+
+func init() {
+	// The Oracle series exist at zero from the start. A counter that first shows up at 1
+	// has no earlier sample to grow from, so increase() would miss the first event of its
+	// kind, and the alerts on refused or failed calls would miss the first refused or
+	// failed call.
+	for _, outcome := range []string{"answered", "cached", "failed", "unauthorized", "bad_request"} {
+		OracleRequests.WithLabelValues(outcome)
+	}
+	for _, verdict := range []string{"APPROVE", "VETO", "HOLD"} {
+		OracleVerdicts.WithLabelValues(verdict)
+	}
+}

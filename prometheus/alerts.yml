@@ -106,3 +106,30 @@ groups:
         annotations:
           summary: "More than 500 paid web searches/fetches in the last day"
           description: "About $0.75 per 1000 requests; a loop in the model's tool calls would show up here first."
+
+  - name: oracle
+    rules:
+      - alert: OracleGivesNoVerdict
+        expr: sum(increase(oracle_requests_total{outcome="failed"}[30m])) >= 2
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Oracle could not give a verdict (2 or more calls in 30 minutes)"
+          description: "Calls of the trading bot ended without a verdict: the model server is down or still loading, or its replies are unusable (see 'oracle evaluation failed' in backend.log). The bot reads each of them as HOLD: in shadow mode nothing is lost but the journal; once the Oracle is switched to active, no trade is made."
+
+      - alert: OracleCallsRefused
+        expr: sum by (outcome) (increase(oracle_requests_total{outcome=~"unauthorized|bad_request"}[15m])) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Oracle refuses calls ({{ $labels.outcome }})"
+          description: "unauthorized: a call with a wrong or missing token (the bot's ORACLE_BACKEND_TOKEN does not match ORACLE_TOKEN here, or something else on this machine is calling the route). bad_request: a body this side cannot use (the bot and the backend disagree about the contract; see 'oracle: invalid request' in backend.log). The bot reads a refused call as HOLD."
+
+      - alert: OracleSlow
+        expr: sum(rate(oracle_latency_seconds_sum[30m])) / sum(rate(oracle_latency_seconds_count[30m])) > 8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An Oracle call takes more than 8 s on average"
+          description: "The usual is 1.5 to 2.5 s. The bot gives up after about 10 s (the backend finishes the work and the next question finds the answer in the cache), but a slow model means busy model slots (chat, distillation) or a busy GPU. See ChatWaitsForTheLLM."

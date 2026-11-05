@@ -56,6 +56,39 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 	}
 }
 
+// The Oracle alerts use increase(); a counter that first appears at 1 would hide its first
+// event from them, so every outcome and verdict is exported at zero from the start.
+func TestOracleSeriesExistFromTheStart(t *testing.T) {
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+
+	labelValues := func(metric, label string) map[string]bool {
+		got := map[string]bool{}
+		for _, family := range families {
+			if family.GetName() != metric {
+				continue
+			}
+			for _, m := range family.GetMetric() {
+				for _, l := range m.GetLabel() {
+					if l.GetName() == label {
+						got[l.GetValue()] = true
+					}
+				}
+			}
+		}
+		return got
+	}
+
+	outcomes := labelValues("oracle_requests_total", "outcome")
+	for _, want := range []string{"answered", "cached", "failed", "unauthorized", "bad_request"} {
+		assert.True(t, outcomes[want], "oracle_requests_total{outcome=%q} is not exported", want)
+	}
+	verdicts := labelValues("oracle_verdicts_total", "verdict")
+	for _, want := range []string{"APPROVE", "VETO", "HOLD"} {
+		assert.True(t, verdicts[want], "oracle_verdicts_total{verdict=%q} is not exported", want)
+	}
+}
+
 func TestCountersOnlyGoUp(t *testing.T) {
 	before := counterValue(t, "cache_hits_total")
 
