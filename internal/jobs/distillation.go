@@ -86,8 +86,11 @@ func replyLogFields(resp openai.ChatCompletionResponse) []any {
 
 // distillationTarget is the number of concept summaries a file with rawChunks
 // raw chunks must have before its distillation counts as complete: 80 % of one
-// summary per batch. The worker (to skip a finished file) and the startup scan
-// (to find an unfinished one) both ask this, so they cannot disagree.
+// summary per batch, rounded down. A file of a single batch (up to 5 chunks) thus
+// has a target of 0, on purpose: there is nothing worth summarising in so little
+// text (TestDistillationThresholdIsOneFunction pins it). The worker (to skip a
+// finished file) and the startup scan (to find an unfinished one) both ask this,
+// so they cannot disagree.
 func distillationTarget(rawChunks int) int {
 	batches := (rawChunks + distillationBatchSize - 1) / distillationBatchSize
 	return batches * 8 / 10
