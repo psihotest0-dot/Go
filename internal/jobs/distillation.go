@@ -3,8 +3,10 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +32,57 @@ func (DistillationWorkerArgs) Kind() string {
 
 // distillationBatchSize is how many raw chunks are summarised together.
 const distillationBatchSize = 5
+
+// distillationAttempts is how many times a batch is sent to the model while its
+// reply cannot be used. The model samples, so the same input does not always give
+// the same reply: on 2026-11-05 one reply looped ("and-and-and-...") until it was
+// cut off at max_tokens, which left unfinished JSON, yet the same batch sent again
+// six times, with the same and with other sampler settings, always came back as a
+// normal summary of about 170 tokens. One more attempt costs a generation only in
+// that rare case (one batch in a couple of thousand); an error of the call itself
+// is not repeated here, the client already retries those.
+const distillationAttempts = 2
+
+// parseDistillationReply returns the summary in the model's reply, or an error
+// that says why the reply is unusable: no choice at all (used to be skipped
+// without a trace), JSON that does not parse (a reply cut off by max_tokens), or
+// an empty summary (it would be embedded and stored as an empty concept).
+func parseDistillationReply(resp openai.ChatCompletionResponse) (DistillationSchema, error) {
+	if len(resp.Choices) == 0 {
+		return DistillationSchema{}, errors.New("the reply has no choices")
+	}
+	content := resp.Choices[0].Message.Content
+	// Clean up potential markdown formatting
+	if len(content) > 7 && content[:7] == "```json" {
+		content = content[7:]
+		if len(content) > 3 && content[len(content)-3:] == "```" {
+			content = content[:len(content)-3]
+		}
+	}
+
+	var result DistillationSchema
+	if err := json.Unmarshal([]byte(content), &result); err != nil {
+		return DistillationSchema{}, err
+	}
+	if strings.TrimSpace(result.Summary) == "" {
+		return DistillationSchema{}, errors.New("the summary is empty")
+	}
+	return result, nil
+}
+
+// replyLogFields describes a reply for the log: why it ended (finish_reason
+// "length" means it was cut off at max_tokens), how long it was, and its start.
+func replyLogFields(resp openai.ChatCompletionResponse) []any {
+	if len(resp.Choices) == 0 {
+		return nil
+	}
+	choice := resp.Choices[0]
+	return []any{
+		"finish_reason", string(choice.FinishReason),
+		"completion_tokens", resp.Usage.CompletionTokens,
+		"content", logExcerpt(choice.Message.Content, maxLoggedModelRunes),
+	}
+}
 
 // distillationTarget is the number of concept summaries a file with rawChunks
 // raw chunks must have before its distillation counts as complete: 80 % of one
@@ -282,72 +335,75 @@ Constraints:
 			Temperature: 0.2,
 		}
 
-		resp, err := w.llmClient.ChatWithJSONSchema(ctx, req, DistillationSchema{})
-		if err != nil {
+		var result DistillationSchema
+		var callErr, replyErr error
+		for attempt := 1; attempt <= distillationAttempts; attempt++ {
+			resp, err := w.llmClient.ChatWithJSONSchema(ctx, req, DistillationSchema{})
+			if err != nil {
+				callErr = err
+				break
+			}
+			result, replyErr = parseDistillationReply(resp)
+			if replyErr == nil {
+				break
+			}
+			fields := append([]any{"batch_start", i, "attempt", attempt, "attempts", distillationAttempts, "error", replyErr}, replyLogFields(resp)...)
+			if attempt < distillationAttempts {
+				slog.Warn("distillation reply not usable, asking again", fields...)
+			} else {
+				slog.Error("failed to parse distillation response", fields...)
+			}
+		}
+		if callErr != nil {
 			if ctxErr := interrupted(i); ctxErr != nil {
 				return ctxErr
 			}
-			slog.Error("failed to distill batch", "batch_start", i, "error", err)
+			slog.Error("failed to distill batch", "batch_start", i, "error", callErr)
+			failCount++
+			continue
+		}
+		if replyErr != nil {
 			failCount++
 			continue
 		}
 
-		if len(resp.Choices) > 0 {
-			var result DistillationSchema
-			content := resp.Choices[0].Message.Content
-			// Clean up potential markdown formatting
-			if len(content) > 7 && content[:7] == "```json" {
-				content = content[7:]
-				if len(content) > 3 && content[len(content)-3:] == "```" {
-					content = content[:len(content)-3]
-				}
+		// Embed the summary
+		vectors, err := w.embedder.EmbedTexts(ctx, []string{result.Summary}, false)
+		if err != nil || len(vectors) == 0 || len(vectors[0]) != config.VectorDimension {
+			if ctxErr := interrupted(i); ctxErr != nil {
+				return ctxErr
 			}
-
-			err = json.Unmarshal([]byte(content), &result)
-			if err != nil {
-				slog.Error("failed to parse distillation response", "batch_start", i, "error", err, "content", logExcerpt(content, maxLoggedModelRunes))
-				failCount++
-				continue
-			}
-
-			// Embed the summary
-			vectors, err := w.embedder.EmbedTexts(ctx, []string{result.Summary}, false)
-			if err != nil || len(vectors) == 0 || len(vectors[0]) != config.VectorDimension {
-				if ctxErr := interrupted(i); ctxErr != nil {
-					return ctxErr
-				}
-				slog.Error("failed to embed distillation summary", "batch_start", i, "error", err)
-				failCount++
-				continue
-			}
-			embedding := pgvector.NewVector(vectors[0])
-
-			// Create metadata
-			metaMap := map[string]interface{}{
-				"source_chunk_ids": sourceChunkIDs,
-				"themes":           result.Themes,
-			}
-			metaBytes, err := json.Marshal(metaMap)
-			if err != nil {
-				slog.Error("failed to marshal metadata", "batch_start", i, "error", err)
-				failCount++
-				continue
-			}
-
-			// Store it directly
-			_, err = w.dbClient.SqlDB.ExecContext(ctx,
-				`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-				file.ID, file.UserID, nextConceptIndex, result.Summary, embedding, ingest.ChunkTypeConcept, metaBytes, config.DefaultEmbedModel,
-			)
-			if err != nil {
-				slog.Error("failed to insert concept_summary",
-					"chunk_index", nextConceptIndex, "error", err)
-				return fmt.Errorf("failed to insert concept_summary at index %d: %w", nextConceptIndex, err)
-			}
-			nextConceptIndex++
-			successCount++
+			slog.Error("failed to embed distillation summary", "batch_start", i, "error", err)
+			failCount++
+			continue
 		}
+		embedding := pgvector.NewVector(vectors[0])
+
+		// Create metadata
+		metaMap := map[string]interface{}{
+			"source_chunk_ids": sourceChunkIDs,
+			"themes":           result.Themes,
+		}
+		metaBytes, err := json.Marshal(metaMap)
+		if err != nil {
+			slog.Error("failed to marshal metadata", "batch_start", i, "error", err)
+			failCount++
+			continue
+		}
+
+		// Store it directly
+		_, err = w.dbClient.SqlDB.ExecContext(ctx,
+			`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			file.ID, file.UserID, nextConceptIndex, result.Summary, embedding, ingest.ChunkTypeConcept, metaBytes, config.DefaultEmbedModel,
+		)
+		if err != nil {
+			slog.Error("failed to insert concept_summary",
+				"chunk_index", nextConceptIndex, "error", err)
+			return fmt.Errorf("failed to insert concept_summary at index %d: %w", nextConceptIndex, err)
+		}
+		nextConceptIndex++
+		successCount++
 	}
 
 	slog.Info("DistillationWorker finished",
