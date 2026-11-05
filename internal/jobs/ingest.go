@@ -275,11 +275,11 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 		}
 
 		if len(fileIDs) != len(texts) ||
-		   len(userIDs) != len(texts) ||
-		   len(chunkIndices) != len(texts) ||
-		   len(embeddings) != len(texts) ||
-		   len(chunkTypes) != len(texts) ||
-		   len(metadatas) != len(texts) {
+			len(userIDs) != len(texts) ||
+			len(chunkIndices) != len(texts) ||
+			len(embeddings) != len(texts) ||
+			len(chunkTypes) != len(texts) ||
+			len(metadatas) != len(texts) {
 			return w.fail(ctx, job, file, fmt.Errorf(
 				"array length mismatch: fileIDs=%d userIDs=%d chunkIndices=%d texts=%d embeddings=%d chunkTypes=%d metadatas=%d",
 				len(fileIDs), len(userIDs), len(chunkIndices), len(texts),
@@ -428,4 +428,3 @@ func (w *IngestFileWorker) chunkText(text string, chunkSize, overlap int) []stri
 	}
 	return chunks
 }
-

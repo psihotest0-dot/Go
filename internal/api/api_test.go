@@ -220,6 +220,7 @@ func TestMemoriesAPI(t *testing.T) {
 	res = w.Result()
 	assert.Equal(t, http.StatusNoContent, res.StatusCode)
 }
+
 // createTestMessage stores a message through the API and returns the created message.
 // The parsed user id is put in the context because the handlers are called
 // directly, without the user middleware that normally resolves it.

@@ -71,7 +71,7 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 	userID := uuid.New()
 	query := "Find test fact"
 
-    mock.MatchExpectationsInOrder(false)
+	mock.MatchExpectationsInOrder(false)
 
 	expectEmptyConceptSearch(mock)
 	expectSearchTx(mock) // the chunk search
@@ -80,7 +80,7 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
-    mock.ExpectQuery(`(?i)chunk_vector_search AS`).
+	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 
@@ -104,7 +104,7 @@ func TestRetrieval_SearchChunks_Mock(t *testing.T) {
 	userID := uuid.New()
 	query := "Find test chunk"
 
-    mock.MatchExpectationsInOrder(false)
+	mock.MatchExpectationsInOrder(false)
 
 	expectEmptyConceptSearch(mock)
 	expectSearchTx(mock) // the chunk search
@@ -113,7 +113,7 @@ func TestRetrieval_SearchChunks_Mock(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
-    mock.ExpectQuery(`(?i)chunk_vector_search AS`).
+	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 
@@ -282,7 +282,7 @@ func TestRetrieval_SearchAll_SearchError(t *testing.T) {
 	expectSearchTx(mock) // the chunk search
 
 	mock.ExpectQuery(`(?i).*WITH vector_search AS.*`).WillReturnError(fmt.Errorf("db search fail"))
-    mock.ExpectQuery(`(?i)chunk_vector_search AS`).WillReturnError(fmt.Errorf("db search fail"))
+	mock.ExpectQuery(`(?i)chunk_vector_search AS`).WillReturnError(fmt.Errorf("db search fail"))
 
 	_, _, err = svc.SearchAll(context.Background(), userID, query, 10)
 	require.ErrorContains(t, err, "db search fail")
@@ -311,7 +311,7 @@ func TestRetrieval_SearchAll_MemoriesAndChunks(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}).
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
-    mock.ExpectQuery(`(?i)chunk_vector_search AS`).
+	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
 			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
 

@@ -1,7 +1,5 @@
 package retrieval_test
 
-
-
 import (
 	"context"
 	"fmt"

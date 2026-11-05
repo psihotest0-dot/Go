@@ -211,7 +211,6 @@ func run() error {
 		}()
 	}
 
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", apiService.HealthzHandler)
 	mux.HandleFunc("/metrics", apiService.MetricsHandler)
