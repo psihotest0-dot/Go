@@ -203,7 +203,7 @@ export EMBEDDER_URL="http://localhost:8000"
 
 go run main.go
 ```
-`docker compose up -d` starts the whole infrastructure: `db` (from `docker-compose.override.yml`, with a named volume `go_pgdata`), the FastAPI embedder, Prometheus and Grafana. Their ports are published on `127.0.0.1` only (5432, 8000, 9090, 3000). You can use your own PostgreSQL instead if it has `pgvector` and `pg_trgm`.
+`docker compose up -d` starts the whole infrastructure: `db` (from `docker-compose.override.yml`, with a named volume `go_pgdata`), the FastAPI embedder, Prometheus, Grafana and `backup` (the database archive, see below). Their ports are published on `127.0.0.1` only (5432, 8000, 9090, 3000). Every service has `restart: unless-stopped`, so after a reboot (Docker Desktop must start with Windows) they come back by themselves; the backend is not one of them: `main.exe` runs on the host and has to be started by hand. You can use your own PostgreSQL instead if it has `pgvector` and `pg_trgm`.
 
 ### Tools & Migrations
 Pending database migrations are applied when the backend starts (`AUTO_MIGRATE`, River's own tables as well). To control when that happens — for instance to take a backup first — set `AUTO_MIGRATE=false` and run:
@@ -219,6 +219,7 @@ Backup, restore and reindex scripts are in `scripts/`; `Backup and Restore.md` h
 - `./scripts/restore.sh` uses `pg_restore --clean --if-exists`
 - `./scripts/reindex.sh` rebuilds concurrent HNSW indices.
 - `scripts\backup-task.ps1` registers a daily Windows Scheduled Task (`go-monolith-backup`) that runs `backup.ps1` and keeps the dumps outside the repository.
+- The `backup` compose service (`scripts/db-backup-loop.sh`) archives the database while Docker runs, the way the trading bot does: at start and every 6 hours it writes a checked dump without `embedding_cache` (~250 MB) and, about once a day, a full one (~470 MB) to `$BACKUP_DIR/auto`, and copies `storage/` to `$BACKUP_DIR/storage`. Failures show as `Backup FAILED` in `docker compose logs backup` and as `unhealthy` in `docker ps`. Settings: `BACKUP_DIR`, `DB_BACKUP_*`, `TZ` in `.env.example`; details in `Backup and Restore.md`.
 - `scripts\build.ps1` builds `main.exe`.
 
 > **Take backups.** On 2026-10-30 a `DELETE FROM users` cascade wiped the ingested files, the chunks and their embeddings. Nothing could be restored because no dump had ever been taken — the 2026-10-30 incident.

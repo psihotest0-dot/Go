@@ -1,0 +1,4 @@
+# Shell scripts run inside Linux containers (scripts/db-backup-loop.sh is mounted into the
+# `backup` service): a CRLF checkout (core.autocrlf=true on Windows) would break them
+# ("sh: 1: set: Illegal option -" / "\r: command not found").
+*.sh text eol=lf

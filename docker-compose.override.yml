@@ -1,6 +1,7 @@
 services:
   db:
     image: ankane/pgvector:v0.5.1
+    restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
     environment:
@@ -36,6 +37,46 @@ services:
       - effective_cache_size=8GB
       - -c
       - max_parallel_workers_per_gather=4
+
+  # The database archive OUTSIDE Docker, the way the trading bot does it. Every
+  # DB_BACKUP_INTERVAL_SECONDS (default 6 h, the first round at start) it writes a checked dump
+  # to ${BACKUP_DIR}/auto (a quick one without embedding_cache, plus a full one about once a
+  # day) and copies storage/ (the uploaded originals) additively to ${BACKUP_DIR}/storage.
+  # Set BACKUP_DIR in .env to a folder OUTSIDE the repository and outside OneDrive (default:
+  # ./backups). If a round fails the log says "Backup FAILED" (`docker compose logs backup`)
+  # and it tries again in 10 minutes; `docker ps` shows the service unhealthy when no
+  # quick dump is newer than one interval + 1 h. It does not replace scripts/backup-task.ps1
+  # (the daily Windows task): the two use different folders and never prune each other.
+  # What the script does, step by step: scripts/db-backup-loop.sh.
+  backup:
+    image: ankane/pgvector:v0.5.1   # the same image as db: its pg_dump always matches the server
+    restart: unless-stopped
+    init: true                      # `docker stop` reaches the script at once, not after 10 s
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["sh", "/usr/local/bin/db-backup-loop.sh"]
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: postgres          # the same development password as the db service above
+      PGDATABASE: postgres
+      TZ: ${TZ:-UTC}                # the time zone of the file names and the log
+      DB_BACKUP_INTERVAL_SECONDS: ${DB_BACKUP_INTERVAL_SECONDS:-21600}
+      DB_BACKUP_KEEP: ${DB_BACKUP_KEEP:-12}
+      DB_BACKUP_KEEP_FULL: ${DB_BACKUP_KEEP_FULL:-7}
+    volumes:
+      - ./scripts/db-backup-loop.sh:/usr/local/bin/db-backup-loop.sh:ro
+      - ./storage:/storage:ro
+      - ${BACKUP_DIR:-./backups}:/backups
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - find /backups/auto -maxdepth 1 -name '*_nocache.dump' -mmin -$$(( $$DB_BACKUP_INTERVAL_SECONDS / 60 + 60 )) | grep -q .
+      interval: 10m
+      timeout: 10s
+      retries: 1
+      start_period: 15m
 
 volumes:
   pgdata:

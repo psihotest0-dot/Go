@@ -205,7 +205,7 @@ export EMBEDDER_URL="http://localhost:8000"
 
 go run main.go
 ```
-`docker compose up -d` стартира цялата инфраструктура: `db` (от `docker-compose.override.yml`, с именуван том `go_pgdata`), ембедъра на FastAPI, Prometheus и Grafana. Портовете им са публикувани само на `127.0.0.1` (5432, 8000, 9090, 3000). Можете да ползвате и собствен PostgreSQL, ако има `pgvector` и `pg_trgm`.
+`docker compose up -d` стартира цялата инфраструктура: `db` (от `docker-compose.override.yml`, с именуван том `go_pgdata`), ембедъра на FastAPI, Prometheus, Grafana и `backup` (архивът на базата, вж. по-долу). Портовете им са публикувани само на `127.0.0.1` (5432, 8000, 9090, 3000). Всяка услуга има `restart: unless-stopped`, така че след рестарт (Docker Desktop трябва да тръгва с Windows) се връщат сами; бекендът не е от тях: `main.exe` върви на хоста и се стартира на ръка. Можете да ползвате и собствен PostgreSQL, ако има `pgvector` и `pg_trgm`.
 
 ### Инструменти и миграции
 Чакащите миграции на базата се прилагат при старт на бекенда (`AUTO_MIGRATE`, включително собствените таблици на River). За да контролирате кога става това — например за да направите първо бекъп — задайте `AUTO_MIGRATE=false` и пуснете:
@@ -221,6 +221,7 @@ go run main.go
 - `./scripts/restore.sh` ползва `pg_restore --clean --if-exists`
 - `./scripts/reindex.sh` сглобява наново едновременните HNSW индекси.
 - `scripts\backup-task.ps1` регистрира дневна планирана задача на Windows (`go-monolith-backup`), която пуска `backup.ps1` и пази дъмповете извън хранилището.
+- Услугата `backup` в compose (`scripts/db-backup-loop.sh`) архивира базата, докато върви Docker, както прави ботът: при старт и на всеки 6 часа записва проверен дъмп без `embedding_cache` (~250 MB) и, около веднъж на ден, пълен (~470 MB) в `$BACKUP_DIR/auto`, и копира `storage/` в `$BACKUP_DIR/storage`. Провалът се вижда като `Backup FAILED` в `docker compose logs backup` и като `unhealthy` в `docker ps`. Настройки: `BACKUP_DIR`, `DB_BACKUP_*`, `TZ` в `.env.example`; подробности — в `Backup and Restore.md`.
 - `scripts\build.ps1` сглобява `main.exe`.
 
 > **Правете бекъпи.** На 2026-10-30 каскадата на `DELETE FROM users` изтри ингестнатите файлове, откъсите и вгражданията им. Нищо не можа да се възстанови, защото никога не бе правен дъмп — инцидентът от 2026-10-30.

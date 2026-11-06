@@ -1,8 +1,14 @@
+# Every service (here and in docker-compose.override.yml) has `restart: unless-stopped`: after a
+# reboot or a crash of the Docker engine the containers that were running come back by
+# themselves; one stopped by hand (`docker compose stop` / `down`) stays stopped. Docker Desktop
+# itself must start with Windows (Settings > General > "Start Docker Desktop when you sign in").
+# The backend is NOT a container: main.exe runs on the host and nothing here starts it.
 services:
   embedder:
     build:
       context: ./services/embedder
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       # Published on the loopback interface only: the host backend is the only client.
       - "127.0.0.1:8000:8000"
@@ -15,6 +21,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.15.0
+    restart: unless-stopped
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
@@ -28,6 +35,7 @@ services:
 
   grafana:
     image: grafana/grafana:13.2.3
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
