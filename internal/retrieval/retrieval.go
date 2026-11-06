@@ -42,14 +42,30 @@ const (
 	// language gap is.
 	chunkCrossLanguageMargin = 0.03
 
-	// conceptMaxDistance is the same for concept summaries. They are written in
-	// English, so a Bulgarian question is farther from them: the nearest summary
-	// was at 0.167-0.250 (median 0.200) for the 20 questions the books cover and at
-	// 0.236-0.298 (median 0.270) for the 8 they do not. The two ranges overlap a
-	// little, so 0.25 cannot separate them cleanly, but it keeps every summary of a
-	// covered question and drops most of the rest; the old 0.40 returned three
-	// unrelated summaries for a question about the capital of France.
+	// conceptMaxDistance is the same for concept summaries, where the summaries are
+	// only a means: their themes widen the text half of a chunk search (SearchAll,
+	// SearchRawChunks), which is measured to find the right book 9 times of 11 against
+	// 6 without. They are written in English, so a Bulgarian question is farther from
+	// them: the nearest summary was at 0.167-0.250 (median 0.200) for the 20 questions
+	// the books cover and at 0.236-0.298 (median 0.270) for the 8 they do not. The two
+	// ranges overlap a little, so 0.25 cannot separate them cleanly, but it keeps every
+	// summary of a covered question and drops most of the rest; the old 0.40 returned
+	// three unrelated summaries for a question about the capital of France.
 	conceptMaxDistance = 0.25
+
+	// contextConceptMaxDistance is the limit for the summaries that go into the chat
+	// prompt as "ideas from the books" (SearchForContext), where an unrelated summary
+	// is not a harmless miss: the model is told to weave it into its answer. Measured
+	// on 2026-11-06 with 56 files (16 211 summaries) on 16 questions the books answer,
+	// 4 of the real chat that they answer and 21 that they do not (greetings, thanks,
+	// remarks about the day, the weather, football): the nearest summary of the 21 was
+	// at 0.174-0.271 (a few books - Dalio, "Chicken Soup", "The Innovators" - are the
+	// nearest to almost any short Bulgarian remark), and for the questions the books
+	// answer it was the right book only below 0.17 (8 of 9; from 0.18 up 1 of 7). So
+	// 0.17 lets in none of the 21 and loses one useful match (0.182), but the margin to
+	// the nearest unrelated one is 0.004: re-measure when files are added. The old
+	// 0.25, calibrated on 4-8 books, let in 18 of the 21.
+	contextConceptMaxDistance = 0.17
 
 	// conceptMatchCount is how many concept summaries a search may return.
 	conceptMatchCount = 3
@@ -233,16 +249,16 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 	return res, nil
 }
 
-// searchConcepts returns the concept-summary chunks closest to queryVec along
-// with the themes recorded in their metadata.
-func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID, queryVec []float32) ([]SearchResult, []string, error) {
+// searchConcepts returns the concept-summary chunks closer to queryVec than
+// maxDistance along with the themes recorded in their metadata.
+func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID, queryVec []float32, maxDistance float64) ([]SearchResult, []string, error) {
 	var rows []db.SearchConceptChunksRow
 	err := s.db.WithSearchSettings(ctx, func(q *db.Queries) (err error) {
 		rows, err = q.SearchConceptChunks(ctx, db.SearchConceptChunksParams{
 			UserID:      userID,
 			Embedding:   pgvector.NewVector(queryVec),
 			VectorLimit: db.SearchVectorCandidates,
-			MaxDistance: conceptMaxDistance,
+			MaxDistance: maxDistance,
 			MatchCount:  conceptMatchCount,
 		})
 		return err
@@ -287,7 +303,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	var concepts []SearchResult
 	var themes []string
 	if queryVec != nil {
-		concepts, themes, err = s.searchConcepts(ctx, userID, queryVec)
+		concepts, themes, err = s.searchConcepts(ctx, userID, queryVec, conceptMaxDistance)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to search concept chunks", "error", err)
 		}
@@ -372,7 +388,7 @@ func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUI
 	})
 	eg.Go(func() error {
 		var conceptErr error
-		conceptChunks, _, conceptErr = s.searchConcepts(childCtx, userID, queryVec)
+		conceptChunks, _, conceptErr = s.searchConcepts(childCtx, userID, queryVec, contextConceptMaxDistance)
 		if conceptErr != nil {
 			slog.WarnContext(ctx, "failed to search concept chunks", "error", conceptErr)
 		}
@@ -405,7 +421,7 @@ func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID
 	var themes []string
 	if queryVec != nil {
 		// The themes only widen the search; without them it still works.
-		if _, themes, err = s.searchConcepts(ctx, userID, queryVec); err != nil {
+		if _, themes, err = s.searchConcepts(ctx, userID, queryVec, conceptMaxDistance); err != nil {
 			slog.WarnContext(ctx, "failed to search concept chunks for themes", "error", err)
 			themes = nil
 		}

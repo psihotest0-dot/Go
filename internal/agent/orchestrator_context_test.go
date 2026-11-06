@@ -4,7 +4,44 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+
+	"go-monolith/internal/db"
+	"go-monolith/internal/retrieval"
 )
+
+// The profile facts are in the prompt at every message, so a retrieved memory that
+// is one of them is dropped; one that is not stays.
+func TestWithoutProfileMemoriesDropsWhatTheProfileAlreadyCarries(t *testing.T) {
+	inProfile, outside := uuid.New(), uuid.New()
+	profile := []db.Memory{{ID: inProfile, Content: "Ивайло се казва."}}
+	retrieved := []retrieval.SearchResult{
+		{ID: inProfile, Content: "Ивайло се казва."},
+		{ID: outside, Content: "Ивайло има куче."},
+	}
+
+	got := withoutProfileMemories(retrieved, profile)
+
+	assert.Equal(t, []retrieval.SearchResult{{ID: outside, Content: "Ивайло има куче."}}, got)
+}
+
+func TestWithoutProfileMemoriesLeavesEverythingWhenThereIsNoProfile(t *testing.T) {
+	retrieved := []retrieval.SearchResult{{ID: uuid.New(), Content: "a"}, {ID: uuid.New(), Content: "b"}}
+
+	assert.Equal(t, retrieved, withoutProfileMemories(retrieved, nil))
+	assert.Empty(t, withoutProfileMemories(nil, []db.Memory{{ID: uuid.New()}}))
+}
+
+// With no more memories than the profile holds, every retrieved one is a repeat.
+func TestWithoutProfileMemoriesDropsAllWhenTheProfileHoldsThemAll(t *testing.T) {
+	a, b := uuid.New(), uuid.New()
+	profile := []db.Memory{{ID: a}, {ID: b}}
+	retrieved := []retrieval.SearchResult{{ID: b}, {ID: a}}
+
+	assert.Empty(t, withoutProfileMemories(retrieved, profile))
+}
 
 func TestTruncateRunes(t *testing.T) {
 	tests := []struct {

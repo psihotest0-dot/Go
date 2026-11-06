@@ -170,6 +170,32 @@ func shouldSkipRetrieval(query string) bool {
 	return false
 }
 
+// topMemoryLimit is how many memories, by importance, the prompt always carries as
+// profile facts.
+const topMemoryLimit = 15
+
+// withoutProfileMemories returns the retrieved memories that are not among the
+// profile facts. While the memories are no more than topMemoryLimit, the profile
+// holds all of them, and the search for the ones that fit the message returned the
+// same four at every message (measured on 2026-11-06: 4 memories, all 4 returned
+// for 47 of 47 questions, whatever they were about).
+func withoutProfileMemories(retrieved []retrieval.SearchResult, profile []db.Memory) []retrieval.SearchResult {
+	if len(retrieved) == 0 || len(profile) == 0 {
+		return retrieved
+	}
+	inProfile := make(map[uuid.UUID]struct{}, len(profile))
+	for _, m := range profile {
+		inProfile[m.ID] = struct{}{}
+	}
+	kept := make([]retrieval.SearchResult, 0, len(retrieved))
+	for _, r := range retrieved {
+		if _, ok := inProfile[r.ID]; !ok {
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
 func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req ChatRequest) (chatContext, []string, error) {
 	var chatCtx chatContext
 	var memoryIDs []string
@@ -199,6 +225,22 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			slog.WarnContext(ctx, "Failed to search for context", "error", searchErr, "session_id", req.SessionID)
 		}
 	}
+
+	// Fetch Top Memories. Best effort as well, so a profile lookup failure does
+	// not abort the generation. They are fetched before the retrieved memories are
+	// used because the prompt carries them at every message, and a retrieved memory
+	// that is one of them would only say the same thing twice.
+	topMemoriesDb, err := o.db.Queries.GetTopMemories(ctx, db.GetTopMemoriesParams{
+		UserID: userID,
+		Limit:  topMemoryLimit,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to get top memories", "err", err, "session_id", req.SessionID)
+	}
+	for _, m := range topMemoriesDb {
+		chatCtx.TopMemories = append(chatCtx.TopMemories, m.Content)
+	}
+	memories = withoutProfileMemories(memories, topMemoriesDb)
 
 	for _, m := range memories {
 		chatCtx.Memories = append(chatCtx.Memories, m.Content)
@@ -250,19 +292,6 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 		slog.ErrorContext(ctx, "failed to get global rules", "err", err, "session_id", req.SessionID)
 	} else {
 		chatCtx.Rules = rules
-	}
-
-	// Fetch Top Memories. Best effort as well, so a profile lookup failure does
-	// not abort the generation.
-	topMemoriesDb, err := o.db.Queries.GetTopMemories(ctx, db.GetTopMemoriesParams{
-		UserID: userID,
-		Limit:  15,
-	})
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to get top memories", "err", err, "session_id", req.SessionID)
-	}
-	for _, m := range topMemoriesDb {
-		chatCtx.TopMemories = append(chatCtx.TopMemories, m.Content)
 	}
 
 	// Fetch Message History
