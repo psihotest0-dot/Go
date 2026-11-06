@@ -36,6 +36,7 @@ const (
 	sourceWebSearch          = "web_search"
 	sourceWebFetch           = "web_fetch"
 	sourceSearchDocuments    = "search_documents"
+	sourceListDocuments      = "list_documents"
 	sourceRetrievedDocuments = "retrieved_documents"
 )
 

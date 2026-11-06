@@ -292,9 +292,22 @@ func (o *Orchestrator) generateResponse(
 	var assistantContent, reasoningContent strings.Builder
 	var executed []openai.ToolCall
 
+	// A question about what the library holds is answered from the list of its
+	// files, not from the model's guess. Left to itself the model answers "Не
+	// разполагам с книгата" without a look (0 of 4 with the real chat's history), so
+	// the first round offers that tool alone and requires a call. llama-server
+	// ignores a tool_choice that names a function, but it keeps "required" - and
+	// with one tool on offer that is the same thing.
+	forceLibrary := onlyTool(tools, listDocumentsTool) != nil && asksAboutLibrary(lastUserContent(messages))
+
 	toolRounds := 0
 	for {
-		result, err := o.streamOnce(ctx, o.chatRequest(messages, tools), onDelta)
+		req := o.chatRequest(messages, tools)
+		if forceLibrary && toolRounds == 0 {
+			req.Tools = onlyTool(tools, listDocumentsTool)
+			req.ToolChoice = "required"
+		}
+		result, err := o.streamOnce(ctx, req, onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {

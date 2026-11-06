@@ -58,6 +58,8 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeSearchMemories(ctx, userID, args)
 	case "search_documents", "search_knowledge_base":
 		return r.executeSearchDocuments(ctx, userID, args)
+	case listDocumentsTool:
+		return r.executeListDocuments(ctx, userID)
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
 	case "web_search":

@@ -99,6 +99,7 @@ func toolDefinitions() []openai.Tool {
 				},
 			},
 		},
+		libraryToolDefinition(),
 		{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
