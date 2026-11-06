@@ -168,3 +168,67 @@ func TestTheSchemaRefusesAnInconsistentRow(t *testing.T) {
 		assert.Error(t, tt.err, tt.name)
 	}
 }
+
+// The journal tells the bot's test questions from its signals by the version the bot
+// sent, and the periods of the prompt by the label the Service stamped.
+func TestDBStoreKeepsThePromptVersionAndReadsTheSignalVersion(t *testing.T) {
+	store, _, prefix := openStore(t)
+	ctx := context.Background()
+
+	probe := answered(prefix, "probe", "AAPL", VerdictVeto)
+	probe.PromptVersion = "0123456789ab"
+	probe.Request = []byte(`{"schema_version":1,"signal":{"symbol":"AAPL","version":"oracle-probe"}}`)
+	_, err := store.Save(ctx, probe)
+	require.NoError(t, err)
+
+	real := answered(prefix, "real", "KO", VerdictApprove)
+	real.PromptVersion = "fedcba987654"
+	real.Request = []byte(`{"schema_version":1,"signal":{"symbol":"KO","version":"1.0.0"}}`)
+	_, err = store.Save(ctx, real)
+	require.NoError(t, err)
+
+	old := answered(prefix, "old", "MSFT", VerdictHold) // no label, and a body that names no version
+	old.Request = []byte(`{"schema_version":1}`)
+	_, err = store.Save(ctx, old)
+	require.NoError(t, err)
+
+	rows, err := store.List(ctx, ListFilter{Limit: 200})
+	require.NoError(t, err)
+	got := map[string]Evaluation{}
+	for _, r := range rows {
+		got[r.SignalID] = r
+	}
+
+	assert.Equal(t, "oracle-probe", got[prefix+"probe"].SignalVersion)
+	assert.Equal(t, "0123456789ab", got[prefix+"probe"].PromptVersion)
+	assert.Equal(t, "1.0.0", got[prefix+"real"].SignalVersion)
+	assert.Equal(t, "fedcba987654", got[prefix+"real"].PromptVersion)
+	assert.Empty(t, got[prefix+"old"].SignalVersion, "a body without a version has none")
+	assert.Empty(t, got[prefix+"old"].PromptVersion, "not recorded")
+}
+
+func TestTheSchemaGuardsTheTwoVersionColumns(t *testing.T) {
+	_, database, prefix := openStore(t)
+	ctx := context.Background()
+
+	insert := func(signalID, promptVersion string) error {
+		_, err := database.SqlDB.ExecContext(ctx, `
+			INSERT INTO oracle_evaluations (signal_id, symbol, status, prompt_version, request)
+			VALUES ($1, 'AAPL', 'failed', $2, '{}')`, signalID, promptVersion)
+		return err
+	}
+	require.NoError(t, insert(prefix+"v-empty", ""), "not recorded is allowed")
+	require.NoError(t, insert(prefix+"v-hex", "0123456789ab"))
+
+	assert.Error(t, insert(prefix+"v-short", "0123456789a"), "11 characters")
+	assert.Error(t, insert(prefix+"v-long", "0123456789abc"), "13 characters")
+	assert.Error(t, insert(prefix+"v-upper", "0123456789AB"), "upper case")
+	assert.Error(t, insert(prefix+"v-text", "not-a-hash!!"), "not hex")
+
+	// signal_version is generated from the request: it cannot be written, so it cannot
+	// disagree with the body it is read from.
+	_, err := database.SqlDB.ExecContext(ctx, `
+		INSERT INTO oracle_evaluations (signal_id, symbol, status, signal_version, request)
+		VALUES ($1, 'AAPL', 'failed', 'forged', '{"signal":{"version":"1.0.0"}}')`, prefix+"v-forged")
+	assert.Error(t, err, "a generated column refuses a value")
+}

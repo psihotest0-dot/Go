@@ -52,6 +52,7 @@ func (s *DBStore) Save(ctx context.Context, e Evaluation) (Evaluation, error) {
 		LatencyMs:        int32(e.LatencyMS),
 		Error:            e.Error,
 		Request:          request,
+		PromptVersion:    e.PromptVersion,
 	})
 	if err != nil {
 		return e, fmt.Errorf("save the oracle evaluation: %w", err)
@@ -89,6 +90,8 @@ func (s *DBStore) List(ctx context.Context, f ListFilter) ([]Evaluation, error) 
 			CompletionTokens: int(r.CompletionTokens),
 			LatencyMS:        int(r.LatencyMs),
 			Error:            r.Error,
+			PromptVersion:    r.PromptVersion,
+			SignalVersion:    r.SignalVersion.String,
 		})
 	}
 	return out, nil

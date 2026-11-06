@@ -173,11 +173,12 @@ func (s *Service) ask(ctx context.Context, req *Request, raw []byte, requestID s
 	s.journal(ctx, ev)
 
 	res := Result{
-		Verdict:   answer.Verdict,
-		Reason:    answer.Reason,
-		RequestID: requestID,
-		Model:     ev.Model,
-		LatencyMS: elapsed.Milliseconds(),
+		Verdict:       answer.Verdict,
+		Reason:        answer.Reason,
+		RequestID:     requestID,
+		Model:         ev.Model,
+		LatencyMS:     elapsed.Milliseconds(),
+		PromptVersion: ev.PromptVersion,
 	}
 	cached := res
 	cached.Cached = true
@@ -193,6 +194,9 @@ func (s *Service) query(ctx context.Context, req *Request, ev *Evaluation) (Answ
 	if err != nil {
 		return Answer{}, fmt.Errorf("render the Oracle prompt: %w", err)
 	}
+	// Stamped before the model is asked, so that a call that fails is labelled with the
+	// question it would have asked too.
+	ev.PromptVersion = currentPromptParts(system).version()
 	chat := openai.ChatCompletionRequest{
 		Messages: []openai.ChatCompletionMessage{
 			{Role: openai.ChatMessageRoleSystem, Content: system},

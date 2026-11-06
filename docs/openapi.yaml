@@ -1034,6 +1034,21 @@ components:
           type: integer
           format: int64
           description: 0 for a cached verdict.
+        prompt_version:
+          type: string
+          pattern: '^[0-9a-f]{12}$'
+          description: >-
+            A label of the question the model was asked: the first 12 hex characters
+            of a SHA-256 over the system prompt as rendered, the JSON schema of the
+            answer, the call settings of the Oracle (temperature, token limit, number
+            of attempts, limit on the reason) and the layout of the facts. A change to
+            any of them gives the next answers a new label, which is how a changed
+            prompt is told apart afterwards (the bot's evaluation starts a new period
+            then). For a cached verdict it is the label of the call that produced it.
+            Not part of the label: the model (the `model` field), the model server's
+            own settings (context size, default sampling) and anything the LLM client
+            adds around the request. Additive: it is absent from the six required
+            fields, so a client that does not know it keeps working.
     OracleError:
       type: object
       required: [error]
@@ -1087,6 +1102,21 @@ components:
         error:
           type: string
           description: Only when the status is `failed`.
+        prompt_version:
+          type: string
+          pattern: '^[0-9a-f]{12}$'
+          description: >-
+            The label of the question the model was asked (see `OracleResult`);
+            also set on a failed row, with the question it would have asked.
+            Absent when it was not recorded: the rows from before it existed
+            (migration 00026), and a call that failed before the prompt was rendered.
+        signal_version:
+          type: string
+          description: >-
+            The version of the strategy that made the signal, as the bot sent it
+            (`signal.version` of the request body). `oracle-probe` marks the bot's
+            own test questions, which are not signals. Read from the stored request
+            by the database; absent when the request did not say.
     OracleDecisionList:
       type: object
       properties:

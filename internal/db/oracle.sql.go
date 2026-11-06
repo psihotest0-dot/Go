@@ -15,10 +15,12 @@ import (
 const createOracleEvaluation = `-- name: CreateOracleEvaluation :one
 INSERT INTO oracle_evaluations (
     request_id, signal_id, symbol, mode, status, verdict, reason, model,
-    attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error, request
+    attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error, request,
+    prompt_version
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8,
-    $9, $10, $11, $12, $13, $14, $15
+    $9, $10, $11, $12, $13, $14, $15,
+    $16
 )
 RETURNING id, created_at
 `
@@ -39,6 +41,7 @@ type CreateOracleEvaluationParams struct {
 	LatencyMs        int32           `json:"latency_ms"`
 	Error            string          `json:"error"`
 	Request          json.RawMessage `json:"request"`
+	PromptVersion    string          `json:"prompt_version"`
 }
 
 type CreateOracleEvaluationRow struct {
@@ -63,6 +66,7 @@ func (q *Queries) CreateOracleEvaluation(ctx context.Context, arg CreateOracleEv
 		arg.LatencyMs,
 		arg.Error,
 		arg.Request,
+		arg.PromptVersion,
 	)
 	var i CreateOracleEvaluationRow
 	err := row.Scan(&i.ID, &i.CreatedAt)
@@ -71,7 +75,8 @@ func (q *Queries) CreateOracleEvaluation(ctx context.Context, arg CreateOracleEv
 
 const listOracleEvaluations = `-- name: ListOracleEvaluations :many
 SELECT id, created_at, request_id, signal_id, symbol, mode, status, verdict, reason,
-       model, attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error
+       model, attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error,
+       prompt_version, signal_version
 FROM oracle_evaluations
 WHERE ($1::text = '' OR symbol = $1)
   AND ($2::bigint = 0 OR id < $2)
@@ -102,6 +107,8 @@ type ListOracleEvaluationsRow struct {
 	CompletionTokens int32          `json:"completion_tokens"`
 	LatencyMs        int32          `json:"latency_ms"`
 	Error            string         `json:"error"`
+	PromptVersion    string         `json:"prompt_version"`
+	SignalVersion    sql.NullString `json:"signal_version"`
 }
 
 // The newest first, a page at a time: before_id 0 starts at the newest, and the
@@ -133,6 +140,8 @@ func (q *Queries) ListOracleEvaluations(ctx context.Context, arg ListOracleEvalu
 			&i.CompletionTokens,
 			&i.LatencyMs,
 			&i.Error,
+			&i.PromptVersion,
+			&i.SignalVersion,
 		); err != nil {
 			return nil, err
 		}

@@ -298,3 +298,44 @@ func TestTheJournalIsReadWithoutTheBotToken(t *testing.T) {
 	rec := r.do(http.MethodGet, "/oracle/decisions", nil, nil)
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
+
+func TestEvaluateReplyCarriesThePromptVersion(t *testing.T) {
+	r := newRoutes(t, good(VerdictApprove, "Трендът е нагоре."))
+
+	rec := r.do(http.MethodPost, "/oracle/evaluate", marshal(t, validRequest()), bearer(testToken))
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := decodeBody(t, rec)
+	assert.Equal(t, currentPromptParts("SYSTEM PROMPT").version(), body["prompt_version"])
+	// The six fields of the contract are still all there, so a bot that knows only them keeps working.
+	for _, field := range []string{"verdict", "reason", "request_id", "model", "cached", "latency_ms"} {
+		assert.Contains(t, body, field)
+	}
+}
+
+func TestDecisionsShowTheVersionsWhenThereAreAnyAndOmitThemWhenNot(t *testing.T) {
+	r := newRoutes(t)
+	_, err := r.store.Save(context.Background(), Evaluation{
+		SignalID: "sig-1", Symbol: "AAPL", Status: StatusAnswered, Verdict: VerdictVeto, Reason: "r",
+		PromptVersion: "0123456789ab", SignalVersion: "oracle-probe",
+	})
+	require.NoError(t, err)
+	_, err = r.store.Save(context.Background(), Evaluation{
+		SignalID: "sig-2", Symbol: "KO", Status: StatusAnswered, Verdict: VerdictHold, Reason: "r",
+	})
+	require.NoError(t, err)
+
+	rec := r.do(http.MethodGet, "/oracle/decisions", nil, nil)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body struct {
+		Decisions []map[string]any `json:"decisions"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Decisions, 2)
+	newest, oldest := body.Decisions[0], body.Decisions[1]
+	assert.NotContains(t, newest, "prompt_version", "omitted when empty, so old clients see no change")
+	assert.NotContains(t, newest, "signal_version")
+	assert.Equal(t, "0123456789ab", oldest["prompt_version"])
+	assert.Equal(t, "oracle-probe", oldest["signal_version"])
+}

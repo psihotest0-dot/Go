@@ -96,6 +96,9 @@ type Result struct {
 	// signal (asked again, or asked while the first question was still running).
 	Cached    bool  `json:"cached"`
 	LatencyMS int64 `json:"latency_ms"`
+	// PromptVersion labels the question the model was asked (see promptParts). For a
+	// repeated verdict it is the label of the call that produced it, not of the repeat.
+	PromptVersion string `json:"prompt_version"`
 }
 
 // Evaluation is one row of the journal.
@@ -116,5 +119,7 @@ type Evaluation struct {
 	CompletionTokens int             `json:"completion_tokens"`
 	LatencyMS        int             `json:"latency_ms"`
 	Error            string          `json:"error,omitempty"`
-	Request          json.RawMessage `json:"-"` // only written; the list leaves it out
+	PromptVersion    string          `json:"prompt_version,omitempty"` // "" when not recorded (rows older than migration 00026)
+	SignalVersion    string          `json:"signal_version,omitempty"` // strategy version read from the request by the database ("oracle-probe" = a test question); never written
+	Request          json.RawMessage `json:"-"`                        // only written; the list leaves it out
 }

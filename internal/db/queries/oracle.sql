@@ -1,10 +1,12 @@
 -- name: CreateOracleEvaluation :one
 INSERT INTO oracle_evaluations (
     request_id, signal_id, symbol, mode, status, verdict, reason, model,
-    attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error, request
+    attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error, request,
+    prompt_version
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8,
-    $9, $10, $11, $12, $13, $14, $15
+    $9, $10, $11, $12, $13, $14, $15,
+    $16
 )
 RETURNING id, created_at;
 
@@ -13,7 +15,8 @@ RETURNING id, created_at;
 -- body is left out (up to 64 KB a row); the list is for reading the verdicts.
 -- name: ListOracleEvaluations :many
 SELECT id, created_at, request_id, signal_id, symbol, mode, status, verdict, reason,
-       model, attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error
+       model, attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error,
+       prompt_version, signal_version
 FROM oracle_evaluations
 WHERE (sqlc.arg(symbol)::text = '' OR symbol = sqlc.arg(symbol))
   AND (sqlc.arg(before_id)::bigint = 0 OR id < sqlc.arg(before_id))
