@@ -243,21 +243,13 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 						}
 						snippet = truncateRunes(strings.TrimSpace(snippet), maxSnippetRunes)
 
-						normalizedScore := c.Score
-						scoreType := ""
-						if sourceType == "text" || sourceType == "ocr" {
-							normalizedScore = (c.Score / 0.033) * 100
-							scoreType = "rrf"
-						} else {
-							normalizedScore = c.Score * 100
-							scoreType = "cosine"
-						}
+						score, scoreType := historicSourceScore(c, sourceType)
 
 						sources = append(sources, SourceInfo{
 							ChunkID:        chunk.ID,
 							FileName:       chunk.FileName,
 							ContentSnippet: snippet,
-							Score:          normalizedScore,
+							Score:          score,
 							ScoreType:      scoreType,
 							SourceType:     sourceType,
 						})

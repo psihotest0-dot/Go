@@ -516,7 +516,7 @@ paths:
                 type: string
               example: |
                 event: sources
-                data: [{"chunk_id":"…","file_name":"book.pdf","content_snippet":"…","score":87.5,"score_type":"rrf","source_type":"text"}]
+                data: [{"chunk_id":"…","file_name":"book.pdf","content_snippet":"…","score":0.152,"score_type":"distance","source_type":"concept"}]
 
                 data: {"content":"The Danube "}
 
@@ -1140,10 +1140,19 @@ components:
         score:
           type: number
           format: double
+          description: >-
+            Measured as `score_type` says; 0 when there is no `score_type`. For
+            `distance` it is the cosine distance between the question and the
+            source - smaller is closer, and the summaries that are close enough to
+            be used are at 0.10-0.17. It is not a percentage: with the embedding
+            model in use even unrelated texts are at 0.15-0.30.
         score_type:
           type: string
-          description: How `score` is measured; absent on some sources.
-          enum: [rrf, cosine]
+          description: >-
+            How `score` is measured. `distance` for a book summary or passage;
+            `rrf` (0-100) only on answers stored long ago; absent on a recalled
+            memory, which has no measure.
+          enum: [rrf, distance]
         source_type:
           type: string
           enum: [text, ocr, concept, memory]

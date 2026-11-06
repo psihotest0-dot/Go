@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"math"
 	"time"
 
 	"go-monolith/internal/db"
@@ -49,19 +50,58 @@ func toMemoryDTO(m db.Memory) MemoryDTO {
 	return dto
 }
 
+// The ways a source's Score is measured.
+const (
+	// ScoreTypeDistance: the cosine distance between the question and the source,
+	// the unit the search limits are measured in (smaller is closer; the summaries
+	// that pass the limit are at 0.10-0.17). It is not a percentage: with the
+	// embedding model in use even unrelated texts are at 0.15-0.30, so
+	// (1 - distance) * 100 gave 82-85 % for noise.
+	ScoreTypeDistance = "distance"
+	// ScoreTypeRRF: the reciprocal-rank-fusion score of a passage found by the
+	// hybrid search, scaled to 0-100. Only old messages carry it.
+	ScoreTypeRRF = "rrf"
+)
+
+// RoundDistance keeps three decimals, the precision the limits are given in.
+func RoundDistance(d float64) float64 {
+	return math.Round(d*1000) / 1000
+}
+
 type SourceInfo struct {
 	ChunkID        uuid.UUID `json:"chunk_id"`
 	FileName       string    `json:"file_name"`
 	PageNumber     *int      `json:"page_number,omitempty"`
 	ContentSnippet string    `json:"content_snippet"`
-	Score          float64   `json:"score"`
-	ScoreType      string    `json:"score_type,omitempty"`
-	SourceType     string    `json:"source_type"` // "ocr" | "text" | "concept" | "memory"
+	// Score is measured as ScoreType says; a source with no ScoreType (a memory)
+	// has no measure and Score is 0.
+	Score      float64 `json:"score"`
+	ScoreType  string  `json:"score_type,omitempty"`
+	SourceType string  `json:"source_type"` // "ocr" | "text" | "concept" | "memory"
 }
 
+// historicSourceScore is the Score and ScoreType the history shows for a stored
+// source. A record without a type is from before the distance: a summary's score was
+// stored as (1 - distance) * 100 - and this code multiplied it by 100 once more, so
+// the history showed 8 200 % - and a passage's as a raw RRF score.
+func historicSourceScore(c DBChunkInfo, sourceType string) (float64, string) {
+	switch {
+	case c.ScoreType != "":
+		return c.Score, c.ScoreType
+	case sourceType == "text" || sourceType == "ocr":
+		return (c.Score / 0.033) * 100, ScoreTypeRRF
+	default:
+		return RoundDistance(1 - c.Score/100), ScoreTypeDistance
+	}
+}
+
+// DBChunkInfo is a source as it is stored with the answer. A record without a
+// ScoreType is from before the distance: its Score is (1 - distance) * 100 for a
+// summary and a raw RRF score for a passage.
 type DBChunkInfo struct {
-	ChunkID uuid.UUID `json:"chunk_id"`
-	Score   float64   `json:"score"`
+	ChunkID   uuid.UUID `json:"chunk_id"`
+	Score     float64   `json:"score"`
+	ScoreType string    `json:"score_type,omitempty"`
 }
 
 type MessageDTO struct {

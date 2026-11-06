@@ -249,9 +249,9 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			ChunkID:        m.ID,
 			FileName:       "Памет (Memory)",
 			ContentSnippet: sourceSnippet(m.Content),
-			Score:          m.Score * 100,
-			ScoreType:      "cosine",
-			SourceType:     "memory",
+			// A recalled memory has no distance to show: its score is a blend of
+			// the vector and the text match and of its importance.
+			SourceType: "memory",
 		})
 	}
 
@@ -262,8 +262,8 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 			ChunkID:        c.ID,
 			FileName:       c.FileName,
 			ContentSnippet: sourceSnippet(c.Content),
-			Score:          c.Score * 100,
-			ScoreType:      "cosine",
+			Score:          api.RoundDistance(c.Distance),
+			ScoreType:      api.ScoreTypeDistance,
 			SourceType:     "concept",
 		})
 	}
@@ -279,9 +279,14 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	}
 	chatCtx.Sources = dedupedSources
 
-	// Sort by score descending
-	sort.Slice(chatCtx.Sources, func(i, j int) bool {
-		return chatCtx.Sources[i].Score > chatCtx.Sources[j].Score
+	// The closest summary first, then the memories in the order they were found.
+	sort.SliceStable(chatCtx.Sources, func(i, j int) bool {
+		a, b := chatCtx.Sources[i], chatCtx.Sources[j]
+		aMeasured, bMeasured := a.ScoreType == api.ScoreTypeDistance, b.ScoreType == api.ScoreTypeDistance
+		if aMeasured != bMeasured {
+			return aMeasured
+		}
+		return aMeasured && a.Score < b.Score
 	})
 
 	// Fetch Global Rules. Like retrieval, the rules are an enhancement: a

@@ -45,8 +45,9 @@ func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.
 	var dbSources []api.DBChunkInfo
 	for _, s := range sources {
 		dbSources = append(dbSources, api.DBChunkInfo{
-			ChunkID: s.ChunkID,
-			Score:   s.Score,
+			ChunkID:   s.ChunkID,
+			Score:     s.Score,
+			ScoreType: s.ScoreType,
 		})
 	}
 	dbSourcesBytes, _ := json.Marshal(dbSources)

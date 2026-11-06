@@ -136,7 +136,10 @@ type SearchResult struct {
 	Content    string
 	SourceType string
 	Score      float64
-	FileName   string
+	// Distance is the cosine distance to the question, set for concept summaries.
+	// Score is (1 - Distance) there, which is not a similarity worth showing.
+	Distance float64
+	FileName string
 }
 
 // embedQuery embeds a search query. A nil vector with a nil error means the
@@ -281,6 +284,7 @@ func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID,
 			Content:    row.Content,
 			SourceType: "concept",
 			Score:      1.0 - row.Distance, // naive conversion
+			Distance:   row.Distance,
 			FileName:   row.FileName,
 		})
 	}
