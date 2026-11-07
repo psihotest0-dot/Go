@@ -3,6 +3,8 @@ package prompts
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +90,56 @@ func TestEmbeddedTemplatesRender(t *testing.T) {
 
 	_, err = manager.Render("memory_reflector.tmpl", nil)
 	require.NoError(t, err)
+}
+
+// chatPrompt is the chat prompt of a bare message: no memories, summaries or rules.
+func chatPrompt(t *testing.T) string {
+	t.Helper()
+	out, err := NewTemplateManager("").Render("chat_system.tmpl", map[string]interface{}{"CurrentDate": "2026-11-07 19:00:00"})
+	require.NoError(t, err)
+	return out
+}
+
+// The tone of the chat (task 59, measured on 2026-11-07 on 13 messages): a close
+// register, a personal reaction to the feeling first, no analysis from the side.
+// The rules that keep it from going too far stay.
+func TestChatPromptKeepsTheCloseRegisterAndTheRulesThatLimitIt(t *testing.T) {
+	chat := chatPrompt(t)
+
+	for name, want := range map[string]string{
+		"speaks to the person as to a close one": "Говориш на „ти“",
+		"reacts to the feeling first":            "първото ти изречение е жива човешка реакция",
+		"no general remark in the third person":  "не говори за него в трето лице",
+		"plain correct Bulgarian":                "правилен български с прости, добре познати думи",
+		"a different reaction every time":        "реагирай различно всеки път",
+		"examples show the tone, not the words":  "не повтаряй техни изрази",
+		"compliments must be earned":             "Compliments must be earned",
+		"feminine forms for herself":             "always use feminine grammatical forms",
+		"ends with a statement, not a question":  "End the reply with a statement",
+		"does not reuse earlier openings":        "Do not reuse words, phrases, or sentence openings",
+	} {
+		assert.Contains(t, chat, want, name)
+	}
+}
+
+// Gemma follows an example to the letter. With a question allowed at the end 14 of 14
+// answers ended with one, and an example for a situation the person is likely to
+// write about came back word for word 4 times in 4. So no example reply ends with a
+// question, and no example is a message people send as it stands.
+func TestChatPromptExamplesDoNotTeachQuestionsOrInviteCopying(t *testing.T) {
+	chat := chatPrompt(t)
+
+	replies := regexp.MustCompile(`Лили: „([^\n]*)“\n`).FindAllStringSubmatch(chat, -1)
+	require.GreaterOrEqual(t, len(replies), 4, "the examples are there")
+	for _, reply := range replies {
+		assert.False(t, strings.HasSuffix(strings.TrimSpace(reply[1]), "?"), "an example ends with a question: %q", reply[1])
+	}
+
+	for _, sentence := range []string{
+		"Уморен съм днес", "Днес всичко ми идва в повече", "Понякога вечер ми става самотно", "Най-накрая завърших проекта",
+	} {
+		assert.NotContains(t, chat, "Потребител: „"+sentence, "copied word for word in the measurement")
+	}
 }
 
 func TestUnknownTemplateIsAnError(t *testing.T) {
