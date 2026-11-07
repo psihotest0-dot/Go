@@ -11,3 +11,16 @@ scrape_configs:
     static_configs:
       # The backend runs on the host (127.0.0.1:8080), outside compose.
       - targets: ['host.docker.internal:8080']
+
+  # The trading bot (C:\alpaca-roundtable-trader) is another project with its
+  # own compose; it does not join this network. Its containers publish /metrics
+  # on the host loopback only, and this job scrapes them the same way as the
+  # backend above: 9101 = trader, 9102 = observer. Every series of the bot has
+  # the prefix alpaca_, so none can collide with ours. The targets show as DOWN
+  # while the bot's stack is stopped; that is not an error of this stack.
+  - job_name: 'alpaca-trader'
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - 'host.docker.internal:9101'
+          - 'host.docker.internal:9102'
