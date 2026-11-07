@@ -8,6 +8,7 @@ import (
 	"go-monolith/internal/config"
 	"io"
 	"net/http"
+	"sync"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -63,7 +64,14 @@ func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // MockLLM is a mock implementation of LLMClient for testing.
+//
+// The orchestrator calls the model from more than one goroutine (a chat turn
+// streams while the rolling summary of the same session runs in the
+// background), so the calls record their request under a lock. A test reads
+// LastRequest, LastSchema and Requests after the calls it cares about have
+// returned (the summary pass is awaited with the orchestrator's summaryWG).
 type MockLLM struct {
+	mu          sync.Mutex
 	LastRequest openai.ChatCompletionRequest
 	LastSchema  interface{}
 	// StreamChunks is the script used for every ChatStream call when
@@ -84,7 +92,9 @@ type MockLLM struct {
 
 // Chat records the request and returns the configured response or error.
 func (m *MockLLM) Chat(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+	m.mu.Lock()
 	m.LastRequest = req
+	m.mu.Unlock()
 	return m.Response, m.Error
 }
 
@@ -92,10 +102,12 @@ func (m *MockLLM) Chat(ctx context.Context, req openai.ChatCompletionRequest) (o
 // stream. StreamScript selects the chunks per call so multi-round conversations
 // can be tested; the last scripted entry is reused for further calls.
 func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (Stream, error) {
+	m.mu.Lock()
 	m.LastRequest = req
 	m.Requests = append(m.Requests, req)
-
 	call := len(m.Requests) - 1
+	m.mu.Unlock()
+
 	if call < len(m.StreamErrors) && m.StreamErrors[call] != nil {
 		return nil, m.StreamErrors[call]
 	}
@@ -136,8 +148,10 @@ func (m *MockLLM) ChatStream(ctx context.Context, req openai.ChatCompletionReque
 
 // ChatWithJSONSchema records the request and schema, and returns the configured response or error.
 func (m *MockLLM) ChatWithJSONSchema(ctx context.Context, req openai.ChatCompletionRequest, schema interface{}) (openai.ChatCompletionResponse, error) {
+	m.mu.Lock()
 	m.LastRequest = req
 	m.LastSchema = schema
+	m.mu.Unlock()
 	return m.Response, m.Error
 }
 
