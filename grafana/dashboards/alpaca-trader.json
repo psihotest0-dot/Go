@@ -1,0 +1,702 @@
+{
+  "title": "Trading bot (alpaca)",
+  "uid": "alpaca-trader",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "tags": [
+    "alpaca-trader"
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "Health",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Targets up",
+      "targets": [
+        {
+          "expr": "up{job=\"alpaca-trader\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "description": "UP = Prometheus reaches the bot's /metrics. :9101 is the trading loop (alpaca-trader), :9102 the Oracle observer (alpaca-trader-observe). DOWN: the container is stopped, Docker Desktop is not running, or METRICS_ENABLED is off.",
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Seconds since the loop's last heartbeat",
+      "targets": [
+        {
+          "expr": "time() - alpaca_heartbeat_timestamp_seconds",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "The loop beats every minute with the market open and every 5 minutes with it closed. Red above 15 minutes: the loop is stuck (alert AlpacaLoopStalled).",
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Market",
+      "targets": [
+        {
+          "expr": "alpaca_market_open",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "closed",
+                  "color": "text",
+                  "index": 0
+                },
+                "1": {
+                  "text": "open",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "description": "What the broker's clock says (US market, 15:30-22:00 German time).",
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Positions without a stop",
+      "targets": [
+        {
+          "expr": "alpaca_unprotected_positions",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Trading loop only. Anything above 0 halts new entries (alert AlpacaUnprotectedPositions). A 0 is only to be trusted while 'since the last protection check' below is small.",
+      "id": 5
+    },
+    {
+      "type": "stat",
+      "title": "Since the last look for entries",
+      "targets": [
+        {
+          "expr": "time() - alpaca_last_entries_timestamp_seconds",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "A look is due on every closed 15-minute bar while the market is open. Grows on purpose while it is closed (nights, weekends); the alert AlpacaNoEntryLookups only counts with the market open.",
+      "id": 6
+    },
+    {
+      "type": "stat",
+      "title": "Since the last protection check",
+      "targets": [
+        {
+          "expr": "time() - alpaca_protection_check_timestamp_seconds",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 6,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Trading loop only. The check runs on every tick; a check that cannot read the broker does not count. Red above 15 minutes (alert AlpacaProtectionCheckStale).",
+      "id": 7
+    },
+    {
+      "type": "stat",
+      "title": "Since the last order reconciliation",
+      "targets": [
+        {
+          "expr": "time() - alpaca_reconcile_timestamp_seconds",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 600
+              },
+              {
+                "color": "red",
+                "value": 900
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Trading loop only. The orders in the database are refreshed from the broker on every tick. Red above 15 minutes (alert AlpacaReconcileStale).",
+      "id": 8
+    },
+    {
+      "type": "stat",
+      "title": "Broken signals and crashed looks (24 h)",
+      "targets": [
+        {
+          "expr": "sum by (instance) (increase(alpaca_entries_errors_total[1d]))",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 18,
+        "y": 5,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "Signals that failed in risk or execution (no order was placed; the cause is a bug), plus looks for entries that crashed. Should be 0 (alert AlpacaSignalsBroke).",
+      "id": 9
+    },
+    {
+      "type": "row",
+      "title": "Signals",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 10
+    },
+    {
+      "type": "timeseries",
+      "title": "Signals found per hour",
+      "targets": [
+        {
+          "expr": "sum by (instance) (increase(alpaca_signals_total[1h]))",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "What the strategy found on new bars. The trader watches 22 stocks (about 0.8 signals a day), the observer about 132 more (about 16 a day). Signals the strategy found are not orders.",
+      "id": 11
+    },
+    {
+      "type": "timeseries",
+      "title": "Looks for entries per hour, by outcome",
+      "targets": [
+        {
+          "expr": "sum by (instance, outcome) (increase(alpaca_entries_passes_total[1h]))",
+          "legendFormat": "{{instance}} {{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 8,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 40
+          }
+        },
+        "overrides": []
+      },
+      "description": "ok = looked and decided; skipped = the cycle chose not to look (trading halted); retry_later = the bar was not at Alpaca yet (tried again, gives up after 3 minutes); crashed = the look failed. Four ok per hour is the normal rhythm with the market open.",
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "Signals refused by risk, per day",
+      "targets": [
+        {
+          "expr": "sum by (reason) (increase(alpaca_rejected_signals_total[1d]))",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 16,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 40
+          }
+        },
+        "overrides": []
+      },
+      "description": "The reason is the refusal's text up to its first colon, so that numbers cannot make new series. Trading loop only.",
+      "id": 13
+    },
+    {
+      "type": "row",
+      "title": "Oracle, as the bot sees it",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Answers per hour, by verdict and kind",
+      "targets": [
+        {
+          "expr": "sum by (verdict, kind) (increase(alpaca_oracle_answers_total[1h]))",
+          "legendFormat": "{{verdict}} {{kind}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 40
+          }
+        },
+        "overrides": []
+      },
+      "description": "kind = answer (the model answered), cached (a final answer served from the record), or the cause when there was none: unavailable, timeout, unauthorized, bad_request, bad_reply, internal, failed. The backend's own view of the same calls (oracle_requests_total) is on its dashboard, with its alerts.",
+      "id": 15
+    },
+    {
+      "type": "timeseries",
+      "title": "Share of calls with no answer (1 h)",
+      "targets": [
+        {
+          "expr": "sum(increase(alpaca_oracle_answers_total{kind!~\"answer|cached\"}[1h])) / sum(increase(alpaca_oracle_answers_total[1h]))",
+          "legendFormat": "no answer",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 8,
+        "y": 19,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "description": "A model HOLD is an answer. The judge of the Oracle needs 80 % answered (docs/oracle-provider-task.md, section 5).",
+      "id": 16
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency of the last call",
+      "targets": [
+        {
+          "expr": "alpaca_oracle_latency_seconds",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 16,
+        "y": 19,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "description": "As measured by the bot (the call to the backend, including the model). The usual is 1.5-2.5 s; the bot gives up after about 10 s.",
+      "id": 17
+    },
+    {
+      "type": "row",
+      "title": "Account (trading loop, dry-run)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 18
+    },
+    {
+      "type": "timeseries",
+      "title": "Equity",
+      "targets": [
+        {
+          "expr": "alpaca_account_equity",
+          "legendFormat": "equity",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "description": "Paper account, read after each look for entries. In dry-run no order is sent, so this moves only with other tools using the same paper account.",
+      "id": 19
+    },
+    {
+      "type": "timeseries",
+      "title": "Open positions",
+      "targets": [
+        {
+          "expr": "alpaca_active_positions",
+          "legendFormat": "positions",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "At most 5 (MAX_OPEN_POSITIONS).",
+      "id": 20
+    },
+    {
+      "type": "timeseries",
+      "title": "Gross exposure",
+      "targets": [
+        {
+          "expr": "alpaca_gross_exposure",
+          "legendFormat": "exposure",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "description": "Market value of all positions as a share of equity. The limit is 20 % (MAX_GROSS_EXPOSURE_PCT).",
+      "id": 21
+    },
+    {
+      "type": "row",
+      "title": "Strategy candidates (observer, forward in time, no orders)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 22
+    },
+    {
+      "type": "timeseries",
+      "title": "Signals journalled per day, by strategy",
+      "targets": [
+        {
+          "expr": "sum by (strategy) (increase(alpaca_candidate_signals_total[1d]))",
+          "legendFormat": "{{strategy}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 16,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "The candidates of docs/strategy-research-plan.md section 12.1 and 13.1, and the live strategy (trend_cross) over the same bars as their control. About 16 signals a day each at the measured rate. This is only the count; the judgement is `judge-candidates`, not before about 2027-01-08.",
+      "id": 23
+    },
+    {
+      "type": "stat",
+      "title": "Candidate passes that broke (24 h)",
+      "targets": [
+        {
+          "expr": "sum(increase(alpaca_candidate_errors_total[1d]))",
+          "legendFormat": "broke",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 16,
+        "y": 37,
+        "w": 8,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "description": "A pass in which a candidate could not be run leaves a hole in the record (alert AlpacaCandidatePassBroke). Should be 0.",
+      "id": 24
+    }
+  ]
+}

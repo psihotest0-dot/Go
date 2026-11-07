@@ -16,8 +16,10 @@ scrape_configs:
   # own compose; it does not join this network. Its containers publish /metrics
   # on the host loopback only, and this job scrapes them the same way as the
   # backend above: 9101 = trader, 9102 = observer. Every series of the bot has
-  # the prefix alpaca_, so none can collide with ours. The targets show as DOWN
-  # while the bot's stack is stopped; that is not an error of this stack.
+  # the prefix alpaca_, so none can collide with ours. The rules are the group
+  # alpaca-trader in alerts.yml (a target that stays down for 5 minutes shows as
+  # AlpacaTargetDown there; nothing is sent), the dashboard is
+  # grafana/dashboards/alpaca-trader.json.
   - job_name: 'alpaca-trader'
     scrape_interval: 15s
     static_configs:

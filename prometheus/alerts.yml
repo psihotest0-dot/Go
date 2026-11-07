@@ -5,7 +5,8 @@
 # message, add an Alertmanager (or Grafana contact points) later.
 #
 # The metrics come from the backend (/metrics); the dashboard in
-# grafana/dashboards/main.json shows the same series.
+# grafana/dashboards/main.json shows the same series. The last group watches the
+# trading bot (grafana/dashboards/alpaca-trader.json is its dashboard).
 groups:
   - name: backend
     rules:
@@ -133,3 +134,101 @@ groups:
         annotations:
           summary: "An Oracle call takes more than 8 s on average"
           description: "The usual is 1.5 to 2.5 s. The bot gives up after about 10 s (the backend finishes the work and the next question finds the answer in the cache), but a slow model means busy model slots (chat, distillation) or a busy GPU. See ChatWaitsForTheLLM."
+
+  # The trading bot (another project; job alpaca-trader, series alpaca_*). Written by
+  # its session, merged here. Its Oracle calls are watched by the 'oracle' group above.
+  - name: alpaca-trader
+    rules:
+      # The container is stopped or restarting, Docker Desktop is not running, or the metrics are
+      # switched off (METRICS_ENABLED). The bot runs around the clock (it waits when the market is
+      # closed), so a target that is down is not a normal state, also at night and on Sundays.
+      - alert: AlpacaTargetDown
+        expr: up{job="alpaca-trader"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The bot's /metrics at {{ $labels.instance }} does not answer"
+          description: "Prometheus has not reached {{ $labels.instance }} for 5 minutes (:9101 is the trading loop, :9102 the Oracle observer). Check `docker ps` (alpaca-trader, alpaca-trader-observe) and that Docker Desktop is running. A restart of the container shows here for a minute and is no reason to worry."
+
+      # The process answers /metrics but its loop has stopped ticking. The loop beats at least every
+      # 5 minutes (every minute while the market is open), so 15 minutes is three missed beats.
+      - alert: AlpacaLoopStalled
+        expr: time() - alpaca_heartbeat_timestamp_seconds > 900
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The bot's loop at {{ $labels.instance }} has not ticked for {{ $value | humanizeDuration }}"
+          description: "The process still answers /metrics but its loop is stuck (a call that never returns?). `docker compose logs --tail 50 trader` (or observe) shows the last line. The Docker healthcheck says the same thing in `docker ps` as `unhealthy`."
+
+      # The market has been open for at least 25 minutes and no look for entries has finished in that
+      # time (one is due every 15 minutes, with a few retries). The `min_over_time` makes sure the
+      # market was open the whole time: at the opening bell the last look is from the day before.
+      # (The time difference is on the left of `and` so that $value is the number of seconds.)
+      - alert: AlpacaNoEntryLookups
+        expr: |
+          time() - alpaca_last_entries_timestamp_seconds > 1500
+          and
+          min_over_time(alpaca_market_open[25m]) == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No look for entries at {{ $labels.instance }} for {{ $value | humanizeDuration }} with the market open"
+          description: "The loop ticks but does not get to the entry look-up: the bar never arrives from Alpaca (data problem), or every look crashes. See `docker compose logs --tail 80 trader` and the `bar not available yet` / `Failed to load market data` lines."
+
+      # A signal that broke in risk or execution (no order was placed, and the cause is a bug), or a
+      # whole look that crashed. The bot also logs a CRITICAL line starting with `ALERT:` and writes
+      # the alert to its journal (audit_events).
+      - alert: AlpacaSignalsBroke
+        expr: increase(alpaca_entries_errors_total[15m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Signals broke before they became orders at {{ $labels.instance }}"
+          description: "At least one signal failed in risk or execution (or a look for entries crashed) in the last 15 minutes. `docker compose logs trader | grep ALERT` and `docker compose exec trader python -m trading_system report` show which."
+
+      # A position without an active protective stop (stop-loss). The bot halts its own entries the
+      # moment it sees one and logs a CRITICAL line; it closes nothing by itself unless
+      # EMERGENCY_CLOSE_UNPROTECTED is on (it is not). Only the trading loop (:9101) publishes this.
+      - alert: AlpacaUnprotectedPositions
+        expr: alpaca_unprotected_positions > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value }} open position(s) without a protective stop"
+          description: "The bot found a position that no stop covers and has halted new entries. Look at the account (`docker compose exec trader python -m trading_system reconcile`), fix it by hand at Alpaca, then `resume-entries`. The paper account is shared with other tools, so the position may not be the bot's."
+
+      # `alpaca_unprotected_positions == 0` means "all protected" only while the check keeps running;
+      # a check that cannot read the broker leaves the number (and this time) as they were.
+      - alert: AlpacaProtectionCheckStale
+        expr: time() - alpaca_protection_check_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The check for unprotected positions has not succeeded for {{ $value | humanizeDuration }}"
+          description: "The loop ticks but cannot read the account (Alpaca down, keys rejected, or the connection is cut), so `alpaca_unprotected_positions` is not to be trusted. `docker compose logs --tail 80 trader | grep -i 'emergency check\\|Failed'`."
+
+      # The orders in the database are brought up to date from the broker on every tick. No success
+      # for 15 minutes: the broker cannot be read, or some orders cannot be refreshed.
+      - alert: AlpacaReconcileStale
+        expr: time() - alpaca_reconcile_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The orders have not been reconciled with the broker for {{ $value | humanizeDuration }}"
+          description: "Orders in the database may differ from the broker's. `docker compose logs --tail 80 trader | grep -i 'Could not refresh\\|Housekeeping step failed'`, then `docker compose exec trader python -m trading_system reconcile`."
+
+      # The candidates the observer runs forward in time (research plan, section 12.1). A pass in which
+      # one could not be run is a gap in the record, and the record is the point.
+      - alert: AlpacaCandidatePassBroke
+        expr: increase(alpaca_candidate_errors_total[30m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "A strategy candidate could not be run on a bar"
+          description: "The observer journals the candidates' signals for the forward test; a pass in which one broke leaves a hole in it. `docker compose logs observe | grep -i candidate` shows the error."
