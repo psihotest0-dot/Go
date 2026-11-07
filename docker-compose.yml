@@ -25,6 +25,10 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
+      # The time series (the image keeps them in /prometheus). A named volume,
+      # so they survive `docker compose down` and are easy to find; without this
+      # line Docker makes an anonymous volume with a hash for a name.
+      - prometheus_data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
     extra_hosts:
@@ -45,3 +49,10 @@ services:
       # Set GRAFANA_ADMIN_PASSWORD in .env (see .env.example). Grafana only reads
       # this when it creates its database, i.e. on a fresh container.
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+
+volumes:
+  prometheus_data:
+    # Explicit name, like pgdata in docker-compose.override.yml: it must not
+    # depend on the folder name. `docker compose down -v` deletes it, plain
+    # `down` does not. Retention is the Prometheus default (15 days).
+    name: go_prometheus_data
