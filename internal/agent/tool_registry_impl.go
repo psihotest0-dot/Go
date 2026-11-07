@@ -16,6 +16,7 @@ import (
 	"github.com/sqlc-dev/pqtype"
 
 	"go-monolith/internal/api"
+	"go-monolith/internal/attachments"
 	"go-monolith/internal/db"
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
@@ -32,6 +33,15 @@ type DefaultToolRegistry struct {
 	httpClient *http.Client
 	// webBaseURL replaces the paid web API in tests; empty means the real one.
 	webBaseURL string
+	// attachments holds the files attached to a conversation; nil means none can be.
+	attachments *attachments.Service
+}
+
+// WithAttachments lets the read_attachment tool read the files attached to a
+// conversation.
+func (r *DefaultToolRegistry) WithAttachments(s *attachments.Service) *DefaultToolRegistry {
+	r.attachments = s
+	return r
 }
 
 // NewDefaultToolRegistry creates a new DefaultToolRegistry.
@@ -60,6 +70,8 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeSearchDocuments(ctx, userID, args)
 	case listDocumentsTool:
 		return r.executeListDocuments(ctx, userID)
+	case readAttachmentTool:
+		return r.executeReadAttachment(ctx, userID, args)
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
 	case "web_search":

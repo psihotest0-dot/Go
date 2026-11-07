@@ -12,6 +12,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
+	"go-monolith/internal/attachments"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
@@ -36,6 +37,14 @@ type Orchestrator struct {
 	// adaptiveSkip is ENABLE_ADAPTIVE_SKIP, read once when the orchestrator is built
 	// (it used to be read from the environment on every chat request).
 	adaptiveSkip bool
+	// attachments holds the files attached to a conversation; nil means none can be.
+	attachments *attachments.Service
+}
+
+// WithAttachments lets the chat show the files attached to a conversation.
+func (o *Orchestrator) WithAttachments(s *attachments.Service) *Orchestrator {
+	o.attachments = s
+	return o
 }
 
 // NewOrchestrator creates a new Orchestrator.
@@ -117,7 +126,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	chatCtx, memoryIDs, err := o.loadContext(r.Context(), userID, req)
+	// The room for the files attached to the conversation comes out of the history and
+	// the dynamic part of the prompt.
+	plan := o.planAttachments(r.Context(), userID, req.SessionID, o.limits())
+	chatCtx, memoryIDs, err := o.loadContextWithLimits(r.Context(), userID, req, plan.limits)
+	chatCtx.Attachments = plan.files
 	if err != nil {
 		// Streaming has not started, so the client can still receive a normal
 		// HTTP error instead of a "200 OK" with an empty body that leaves the
@@ -129,7 +142,10 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	// The tools of this turn share its state: what untrusted text it has read and
 	// which proposals it made (see turnState).
-	turnCtx, _ := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
+	turnCtx, turn := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
+	if plan.hasText() {
+		turn.markExternal(sourceAttachments)
+	}
 	r = r.WithContext(turnCtx)
 
 	o.trace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
@@ -137,7 +153,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		"memory_ids": memoryIDs,
 	})
 
-	history := pruneHistory(chatCtx.History, o.limits().historyTokens, o.limits().historyMessages)
+	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
 	chatCtx.RollingSum = o.rollingSummary(r.Context(), userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
@@ -244,7 +260,11 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// model omits the "query" argument.
 	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
 
-	chatCtx, memoryIDs, err := o.loadContext(r.Context(), userID, req)
+	// The room for the files attached to the conversation comes out of the history and
+	// the dynamic part of the prompt.
+	plan := o.planAttachments(r.Context(), userID, req.SessionID, o.limits())
+	chatCtx, memoryIDs, err := o.loadContextWithLimits(r.Context(), userID, req, plan.limits)
+	chatCtx.Attachments = plan.files
 	if err != nil {
 		// Streaming has not started, so the client can still receive a normal
 		// HTTP error instead of a "200 OK" with an empty body.
@@ -263,7 +283,10 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	// The tools of this turn share its state: what untrusted text it has read and
 	// which proposals it made (see turnState).
-	turnCtx, _ := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
+	turnCtx, turn := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
+	if plan.hasText() {
+		turn.markExternal(sourceAttachments)
+	}
 	r = r.WithContext(turnCtx)
 
 	o.trace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
@@ -271,7 +294,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		"memory_ids": memoryIDs,
 	})
 
-	history := pruneHistory(chatCtx.History, o.limits().historyTokens, o.limits().historyMessages)
+	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
 	chatCtx.RollingSum = o.rollingSummary(r.Context(), userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
@@ -363,19 +386,24 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 		return ChatTurn{}, fmt.Errorf("failed to save user message: %w", err)
 	}
 
-	chatCtx, memoryIDs, err := o.loadContext(ctx, userID, req)
+	plan := o.planAttachments(ctx, userID, req.SessionID, o.limits())
+	chatCtx, memoryIDs, err := o.loadContextWithLimits(ctx, userID, req, plan.limits)
+	chatCtx.Attachments = plan.files
 	if err != nil {
 		return ChatTurn{}, err
 	}
 
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
+	if plan.hasText() {
+		turn.markExternal(sourceAttachments)
+	}
 
 	o.trace(ctx, userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,
 		"memory_ids": memoryIDs,
 	})
 
-	history := pruneHistory(chatCtx.History, o.limits().historyTokens, o.limits().historyMessages)
+	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
 	chatCtx.RollingSum = o.rollingSummary(ctx, userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)

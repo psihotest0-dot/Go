@@ -40,6 +40,15 @@ var (
 		Help: "Rule and memory proposals made by the model, by kind and outcome.",
 	}, []string{"kind", "outcome"}) // kind: save_global_rule, create_memory; outcome: created, approved, rejected
 
+	// ChatAttachments counts what happens to the files attached to a conversation:
+	// "added" is a new file, "replaced" a new version of one with the same name,
+	// "unchanged" the same content again, "read" a part read by the model's tool, and
+	// "rejected" an upload that was refused (empty, binary, too large, too many).
+	ChatAttachments = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chat_attachments_total",
+		Help: "Files attached to a conversation, by outcome.",
+	}, []string{"outcome"}) // outcome: added, replaced, unchanged, read, rejected
+
 	// OracleRequests counts the calls of the trading bot to POST /oracle/evaluate by how they
 	// ended. "answered" is a verdict from the model, "cached" one repeated from memory,
 	// "failed" a call the model could not answer (the bot treats it as a HOLD),

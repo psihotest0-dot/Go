@@ -38,4 +38,7 @@ type chatContext struct {
 	// index. It tells the rolling summary where the prompt begins.
 	HistoryAt  []time.Time
 	RollingSum string
+	// Attachments are the files the user attached to the conversation, as the
+	// system prompt shows them.
+	Attachments []promptFile
 }

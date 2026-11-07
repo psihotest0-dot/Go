@@ -39,6 +39,8 @@ const (
 	sourceSearchDocuments    = "search_documents"
 	sourceListDocuments      = "list_documents"
 	sourceRetrievedDocuments = "retrieved_documents"
+	// sourceAttachments: the text of a file the user attached to the conversation.
+	sourceAttachments = "attachments"
 )
 
 // turnKey stores the turnState of the current chat turn.

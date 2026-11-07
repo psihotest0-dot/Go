@@ -53,7 +53,12 @@ const (
 	// On 2026-11-02 the template grew by 389 tokens (the same tokenizer, the old
 	// and the new text rendered the same way: 1531 and 1920), so together they
 	// are now about 2620; the rest is the slack the first figure also had.
-	fixedPromptTokens = 2900
+	// On 2026-11-07 it was measured again with the Gemma-4-12B tokenizer, because the
+	// chat prompt had become Bulgarian in the character part (2 691 tokens before) and
+	// got a section for attached files and a tool for reading them: template 2 823 plus
+	// tool definitions 796 = 3 619 (the text of a section for attached files comes on top,
+	// and is paid from the room of those files). 3 750 keeps about 130 of slack.
+	fixedPromptTokens = 3750
 
 	// toolFloorTokens is what the derived budgets leave free for tool results
 	// even when the conversation and the dynamic prompt are as large as they may

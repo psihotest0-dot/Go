@@ -36,8 +36,8 @@ func TestNewBudgetsDerivesFromTheWindow(t *testing.T) {
 		minPrompt    int
 		wantMessages int
 	}{
-		{name: "thinking off", thinking: false, wantAnswer: defaultAnswerTokens, minHistory: 4000, minPrompt: 2800, wantMessages: 25},
-		{name: "thinking on reserves more for the answer", thinking: true, wantAnswer: defaultThinkingAnswerTokens, minHistory: 3000, minPrompt: 2000, wantMessages: 25},
+		{name: "thinking off", thinking: false, wantAnswer: defaultAnswerTokens, minHistory: 3700, minPrompt: 2500, wantMessages: 25},
+		{name: "thinking on reserves more for the answer", thinking: true, wantAnswer: defaultThinkingAnswerTokens, minHistory: 2500, minPrompt: 1700, wantMessages: 25},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,10 +254,12 @@ func TestToolRoundsStayInsideTheWindow(t *testing.T) {
 	o := newGenerateOrchestrator(mock, tools)
 	o.budgets = newBudgets(&config.Config{LLMContextTokens: window, LLMEnableThinking: true})
 
-	// A heavy prompt (the fixed part plus a user turn of 3500 tokens), so the
-	// window - not the per-round cap - decides how much the tools may add.
+	// A heavy prompt (the fixed part plus a user turn of 2900 tokens), so the
+	// window - not the per-round cap - decides how much the tools may add. (It was
+	// 3500 until the fixed part grew by 850 tokens on 2026-11-07: with thinking on, the
+	// 5 000-token answer reserve and 3500 of user text no longer fit beside it.)
 	system := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: strings.Repeat("s", 4*fixedPromptTokens)}
-	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*3500)}
+	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*2900)}
 
 	content, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{system, user}, toolDefinitions(), nil)
 

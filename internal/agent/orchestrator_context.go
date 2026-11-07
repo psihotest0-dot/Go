@@ -197,6 +197,13 @@ func withoutProfileMemories(retrieved []retrieval.SearchResult, profile []db.Mem
 }
 
 func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req ChatRequest) (chatContext, []string, error) {
+	return o.loadContextWithLimits(ctx, userID, req, o.limits())
+}
+
+// loadContextWithLimits is loadContext with the token budgets given: a turn with
+// attached files has less room for the history and the retrieved context (see
+// planAttachments).
+func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UUID, req ChatRequest, lim budgets) (chatContext, []string, error) {
 	var chatCtx chatContext
 	var memoryIDs []string
 
@@ -265,7 +272,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: req.SessionID,
-		Limit:     int32(o.limits().historyMessages),
+		Limit:     int32(lim.historyMessages),
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to get messages", "err", err)
@@ -291,7 +298,7 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	// the user configured them explicitly, then the profile facts, then the
 	// retrieved memories and finally the concept chunks, which are the most
 	// voluminous and therefore the most disposable.
-	budget := newPromptBudget(o.limits().promptContextTokens)
+	budget := newPromptBudget(lim.promptContextTokens)
 	chatCtx.Rules = budget.take(chatCtx.Rules, maxRuleChars)
 	chatCtx.TopMemories = budget.take(chatCtx.TopMemories, maxTopMemoryChars)
 	chatCtx.Memories = budget.take(chatCtx.Memories, maxRetrievedMemoryChars)

@@ -23,6 +23,20 @@ type AgentTrace struct {
 	CreatedAt sql.NullTime          `json:"created_at"`
 }
 
+type ChatAttachment struct {
+	ID          uuid.UUID `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	SessionID   string    `json:"session_id"`
+	Name        string    `json:"name"`
+	Content     string    `json:"content"`
+	ContentHash string    `json:"content_hash"`
+	Bytes       int32     `json:"bytes"`
+	LineCount   int32     `json:"line_count"`
+	Version     int32     `json:"version"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type DocumentChunk struct {
 	ID             uuid.UUID       `json:"id"`
 	FileID         uuid.UUID       `json:"file_id"`

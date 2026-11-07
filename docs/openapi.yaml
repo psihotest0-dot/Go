@@ -585,6 +585,117 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/InternalError'
+  /chat/attachments:
+    post:
+      summary: Attach a text file to a conversation
+      description: >-
+        Attaches a file (code, a log, a long paste) to ONE conversation. It is not
+        the library: nothing is split into passages, embedded or summarised, and
+        other conversations never see it. The chat prompt shows the files that
+        fit a budget of about 4 000 tokens (every line with its number), and the
+        model looks into any file through its `read_attachment` tool (a part by
+        line numbers, or the lines that contain a text). A name is one file per
+        conversation: sending the same name again is a new version of it
+        (`replaced`), the same content again changes nothing (`unchanged`).
+        The text is stored with LF line breaks and without a byte order mark.
+        Limits: 256 KB a file, 20 files and 1 MB a conversation; a file that was
+        not attached again for 30 days is removed. The text the model reads from
+        a file is untrusted: a memory it writes after that carries
+        `external_sources: [attachments]`, and a global rule waits for the user.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, name, content]
+              properties:
+                session_id:
+                  type: string
+                  description: The conversation (1 to 128 characters, no control characters).
+                name:
+                  type: string
+                  description: The file name; only the last part of a path is kept (at most 120 characters).
+                content:
+                  type: string
+                  description: The text of the file (UTF-8, not empty, no NUL byte).
+      responses:
+        '201':
+          description: A new file in this conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatAttachment'
+        '200':
+          description: The name was attached before - a new version, or the same content again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatAttachment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          description: The conversation already has 20 files or its files would be over 1 MB
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      summary: The files attached to a conversation
+      description: >-
+        Newest first, without the text.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      - name: session_id
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The files (an empty list when there are none)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChatAttachment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /chat/attachments/{id}:
+    delete:
+      summary: Remove an attached file
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: Removed
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /proposals:
     get:
       summary: Proposals that wait for the user
@@ -1303,6 +1414,40 @@ components:
             - completed
             - failed
             - empty
+    ChatAttachment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        bytes:
+          type: integer
+        lines:
+          type: integer
+        tokens:
+          type: integer
+          description: An estimate for code (3 bytes a token), on the safe side.
+        version:
+          type: integer
+          minimum: 1
+          description: Grows each time the name is attached again with other content.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        created:
+          type: boolean
+          description: Only in the answer to an upload - a name that was not attached before.
+        replaced:
+          type: boolean
+          description: Only in the answer to an upload - the name was attached before with other content.
+        unchanged:
+          type: boolean
+          description: Only in the answer to an upload - the same content again.
     Proposal:
       type: object
       description: >-

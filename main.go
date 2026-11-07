@@ -23,6 +23,7 @@ import (
 
 	"go-monolith/internal/agent"
 	"go-monolith/internal/api"
+	"go-monolith/internal/attachments"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/jobs"
@@ -199,8 +200,11 @@ func run() error {
 
 	retrievalService := retrieval.NewRetrievalService(database, embedder)
 	proposalService := proposals.NewService(database, retrievalService)
-	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database, proposalService)
-	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry)
+	// Files the user attaches to a conversation (code, a long paste): kept per session,
+	// shown in the prompt within a small budget and read in parts by the model.
+	attachmentService := attachments.NewService(database)
+	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database, proposalService).WithAttachments(attachmentService)
+	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry).WithAttachments(attachmentService)
 
 	if cfg.TelegramBotToken != "" {
 		go func() {
@@ -251,6 +255,7 @@ func run() error {
 	// global rules can be read and deleted.
 	proposalService.RegisterRoutes(protectedMux)
 	apiService.RegisterRuleRoutes(protectedMux)
+	attachmentService.RegisterRoutes(protectedMux)
 
 	// The Oracle: the trading bot's second opinion on a signal (APPROVE / VETO / HOLD).
 	// The bot's routes carry their own token and sit outside the user check; without a

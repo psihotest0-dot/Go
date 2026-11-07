@@ -17,6 +17,7 @@ func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 		"RollingSummary":   ctx.RollingSum,
 		"RelevantMemories": ctx.Memories,
 		"Chunks":           ctx.Chunks,
+		"Attachments":      ctx.Attachments,
 	})
 	if err != nil {
 		return openai.ChatCompletionMessage{}, err
@@ -100,6 +101,7 @@ func toolDefinitions() []openai.Tool {
 			},
 		},
 		libraryToolDefinition(),
+		attachmentToolDefinition(),
 		{
 			Type: openai.ToolTypeFunction,
 			Function: &openai.FunctionDefinition{
