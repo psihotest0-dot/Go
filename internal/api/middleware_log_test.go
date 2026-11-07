@@ -71,7 +71,32 @@ func TestMiddlewareMetricsLogIsOnlyForTheScrapePath(t *testing.T) {
 		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 
 	serveLogged(t, handler, http.MethodGet, "/metrics/extra")
+	serveLogged(t, handler, http.MethodGet, "/oracle/decisions/extra")
 
 	assert.Contains(t, mainBuf.String(), "/metrics/extra")
+	assert.Contains(t, mainBuf.String(), "/oracle/decisions/extra")
 	assert.Empty(t, metricsBuf.String())
+}
+
+// The "Бот" tab of the client reads the journal every 10 s (and all of it, page by
+// page, for its counters): those lines were most of backend.log. The bot's own
+// calls are real traffic and stay in the main log.
+func TestMiddlewareSendsTheJournalPollingToTheMetricsLog(t *testing.T) {
+	mainLogger, mainBuf := newBufferLogger()
+	metricsLogger, metricsBuf := newBufferLogger()
+	handler := Middleware(mainLogger, WithMetricsLogger(metricsLogger))(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	serveLogged(t, handler, http.MethodGet, "/oracle/decisions?limit=50&symbol=AAPL")
+	serveLogged(t, handler, http.MethodPost, "/oracle/evaluate")
+	serveLogged(t, handler, http.MethodGet, "/oracle/ping")
+
+	assert.Contains(t, metricsBuf.String(), `"path":"/oracle/decisions"`, "the query string is not part of the path")
+	assert.Contains(t, metricsBuf.String(), `"request_id"`, "the line keeps its request id")
+	assert.NotContains(t, metricsBuf.String(), "/oracle/evaluate")
+	assert.NotContains(t, metricsBuf.String(), "/oracle/ping")
+
+	assert.NotContains(t, mainBuf.String(), "/oracle/decisions", "the polling must not reach the main log")
+	assert.Contains(t, mainBuf.String(), `"path":"/oracle/evaluate"`)
+	assert.Contains(t, mainBuf.String(), `"path":"/oracle/ping"`)
 }

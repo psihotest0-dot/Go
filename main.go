@@ -97,8 +97,9 @@ func run() error {
 	logFile := newLogFile(cfg.LogMaxMB)
 	defer logFile.Close()
 
-	// The Prometheus scrapes ask /metrics every 15 s; their "incoming request" lines
-	// go to their own file, which is emptied at METRICS_LOG_MAX_MB, instead of
+	// The Prometheus scrapes ask /metrics every 15 s, and the "Бот" tab of the client
+	// reads /oracle/decisions every 10 s (api.polledPaths); their "incoming request"
+	// lines go to their own file, which is emptied at METRICS_LOG_MAX_MB, instead of
 	// burying backend.log.
 	metricsLog := logfile.NewTruncating("metrics.log", int64(cfg.MetricsLogMaxMB)<<20)
 	defer metricsLog.Close()

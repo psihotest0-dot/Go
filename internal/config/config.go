@@ -51,7 +51,8 @@ const DefaultMaxUploadMB = 100
 const DefaultLogMaxMB = 10
 
 // DefaultMetricsLogMaxMB is the size at which metrics.log is emptied
-// (METRICS_LOG_MAX_MB). It holds only the Prometheus scrapes, so nothing is kept.
+// (METRICS_LOG_MAX_MB). It holds only polling (the Prometheus scrapes and the
+// client's reads of the Oracle journal), so nothing is kept.
 const DefaultMetricsLogMaxMB = 5
 
 // DefaultLLMSlots is how many completions the model server runs in parallel
@@ -90,8 +91,8 @@ type Config struct {
 	LogMaxMB int
 	// MetricsLogMaxMB is the size, in megabytes, at which metrics.log is emptied
 	// (METRICS_LOG_MAX_MB). That file holds the "incoming request" lines of the
-	// Prometheus scrapes, which would otherwise be most of backend.log; it keeps no
-	// backup.
+	// Prometheus scrapes and of the client's polling of /oracle/decisions, which
+	// would otherwise be most of backend.log; it keeps no backup.
 	MetricsLogMaxMB int
 	LLMBaseURL      string
 	// LLMModel pins the model name sent to the LLM server. Empty means the
