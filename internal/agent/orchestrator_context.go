@@ -245,49 +245,11 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	for _, m := range memories {
 		chatCtx.Memories = append(chatCtx.Memories, m.Content)
 		memoryIDs = append(memoryIDs, m.ID.String())
-		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
-			ChunkID:        m.ID,
-			FileName:       "Памет (Memory)",
-			ContentSnippet: sourceSnippet(m.Content),
-			// A recalled memory has no distance to show: its score is a blend of
-			// the vector and the text match and of its importance.
-			SourceType: "memory",
-		})
 	}
 
 	for _, c := range conceptChunks {
 		chatCtx.Chunks = append(chatCtx.Chunks, c.Content)
-
-		chatCtx.Sources = append(chatCtx.Sources, api.SourceInfo{
-			ChunkID:        c.ID,
-			FileName:       c.FileName,
-			ContentSnippet: sourceSnippet(c.Content),
-			Score:          api.RoundDistance(c.Distance),
-			ScoreType:      api.ScoreTypeDistance,
-			SourceType:     "concept",
-		})
 	}
-
-	// Deduplicate based on ChunkID
-	seen := make(map[uuid.UUID]bool)
-	var dedupedSources []api.SourceInfo
-	for _, s := range chatCtx.Sources {
-		if !seen[s.ChunkID] {
-			seen[s.ChunkID] = true
-			dedupedSources = append(dedupedSources, s)
-		}
-	}
-	chatCtx.Sources = dedupedSources
-
-	// The closest summary first, then the memories in the order they were found.
-	sort.SliceStable(chatCtx.Sources, func(i, j int) bool {
-		a, b := chatCtx.Sources[i], chatCtx.Sources[j]
-		aMeasured, bMeasured := a.ScoreType == api.ScoreTypeDistance, b.ScoreType == api.ScoreTypeDistance
-		if aMeasured != bMeasured {
-			return aMeasured
-		}
-		return aMeasured && a.Score < b.Score
-	})
 
 	// Fetch Global Rules. Like retrieval, the rules are an enhancement: a
 	// failure here is logged and the chat continues without them instead of
@@ -335,5 +297,83 @@ func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req Ch
 	chatCtx.Memories = budget.take(chatCtx.Memories, maxRetrievedMemoryChars)
 	chatCtx.Chunks = budget.take(chatCtx.Chunks, maxConceptChunkChars)
 
+	// The panel lists what the model was given. take keeps a prefix, so the first
+	// len(kept) memories and summaries are the ones in the prompt; a source the
+	// budget cut would be shown as read although the model never saw it.
+	chatCtx.Sources = contextSources(memories[:len(chatCtx.Memories)], conceptChunks[:len(chatCtx.Chunks)])
+
 	return chatCtx, memoryIDs, nil
+}
+
+// passageSource is a passage of a book that the search_documents tool found, as the
+// sources panel shows it: the same "text" or "ocr" type the history gives it, and no
+// score - the hybrid search ranks the passages but measures none of them.
+func passageSource(res retrieval.SearchResult) api.SourceInfo {
+	sourceType := "text"
+	content := res.Content
+	if strings.Contains(content, api.OCRMarker) {
+		sourceType = "ocr"
+		content = strings.ReplaceAll(content, api.OCRMarker, "")
+	}
+	return api.SourceInfo{
+		ChunkID:        res.ID,
+		FileName:       res.FileName,
+		ContentSnippet: sourceSnippet(content),
+		SourceType:     sourceType,
+	}
+}
+
+// contextSources are the sources of the prompt for the memories and concept
+// summaries it carries: the closest summary first, then the memories in the order
+// they were found, each chunk once.
+func contextSources(memories, concepts []retrieval.SearchResult) []api.SourceInfo {
+	var sources []api.SourceInfo
+	for _, m := range memories {
+		sources = append(sources, api.SourceInfo{
+			ChunkID:        m.ID,
+			FileName:       "Памет (Memory)",
+			ContentSnippet: sourceSnippet(m.Content),
+			// A recalled memory has no distance to show: its score is a blend of
+			// the vector and the text match and of its importance.
+			SourceType: "memory",
+		})
+	}
+	for _, c := range concepts {
+		sources = append(sources, api.SourceInfo{
+			ChunkID:        c.ID,
+			FileName:       c.FileName,
+			ContentSnippet: sourceSnippet(c.Content),
+			Score:          api.RoundDistance(c.Distance),
+			ScoreType:      api.ScoreTypeDistance,
+			SourceType:     "concept",
+		})
+	}
+
+	sources = withoutKnownSources(nil, sources)
+	sort.SliceStable(sources, func(i, j int) bool {
+		a, b := sources[i], sources[j]
+		aMeasured, bMeasured := a.ScoreType == api.ScoreTypeDistance, b.ScoreType == api.ScoreTypeDistance
+		if aMeasured != bMeasured {
+			return aMeasured
+		}
+		return aMeasured && a.Score < b.Score
+	})
+	return sources
+}
+
+// withoutKnownSources returns the sources of extra whose chunk is not in known,
+// and not twice among themselves, in their order.
+func withoutKnownSources(known, extra []api.SourceInfo) []api.SourceInfo {
+	seen := make(map[uuid.UUID]bool, len(known)+len(extra))
+	for _, s := range known {
+		seen[s.ChunkID] = true
+	}
+	var fresh []api.SourceInfo
+	for _, s := range extra {
+		if !seen[s.ChunkID] {
+			seen[s.ChunkID] = true
+			fresh = append(fresh, s)
+		}
+	}
+	return fresh
 }

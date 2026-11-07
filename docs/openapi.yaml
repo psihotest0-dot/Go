@@ -467,8 +467,15 @@ paths:
         stores the finished answer. Frames, in the order they arrive:
 
 
-        * `event: sources` - once, first: a JSON array of `SourceInfo` (the
-          documents and memories the answer is based on; `[]` when none);
+        * `event: sources` - first: a JSON array of `SourceInfo` (the
+          documents and memories in the prompt; `[]` when none);
+
+        * `event: sources` - again, only when the model looked into the
+          documents with a tool while it answered: the passages it found
+          (`source_type` `text` or `ocr`, no `score`), only the ones not in an
+          earlier frame. It comes as soon as the text based on them starts, or
+          at the end. A client adds these to the sources it has; the stored
+          answer lists all of them;
 
         * `data: {"reasoning_content": "..."}` - the model's reasoning, only when
           `LLM_ENABLE_THINKING` is on (clients normally hide it);
@@ -517,6 +524,9 @@ paths:
               example: |
                 event: sources
                 data: [{"chunk_id":"…","file_name":"book.pdf","content_snippet":"…","score":0.152,"score_type":"distance","source_type":"concept"}]
+
+                event: sources
+                data: [{"chunk_id":"…","file_name":"book.pdf","content_snippet":"…","score":0,"source_type":"text"}]
 
                 data: {"content":"The Danube "}
 
@@ -1181,7 +1191,8 @@ components:
           description: >-
             How `score` is measured. `distance` for a book summary or passage;
             `rrf` (0-100) only on answers stored long ago; absent on a recalled
-            memory, which has no measure.
+            memory and on a passage the model found with a tool, which have no
+            measure.
           enum: [rrf, distance]
         source_type:
           type: string

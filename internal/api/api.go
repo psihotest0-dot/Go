@@ -237,9 +237,9 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 						sourceType := "text"
 						if chunk.ChunkType == "concept_summary" {
 							sourceType = "concept"
-						} else if strings.Contains(snippet, "[source: \"ocr\"]") {
+						} else if strings.Contains(snippet, OCRMarker) {
 							sourceType = "ocr"
-							snippet = strings.ReplaceAll(snippet, "[source: \"ocr\"]", "")
+							snippet = strings.ReplaceAll(snippet, OCRMarker, "")
 						}
 						snippet = truncateRunes(strings.TrimSpace(snippet), maxSnippetRunes)
 

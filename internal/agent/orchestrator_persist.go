@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -63,6 +64,14 @@ func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.
 		},
 	})
 	return err
+}
+
+// answerSources are the sources a stored answer is based on: those of the prompt,
+// then the passages the tools found during the turn. Without the second part the
+// history would lose, after a restart, the books the panel showed while the answer
+// was written.
+func answerSources(turn *turnState, promptSources []api.SourceInfo) []api.SourceInfo {
+	return append(slices.Clone(promptSources), withoutKnownSources(promptSources, turn.foundSources())...)
 }
 
 // storeAnswer saves the finished answer. The user already has the text on

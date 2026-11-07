@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sync"
 
+	"go-monolith/internal/api"
 	"go-monolith/internal/proposals"
 )
 
@@ -51,6 +52,11 @@ type turnState struct {
 	mu        sync.Mutex
 	external  []string
 	proposals []proposals.Proposal
+	// found are the passages the tools returned to the model (search_documents), in
+	// the form of the sources panel; announced is how many of them the client was
+	// told about already.
+	found     []api.SourceInfo
+	announced int
 }
 
 // withTurn starts the state of a chat turn. retrievedDocuments tells that text
@@ -112,6 +118,39 @@ func (t *turnState) addProposal(p proposals.Proposal) {
 		}
 	}
 	t.proposals = append(t.proposals, p)
+}
+
+// addSources remembers passages a tool gave the model, each chunk once.
+func (t *turnState) addSources(sources []api.SourceInfo) {
+	if t == nil || len(sources) == 0 {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.found = append(t.found, withoutKnownSources(t.found, sources)...)
+}
+
+// foundSources lists every passage the tools of the turn gave the model.
+func (t *turnState) foundSources() []api.SourceInfo {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Clone(t.found)
+}
+
+// newSources lists the passages found since the last call, so each one is
+// announced to the client once.
+func (t *turnState) newSources() []api.SourceInfo {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	fresh := slices.Clone(t.found[t.announced:])
+	t.announced = len(t.found)
+	return fresh
 }
 
 // madeProposals lists the proposals the turn made.

@@ -169,7 +169,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(turnFrom(r.Context()), chatCtx.Sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
@@ -323,7 +323,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, chatCtx.Sources)
+	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(turnFrom(r.Context()), chatCtx.Sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
@@ -404,7 +404,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, chatCtx.Sources)
+	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(turn, chatCtx.Sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(answer),

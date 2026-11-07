@@ -418,6 +418,13 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		turnFrom(ctx).markExternal(sourceSearchDocuments)
 	}
 
+	// The model reads these passages, so the sources panel must list them too.
+	found := make([]api.SourceInfo, 0, len(results))
+	for _, res := range results {
+		found = append(found, passageSource(res))
+	}
+	turnFrom(ctx).addSources(found)
+
 	var formattedResults []map[string]interface{}
 	for _, res := range results {
 		content := truncateString(res.Content, 1500)

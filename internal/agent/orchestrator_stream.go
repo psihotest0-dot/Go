@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -182,6 +183,23 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(sourcesBytes))
 	flusher.Flush()
 
+	// The passages the model finds with a tool while it works are not in that first
+	// frame. They follow in a second "sources" frame, as soon as the text that is
+	// based on them starts (or at the end), and only the ones the client does not
+	// have yet; the client merges the frames. turn is nil outside a chat turn.
+	turn := turnFrom(r.Context())
+	announced := slices.Clone(sources)
+	sendFoundSources := func() {
+		fresh := withoutKnownSources(announced, turn.newSources())
+		if len(fresh) == 0 {
+			return
+		}
+		announced = append(announced, fresh...)
+		freshBytes, _ := json.Marshal(fresh)
+		fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(freshBytes))
+		flusher.Flush()
+	}
+
 	onDelta := func(content, reasoning string) error {
 		// Stop as soon as the client is gone: otherwise the LLM keeps
 		// streaming into a dead connection and the answer keeps growing for
@@ -189,6 +207,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		if ctxErr := r.Context().Err(); ctxErr != nil {
 			return ctxErr
 		}
+		sendFoundSources()
 
 		if reasoning != "" {
 			dataMap := map[string]string{"reasoning_content": reasoning}
@@ -231,6 +250,10 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		fmt.Fprintf(w, "data: %s\n\n", string(dataBytes))
 		flusher.Flush()
 	}
+
+	// An answer that streamed nothing after the last tool call still owes the
+	// client the passages that call found.
+	sendFoundSources()
 
 	// Writes the model asked for wait for the user; tell the client so it can ask.
 	if made := turnFrom(r.Context()).madeProposals(); len(made) > 0 {

@@ -63,6 +63,10 @@ const (
 	ScoreTypeRRF = "rrf"
 )
 
+// OCRMarker is what ingest writes after a page it read with OCR. A passage that
+// contains it is shown as "ocr" (without the marker), any other as "text".
+const OCRMarker = "[source: \"ocr\"]"
+
 // RoundDistance keeps three decimals, the precision the limits are given in.
 func RoundDistance(d float64) float64 {
 	return math.Round(d*1000) / 1000
@@ -88,6 +92,11 @@ func historicSourceScore(c DBChunkInfo, sourceType string) (float64, string) {
 	switch {
 	case c.ScoreType != "":
 		return c.Score, c.ScoreType
+	case c.Score == 0:
+		// Stored with no measure at all, like a passage the search_documents tool
+		// found. No older record can be here: a summary at distance 1 or a passage
+		// with an RRF score of 0 would not have been used.
+		return 0, ""
 	case sourceType == "text" || sourceType == "ocr":
 		return (c.Score / 0.033) * 100, ScoreTypeRRF
 	default:
