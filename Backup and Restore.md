@@ -51,7 +51,7 @@ powershell -ExecutionPolicy Bypass -File scripts\backup-task.ps1 -Time 02:30 -Ba
 powershell -ExecutionPolicy Bypass -File scripts\backup-task.ps1 -Remove
 ```
 
-Задачата `go-monolith-backup` стартира `scripts\backup.ps1`. Този скрипт:
+Задачата `go-monolith-backup` върви **без прозорец** (`conhost.exe --headless`) и пуска `scripts\backup-task-run.ps1`, а той — `scripts\backup.ps1`. Всичко, което бекъпът отпечата (и грешките), се записва с час в `<папката с бекъпи>\backup-task.log` (на тази машина `C:\Users\psiho\go-monolith-backups\backup-task.log`); последният ред е „finished OK“ или „FAILED with exit code N“. Логът се завърта на ~1 MB (остава един `.old`). Ако компютърът е бил изключен в 03:00, задачата се пуска при първа възможност (`StartWhenAvailable`) — затова бекъпът може да тръгне веднага след включването. Редът „WARNING: DATABASE_URL is not set …“ в лога е очакван (виж долу) и не е грешка. Скриптът `backup.ps1`:
 
 * използва локален `pg_dump`, ако има такъв; иначе пуска `pg_dump` вътре в контейнера `db` (`docker compose exec -T db pg_dump …`) — на тази машина `pg_dump` няма инсталиран на Windows, а клиентът в контейнера винаги съвпада с версията на сървъра;
 * зарежда `DATABASE_URL` от `.env`; ако липсва (както е в текущия `.env`), ползва същия default, който ползва и приложението (`internal/config.Load`);
