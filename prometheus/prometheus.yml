@@ -23,6 +23,10 @@ scrape_configs:
   - job_name: 'alpaca-trader'
     scrape_interval: 15s
     static_configs:
-      - targets:
-          - 'host.docker.internal:9101'
-          - 'host.docker.internal:9102'
+      # The `service` label tells the two apart: the observer also exports the
+      # trader-only gauges (always 0, never set), so the rules and panels that
+      # read trader series select {service="trader"}.
+      - targets: ['host.docker.internal:9101']
+        labels: { service: trader }
+      - targets: ['host.docker.internal:9102']
+        labels: { service: observer }

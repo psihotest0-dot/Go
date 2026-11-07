@@ -350,7 +350,7 @@ tests:
 - name: a bot target that is down for five minutes fires
   interval: 1m
   input_series:
-    - series: 'up{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'up{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "1 1 0 0 0 0 0 0 0 0"
   alert_rule_test:
     - eval_time: 6m
@@ -363,6 +363,7 @@ tests:
             severity: warning
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "The bot's /metrics at host.docker.internal:9101 does not answer"
             description: "Prometheus has not reached host.docker.internal:9101 for 5 minutes (:9101 is the trading loop, :9102 the Oracle observer). Check `docker ps` (alpaca-trader, alpaca-trader-observe) and that Docker Desktop is running. A restart of the container shows here for a minute and is no reason to worry."
@@ -370,7 +371,7 @@ tests:
 - name: a short restart of a container does not fire the down alert
   interval: 1m
   input_series:
-    - series: 'up{job="alpaca-trader", instance="host.docker.internal:9102"}'
+    - series: 'up{job="alpaca-trader", instance="host.docker.internal:9102", service="observer"}'
       values: "1 1 0 0 1 1 1 1 1 1 1 1"
   alert_rule_test:
     - eval_time: 11m
@@ -380,7 +381,7 @@ tests:
 - name: a loop that stops ticking fires after fifteen minutes plus two
   interval: 1m
   input_series:
-    - series: 'alpaca_heartbeat_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_heartbeat_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x5 300x40"
   alert_rule_test:
     - eval_time: 22m
@@ -393,6 +394,7 @@ tests:
             severity: critical
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "The bot's loop at host.docker.internal:9101 has not ticked for 18m 0s"
             description: "The process still answers /metrics but its loop is stuck (a call that never returns?). `docker compose logs --tail 50 trader` (or observe) shows the last line. The Docker healthcheck says the same thing in `docker ps` as `unhealthy`."
@@ -400,7 +402,7 @@ tests:
 - name: a loop that ticks every minute does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_heartbeat_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_heartbeat_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x60"
   alert_rule_test:
     - eval_time: 50m
@@ -410,9 +412,12 @@ tests:
 - name: an open market with no look for entries for twenty-five minutes fires
   interval: 1m
   input_series:
-    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    # Open since the start of the test (0), and never a look.
+    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "1x60"
-    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_market_open_since_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x60"
+    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0x60"
   alert_rule_test:
     - eval_time: 24m
@@ -425,29 +430,61 @@ tests:
             severity: warning
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "No look for entries at host.docker.internal:9101 for 30m 0s with the market open"
             description: "The loop ticks but does not get to the entry look-up: the bar never arrives from Alpaca (data problem), or every look crashes. See `docker compose logs --tail 80 trader` and the `bar not available yet` / `Failed to load market data` lines."
 
-- name: the opening bell with yesterday's last look does not fire
+- name: the opening bell with yesterday's last look fires only after twenty-five minutes of open market
   interval: 1m
   input_series:
-    # Closed for 30 minutes, then open; the last look is from before (value 0 = long ago).
-    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101"}'
-      values: "0x30 1x30"
-    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
-      values: "0x60"
+    # Closed for 30 minutes, then open (since 1800 s); the last look is from before (0 = long ago).
+    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x30 1x40"
+    - series: 'alpaca_market_open_since_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x30 1800x40"
+    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x80"
   alert_rule_test:
     - eval_time: 40m
+      alertname: AlpacaNoEntryLookups
+      exp_alerts: []
+    - eval_time: 62m
+      alertname: AlpacaNoEntryLookups
+      exp_alerts:
+        - exp_labels:
+            severity: warning
+            job: alpaca-trader
+            instance: host.docker.internal:9101
+            service: trader
+          exp_annotations:
+            summary: "No look for entries at host.docker.internal:9101 for 32m 0s with the market open"
+            description: "The loop ticks but does not get to the entry look-up: the bar never arrives from Alpaca (data problem), or every look crashes. See `docker compose logs --tail 80 trader` and the `bar not available yet` / `Failed to load market data` lines."
+
+- name: a restart in the middle of the session does not fire while the process waits for its first look
+  interval: 1m
+  input_series:
+    # Looks every minute until the restart at 40 min; then the process is new: its last-look gauge is 0
+    # again and the stretch of open market it knows began at its first tick (2400 s).
+    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "1x80"
+    - series: 'alpaca_market_open_since_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x40 2400x40"
+    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0+60x40 0x40"
+  alert_rule_test:
+    - eval_time: 50m
       alertname: AlpacaNoEntryLookups
       exp_alerts: []
 
 - name: a closed market with an old last look does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0x60"
-    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_market_open_since_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x60"
+    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0x60"
   alert_rule_test:
     - eval_time: 50m
@@ -457,9 +494,11 @@ tests:
 - name: an open market with looks on time does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_market_open{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "1x60"
-    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_market_open_since_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x60"
+    - series: 'alpaca_last_entries_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x60"
   alert_rule_test:
     - eval_time: 50m
@@ -469,7 +508,7 @@ tests:
 - name: a signal that broke fires and then clears
   interval: 1m
   input_series:
-    - series: 'alpaca_entries_errors_total{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_entries_errors_total{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0x3 1x40"
   alert_rule_test:
     - eval_time: 5m
@@ -479,6 +518,7 @@ tests:
             severity: warning
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "Signals broke before they became orders at host.docker.internal:9101"
             description: "At least one signal failed in risk or execution (or a look for entries crashed) in the last 15 minutes. `docker compose logs trader | grep ALERT` and `docker compose exec trader python -m trading_system report` show which."
@@ -489,17 +529,17 @@ tests:
 - name: a counter that stays at zero does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_entries_errors_total{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_entries_errors_total{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0x40"
   alert_rule_test:
     - eval_time: 30m
       alertname: AlpacaSignalsBroke
       exp_alerts: []
 
-- name: an unprotected position fires after two minutes
+- name: an unprotected position of the trader fires after two minutes
   interval: 1m
   input_series:
-    - series: 'alpaca_unprotected_positions{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_unprotected_positions{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0 0 1 1 1 1 1 1"
   alert_rule_test:
     - eval_time: 3m
@@ -512,6 +552,7 @@ tests:
             severity: critical
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "1 open position(s) without a protective stop"
             description: "The bot found a position that no stop covers and has halted new entries. Look at the account (`docker compose exec trader python -m trading_system reconcile`), fix it by hand at Alpaca, then `resume-entries`. The paper account is shared with other tools, so the position may not be the bot's."
@@ -519,18 +560,23 @@ tests:
 - name: no unprotected position does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_unprotected_positions{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_unprotected_positions{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x20"
+    - series: 'alpaca_unprotected_positions{job="alpaca-trader", instance="host.docker.internal:9102", service="observer"}'
       values: "0x20"
   alert_rule_test:
     - eval_time: 15m
       alertname: AlpacaUnprotectedPositions
       exp_alerts: []
 
-- name: a protection check that stops succeeding fires
+- name: a protection check of the trader that stops succeeding fires, the observer's zero does not
   interval: 1m
   input_series:
-    - series: 'alpaca_protection_check_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_protection_check_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x5 300x40"
+    # Nothing sets this on the observer; it is exported as 0 for good.
+    - series: 'alpaca_protection_check_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9102", service="observer"}'
+      values: "0x45"
   alert_rule_test:
     - eval_time: 25m
       alertname: AlpacaProtectionCheckStale
@@ -542,25 +588,49 @@ tests:
             severity: warning
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "The check for unprotected positions has not succeeded for 22m 0s"
+            description: "The loop ticks but cannot read the account (Alpaca down, keys rejected, or the connection is cut), so `alpaca_unprotected_positions` is not to be trusted. `docker compose logs --tail 80 trader | grep -i 'emergency check\\|Failed'`."
+
+- name: a protection check that has never succeeded since the start fires
+  interval: 1m
+  input_series:
+    - series: 'alpaca_protection_check_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
+      values: "0x40"
+  alert_rule_test:
+    - eval_time: 18m
+      alertname: AlpacaProtectionCheckStale
+      exp_alerts: []
+    - eval_time: 30m
+      alertname: AlpacaProtectionCheckStale
+      exp_alerts:
+        - exp_labels:
+            severity: warning
+            job: alpaca-trader
+            instance: host.docker.internal:9101
+            service: trader
+          exp_annotations:
+            summary: "The check for unprotected positions has not succeeded for 30m 0s"
             description: "The loop ticks but cannot read the account (Alpaca down, keys rejected, or the connection is cut), so `alpaca_unprotected_positions` is not to be trusted. `docker compose logs --tail 80 trader | grep -i 'emergency check\\|Failed'`."
 
 - name: a protection check that keeps succeeding does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_protection_check_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_protection_check_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x60"
   alert_rule_test:
     - eval_time: 50m
       alertname: AlpacaProtectionCheckStale
       exp_alerts: []
 
-- name: a reconciliation that stops succeeding fires
+- name: a reconciliation of the trader that stops succeeding fires, the observer's zero does not
   interval: 1m
   input_series:
-    - series: 'alpaca_reconcile_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_reconcile_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x5 300x40"
+    - series: 'alpaca_reconcile_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9102", service="observer"}'
+      values: "0x45"
   alert_rule_test:
     - eval_time: 25m
       alertname: AlpacaReconcileStale
@@ -572,6 +642,7 @@ tests:
             severity: warning
             job: alpaca-trader
             instance: host.docker.internal:9101
+            service: trader
           exp_annotations:
             summary: "The orders have not been reconciled with the broker for 22m 0s"
             description: "Orders in the database may differ from the broker's. `docker compose logs --tail 80 trader | grep -i 'Could not refresh\\|Housekeeping step failed'`, then `docker compose exec trader python -m trading_system reconcile`."
@@ -579,7 +650,7 @@ tests:
 - name: a reconciliation that keeps succeeding does not fire
   interval: 1m
   input_series:
-    - series: 'alpaca_reconcile_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101"}'
+    - series: 'alpaca_reconcile_timestamp_seconds{job="alpaca-trader", instance="host.docker.internal:9101", service="trader"}'
       values: "0+60x60"
   alert_rule_test:
     - eval_time: 50m
@@ -589,7 +660,7 @@ tests:
 - name: a candidate that broke fires
   interval: 1m
   input_series:
-    - series: 'alpaca_candidate_errors_total{job="alpaca-trader", instance="host.docker.internal:9102"}'
+    - series: 'alpaca_candidate_errors_total{job="alpaca-trader", instance="host.docker.internal:9102", service="observer"}'
       values: "0x3 1x40"
   alert_rule_test:
     - eval_time: 5m
@@ -599,6 +670,7 @@ tests:
             severity: warning
             job: alpaca-trader
             instance: host.docker.internal:9102
+            service: observer
           exp_annotations:
             summary: "A strategy candidate could not be run on a bar"
             description: "The observer journals the candidates' signals for the forward test; a pass in which one broke leaves a hole in it. `docker compose logs observe | grep -i candidate` shows the error."

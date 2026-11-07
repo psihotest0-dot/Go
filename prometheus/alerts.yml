@@ -162,15 +162,21 @@ groups:
           summary: "The bot's loop at {{ $labels.instance }} has not ticked for {{ $value | humanizeDuration }}"
           description: "The process still answers /metrics but its loop is stuck (a call that never returns?). `docker compose logs --tail 50 trader` (or observe) shows the last line. The Docker healthcheck says the same thing in `docker ps` as `unhealthy`."
 
-      # The market has been open for at least 25 minutes and no look for entries has finished in that
-      # time (one is due every 15 minutes, with a few retries). The `min_over_time` makes sure the
-      # market was open the whole time: at the opening bell the last look is from the day before.
+      # The market is open and no look for entries has finished for 25 minutes (one is due every 15
+      # minutes, with a few retries), counted from the later of the last look and the moment this
+      # stretch of open market began, as the Docker healthcheck does. Without the second, it would
+      # fire every morning (Friday's last look) and for minutes after every restart (a restarted
+      # process has no look yet: its gauge is 0). `A > on(...) B or on(...) B` is "the larger of the two".
       # (The time difference is on the left of `and` so that $value is the number of seconds.)
       - alert: AlpacaNoEntryLookups
         expr: |
-          time() - alpaca_last_entries_timestamp_seconds > 1500
+          time() - (
+              alpaca_last_entries_timestamp_seconds > on (instance, job) alpaca_market_open_since_timestamp_seconds
+            or on (instance, job)
+              alpaca_market_open_since_timestamp_seconds
+          ) > 1500
           and
-          min_over_time(alpaca_market_open[25m]) == 1
+          alpaca_market_open == 1
         for: 2m
         labels:
           severity: warning
@@ -191,9 +197,16 @@ groups:
 
       # A position without an active protective stop (stop-loss). The bot halts its own entries the
       # moment it sees one and logs a CRITICAL line; it closes nothing by itself unless
-      # EMERGENCY_CLOSE_UNPROTECTED is on (it is not). Only the trading loop (:9101) publishes this.
+      # EMERGENCY_CLOSE_UNPROTECTED is on (it is not).
+      #
+      # The next three rules are about the TRADING LOOP only (service="trader", a target label in the
+      # backend's prometheus.yml). The observer exports the same gauges, but nothing ever sets them
+      # there, so they sit at 0 for good: a timestamp of 0 would look infinitely stale. On the trader
+      # a gauge that was never set is 0 as well, which is wanted here: a protection check or a
+      # reconciliation that has NEVER succeeded since the start (keys rejected, broker unreachable)
+      # fires these rules too, after the `for`.
       - alert: AlpacaUnprotectedPositions
-        expr: alpaca_unprotected_positions > 0
+        expr: alpaca_unprotected_positions{service="trader"} > 0
         for: 2m
         labels:
           severity: critical
@@ -204,7 +217,7 @@ groups:
       # `alpaca_unprotected_positions == 0` means "all protected" only while the check keeps running;
       # a check that cannot read the broker leaves the number (and this time) as they were.
       - alert: AlpacaProtectionCheckStale
-        expr: time() - alpaca_protection_check_timestamp_seconds > 900
+        expr: time() - alpaca_protection_check_timestamp_seconds{service="trader"} > 900
         for: 5m
         labels:
           severity: warning
@@ -215,7 +228,7 @@ groups:
       # The orders in the database are brought up to date from the broker on every tick. No success
       # for 15 minutes: the broker cannot be read, or some orders cannot be refreshed.
       - alert: AlpacaReconcileStale
-        expr: time() - alpaca_reconcile_timestamp_seconds > 900
+        expr: time() - alpaca_reconcile_timestamp_seconds{service="trader"} > 900
         for: 5m
         labels:
           severity: warning

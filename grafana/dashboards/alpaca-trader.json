@@ -31,7 +31,7 @@
       "targets": [
         {
           "expr": "up{job=\"alpaca-trader\"}",
-          "legendFormat": "{{instance}}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -86,7 +86,7 @@
       "targets": [
         {
           "expr": "time() - alpaca_heartbeat_timestamp_seconds",
-          "legendFormat": "{{instance}}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -128,7 +128,7 @@
       "targets": [
         {
           "expr": "alpaca_market_open",
-          "legendFormat": "{{instance}}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -169,8 +169,8 @@
       "title": "Positions without a stop",
       "targets": [
         {
-          "expr": "alpaca_unprotected_positions",
-          "legendFormat": "{{instance}}",
+          "expr": "alpaca_unprotected_positions{service=\"trader\"}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -208,7 +208,7 @@
       "targets": [
         {
           "expr": "time() - alpaca_last_entries_timestamp_seconds",
-          "legendFormat": "{{instance}}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -232,8 +232,8 @@
       "title": "Since the last protection check",
       "targets": [
         {
-          "expr": "time() - alpaca_protection_check_timestamp_seconds",
-          "legendFormat": "{{instance}}",
+          "expr": "time() - alpaca_protection_check_timestamp_seconds{service=\"trader\"}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -274,8 +274,8 @@
       "title": "Since the last order reconciliation",
       "targets": [
         {
-          "expr": "time() - alpaca_reconcile_timestamp_seconds",
-          "legendFormat": "{{instance}}",
+          "expr": "time() - alpaca_reconcile_timestamp_seconds{service=\"trader\"}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -316,8 +316,8 @@
       "title": "Broken signals and crashed looks (24 h)",
       "targets": [
         {
-          "expr": "sum by (instance) (increase(alpaca_entries_errors_total[1d]))",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by (service) (increase(alpaca_entries_errors_total[1d]))",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -367,8 +367,8 @@
       "title": "Signals found per hour",
       "targets": [
         {
-          "expr": "sum by (instance) (increase(alpaca_signals_total[1h]))",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by (service) (increase(alpaca_signals_total[1h]))",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -390,8 +390,8 @@
       "title": "Looks for entries per hour, by outcome",
       "targets": [
         {
-          "expr": "sum by (instance, outcome) (increase(alpaca_entries_passes_total[1h]))",
-          "legendFormat": "{{instance}} {{outcome}}",
+          "expr": "sum by (service, outcome) (increase(alpaca_entries_passes_total[1h]))",
+          "legendFormat": "{{service}} {{outcome}}",
           "refId": "A"
         }
       ],
@@ -493,7 +493,7 @@
       "title": "Share of calls with no answer (1 h)",
       "targets": [
         {
-          "expr": "sum(increase(alpaca_oracle_answers_total{kind!~\"answer|cached\"}[1h])) / sum(increase(alpaca_oracle_answers_total[1h]))",
+          "expr": "(sum(increase(alpaca_oracle_answers_total{kind!~\"answer|cached\"}[1h])) or vector(0)) / sum(increase(alpaca_oracle_answers_total[1h]))",
           "legendFormat": "no answer",
           "refId": "A"
         }
@@ -519,7 +519,7 @@
       "targets": [
         {
           "expr": "alpaca_oracle_latency_seconds",
-          "legendFormat": "{{instance}}",
+          "legendFormat": "{{service}}",
           "refId": "A"
         }
       ],
@@ -556,7 +556,7 @@
       "title": "Equity",
       "targets": [
         {
-          "expr": "alpaca_account_equity",
+          "expr": "alpaca_account_equity{service=\"trader\"}",
           "legendFormat": "equity",
           "refId": "A"
         }
@@ -581,7 +581,7 @@
       "title": "Open positions",
       "targets": [
         {
-          "expr": "alpaca_active_positions",
+          "expr": "alpaca_active_positions{service=\"trader\"}",
           "legendFormat": "positions",
           "refId": "A"
         }
@@ -604,7 +604,7 @@
       "title": "Gross exposure",
       "targets": [
         {
-          "expr": "alpaca_gross_exposure",
+          "expr": "alpaca_gross_exposure{service=\"trader\"}",
           "legendFormat": "exposure",
           "refId": "A"
         }
