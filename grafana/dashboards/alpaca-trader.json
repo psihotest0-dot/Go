@@ -207,7 +207,7 @@
       "title": "Since the last look for entries",
       "targets": [
         {
-          "expr": "time() - alpaca_last_entries_timestamp_seconds",
+          "expr": "(time() - alpaca_last_entries_timestamp_seconds) and (alpaca_last_entries_timestamp_seconds > 0)",
           "legendFormat": "{{service}}",
           "refId": "A"
         }
@@ -224,7 +224,7 @@
         },
         "overrides": []
       },
-      "description": "A look is due on every closed 15-minute bar while the market is open. Grows on purpose while it is closed (nights, weekends); the alert AlpacaNoEntryLookups only counts with the market open.",
+      "description": "A look is due on every closed 15-minute bar while the market is open. Grows on purpose while it is closed (nights, weekends); the alert AlpacaNoEntryLookups only counts with the market open. Empty after a restart until the first look (the gauge is 0 until then).",
       "id": 6
     },
     {
@@ -518,7 +518,7 @@
       "title": "Latency of the last call",
       "targets": [
         {
-          "expr": "alpaca_oracle_latency_seconds",
+          "expr": "alpaca_oracle_latency_seconds > 0",
           "legendFormat": "{{service}}",
           "refId": "A"
         }
@@ -535,7 +535,7 @@
         },
         "overrides": []
       },
-      "description": "As measured by the bot (the call to the backend, including the model). The usual is 1.5-2.5 s; the bot gives up after about 10 s.",
+      "description": "As measured by the bot (the call to the backend, including the model). The usual is 1.5-2.5 s; the bot gives up after about 10 s. Empty until the first call (the gauge is 0 until then).",
       "id": 17
     },
     {
