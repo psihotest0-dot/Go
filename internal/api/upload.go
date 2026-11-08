@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gabriel-vasile/mimetype"
 	"github.com/google/uuid"
@@ -122,6 +125,40 @@ func multipartError(err error) error {
 	return newClientError(http.StatusBadRequest, "invalid multipart form", err)
 }
 
+// maxStorageNameRunes bounds the part of the on-disk name that comes from the client.
+const maxStorageNameRunes = 100
+
+// storageName is the part of the name a file gets on disk that comes from the name the
+// client sent: the last path element, with every character Windows does not allow in a
+// file name (and control characters) replaced by "_", no trailing dots or spaces (Windows
+// drops them silently), and at most 100 characters with the extension kept. The file's
+// real name is stored separately in the database; this one only has to be a valid, unique
+// path. Before, a name such as "a:b?.pdf" made the rename fail with a 500.
+func storageName(fileName string) string {
+	if i := strings.LastIndexAny(fileName, `/\`); i >= 0 {
+		fileName = fileName[i+1:]
+	}
+	name := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || strings.ContainsRune(`<>:"|?*`, r) {
+			return '_'
+		}
+		return r
+	}, fileName)
+	name = strings.TrimRight(name, ". ")
+	if name == "" {
+		return "file"
+	}
+	if runes := []rune(name); len(runes) > maxStorageNameRunes {
+		ext := filepath.Ext(name)
+		if n := utf8.RuneCountInString(ext); n > 10 {
+			ext = ""
+		}
+		keep := maxStorageNameRunes - utf8.RuneCountInString(ext)
+		name = string(runes[:keep]) + ext
+	}
+	return name
+}
+
 // storeUpload copies src to a random name in uploadDir, hashing it on the way,
 // and renames the finished file into place. The temporary name means a crash
 // never leaves a half written file under a path the database points at.
@@ -136,7 +173,7 @@ func storeUpload(src io.Reader, fileName string) (*spooledUpload, error) {
 	}
 
 	tempPath := filepath.Join(uploadDir, uuid.NewString()+".part")
-	finalPath := filepath.Join(uploadDir, uuid.NewString()+"_"+filepath.Base(fileName))
+	finalPath := filepath.Join(uploadDir, uuid.NewString()+"_"+storageName(fileName))
 
 	file, err := os.Create(tempPath)
 	if err != nil {

@@ -17,7 +17,6 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/riverqueue/river/rivermigrate"
 	"github.com/rs/cors"
 	"gopkg.in/natefinch/lumberjack.v2"
 
@@ -68,6 +67,10 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 		stdoutHandler: h.stdoutHandler.WithGroup(name),
 	}
 }
+
+// summaryShutdownWait is how long shutdown waits for the rolling summaries that chat turns
+// started in the background.
+const summaryShutdownWait = 15 * time.Second
 
 // newLogFile is the rotating backend.log. When it reaches maxMB megabytes it is
 // compressed and kept as the one backup (backend-<time>.log.gz), so the logs
@@ -180,13 +183,7 @@ func run() error {
 		return fmt.Errorf("failed to create river client: %w", err)
 	}
 
-	migrator, err := rivermigrate.New(riverClient.Driver(), nil)
-	if err != nil {
-		return fmt.Errorf("failed to create river migrator: %w", err)
-	}
-	if _, err := migrator.Migrate(ctx, rivermigrate.DirectionUp, nil); err != nil {
-		return fmt.Errorf("failed to migrate river: %w", err)
-	}
+	// jobs.NewRiverClient has just brought River's own tables up to date.
 
 	// The job queue and the files by ingest status, for the Grafana dashboard.
 	prometheus.MustRegister(jobs.NewStateCollector(database.SqlDB))
@@ -363,6 +360,12 @@ func run() error {
 		logger.Error("server shutdown failed", slog.Any("error", err))
 	} else {
 		logger.Info("server stopped gracefully")
+	}
+
+	// A rolling summary that is still being written when the database closes is lost
+	// (it is made again at the next turn of that chat); give the running ones a moment.
+	if !orchestrator.WaitForSummaries(summaryShutdownWait) {
+		logger.Warn("rolling summaries were still running at shutdown; they are made again at the next turn", slog.Duration("waited", summaryShutdownWait))
 	}
 
 	return nil

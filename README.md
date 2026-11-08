@@ -164,6 +164,8 @@ docker compose up -d
 # 3. Build the backend (main.exe is a build artifact and is not in git) and start it
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 .\main.exe            # or, without building: go run main.go
+# main.exe is a snapshot of the code at the time of the build. After every `git pull` or change run
+# build.ps1 again, or use `go run main.go`, which always runs the current code.
 ```
 
 Start the backend **from the repository root**: `migrations`, `prompts` overrides, `storage` and `.env` are relative to the working directory (the start logs their absolute paths). `main.exe` loads `.env` by itself; for a single run you can also set a variable in the shell: `$env:LISTEN_ADDR = "127.0.0.1:8081"`. To pick up a new build, stop the old `main.exe` first (it keeps the file locked). A port that is already taken is reported at start: `netstat -ano | findstr :8080`.

@@ -134,6 +134,24 @@ func (o *Orchestrator) rollingSummary(ctx context.Context, userID uuid.UUID, ses
 	return summary
 }
 
+// WaitForSummaries waits until the rolling-summary passes started by chat turns have
+// finished, for at most timeout, and reports whether they all did. Shutdown calls it
+// before the database is closed: a pass that writes after that is lost (the summary is
+// made again at the next turn of that chat).
+func (o *Orchestrator) WaitForSummaries(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		o.summaryWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 // generateSummary folds the pending messages into the previous summary and
 // stores the result. It runs in a detached goroutine, so it must never panic and
 // must always clear the in-flight marker.

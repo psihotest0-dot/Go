@@ -123,6 +123,34 @@ func WithMetricsLogger(l *slog.Logger) MiddlewareOption {
 	return func(c *middlewareConfig) { c.metricsLogger = l }
 }
 
+// slowRequest is the time after which a finished request is logged even though it
+// succeeded. The chat streams run for tens of seconds by design and are left out. A
+// variable so that a test does not have to wait five seconds.
+var slowRequest = 5 * time.Second
+
+var streamingPaths = map[string]bool{
+	"/chat/stream":     true,
+	"/chat/regenerate": true,
+}
+
+// logFinished writes the "request finished" line that "incoming request" cannot: the status
+// and the time. Only the requests worth searching for get one - those that ended with an
+// error status (5xx at WARN, 4xx at INFO) and the slow ones - so the log does not double.
+// It carries the request_id of the "incoming request" line.
+func logFinished(l *slog.Logger, r *http.Request, status int, elapsed time.Duration) {
+	slow := elapsed >= slowRequest && !streamingPaths[r.URL.Path]
+	if status < 400 && !slow {
+		return
+	}
+	level := slog.LevelInfo
+	if status >= 500 {
+		level = slog.LevelWarn
+	}
+	l.LogAttrs(r.Context(), level, "request finished",
+		slog.String("method", r.Method), slog.String("path", r.URL.Path),
+		slog.Int("status", status), slog.Int64("duration_ms", elapsed.Milliseconds()), slog.Bool("slow", slow))
+}
+
 func Middleware(logger *slog.Logger, opts ...MiddlewareOption) func(http.Handler) http.Handler {
 	var cfg middlewareConfig
 	for _, opt := range opts {
@@ -149,14 +177,15 @@ func Middleware(logger *slog.Logger, opts ...MiddlewareOption) func(http.Handler
 				slog.String("user_id", userID),
 			)
 
-			if r.URL.Path != "/healthz" {
-				accessLogger := reqLogger
-				if polledPaths[r.URL.Path] && cfg.metricsLogger != nil {
-					accessLogger = cfg.metricsLogger.With(
-						slog.String("request_id", reqID),
-						slog.String("user_id", userID),
-					)
-				}
+			accessLogger := reqLogger
+			if polledPaths[r.URL.Path] && cfg.metricsLogger != nil {
+				accessLogger = cfg.metricsLogger.With(
+					slog.String("request_id", reqID),
+					slog.String("user_id", userID),
+				)
+			}
+			logged := r.URL.Path != "/healthz"
+			if logged {
 				accessLogger.Info("incoming request", slog.String("method", r.Method), slog.String("path", r.URL.Path))
 			}
 
@@ -164,7 +193,12 @@ func Middleware(logger *slog.Logger, opts ...MiddlewareOption) func(http.Handler
 
 			next.ServeHTTP(rw, r.WithContext(ctx))
 
-			duration := time.Since(start).Seconds()
+			elapsed := time.Since(start)
+			duration := elapsed.Seconds()
+
+			if logged {
+				logFinished(accessLogger, r, rw.status, elapsed)
+			}
 
 			pathForMetrics := route.pattern
 			if pathForMetrics == "" {
