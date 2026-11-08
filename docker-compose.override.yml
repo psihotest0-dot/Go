@@ -1,6 +1,9 @@
 services:
   db:
-    image: ankane/pgvector:v0.5.1
+    # PostgreSQL 15 with pgvector 0.8.7 on Debian 12 (the same base and glibc as the old
+    # ankane/pgvector:v0.5.1 = PostgreSQL 15.4 + pgvector 0.5.1, so text indexes keep their order).
+    # The tag is pinned: a new minor version of PostgreSQL or pgvector is a decision, not a surprise.
+    image: pgvector/pgvector:0.8.7-pg15-bookworm
     restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
@@ -49,7 +52,7 @@ services:
   # (the daily Windows task): the two use different folders and never prune each other.
   # What the script does, step by step: scripts/db-backup-loop.sh.
   backup:
-    image: ankane/pgvector:v0.5.1   # the same image as db: its pg_dump always matches the server
+    image: pgvector/pgvector:0.8.7-pg15-bookworm   # the same image as db: its pg_dump always matches the server
     restart: unless-stopped
     init: true                      # `docker stop` reaches the script at once, not after 10 s
     depends_on:

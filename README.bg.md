@@ -8,7 +8,7 @@
 
 ## Технологии
 * **Език**: Go 1.26.0
-* **База данни**: PostgreSQL 15 (изисква разширенията `pgvector` и `pg_trgm`; приложеният образ е `ankane/pgvector:v0.5.1`)
+* **База данни**: PostgreSQL 15 (изисква разширенията `pgvector` и `pg_trgm`; приложеният образ е `pgvector/pgvector:0.8.7-pg15-bookworm`, PostgreSQL 15.19 с pgvector 0.8.7; съществуваща база се обновява с презасъздаване на контейнера и `ALTER EXTENSION vector UPDATE;` във всяка база с разширението, след пълен бекъп)
 * **Генератор на SQL заявки**: `sqlc` (с `pgvector-go`, който замества векторните типове на PostgreSQL)
 * **Миграции**: `goose`
 * **Опашка със задачи / фонова работа**: River (върху PostgreSQL, замества Redis)

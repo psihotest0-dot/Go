@@ -31,13 +31,13 @@ jobs:
   # The integration tests run migrations and create/delete users, so they need a
   # disposable database whose name contains "test" (internal/dbtest refuses
   # anything else). The image is the one docker-compose uses (PostgreSQL 15 with
-  # pgvector 0.5.1). -p 1 because every package shares that one database.
+  # pgvector 0.8.7). -p 1 because every package shares that one database.
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     services:
       postgres:
-        image: ankane/pgvector:v0.5.1
+        image: pgvector/pgvector:0.8.7-pg15-bookworm
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -67,7 +67,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: ankane/pgvector:v0.5.1
+        image: pgvector/pgvector:0.8.7-pg15-bookworm
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

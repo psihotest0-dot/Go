@@ -6,7 +6,7 @@ A high-performance Go monolith backing an AI Agent service, providing vector sim
 
 ## Tech Stack
 * **Language**: Go 1.26.0
-* **Database**: PostgreSQL 15 (requires `pgvector` and `pg_trgm` extensions; the bundled image is `ankane/pgvector:v0.5.1`)
+* **Database**: PostgreSQL 15 (requires `pgvector` and `pg_trgm` extensions; the bundled image is `pgvector/pgvector:0.8.7-pg15-bookworm`, PostgreSQL 15.19 with pgvector 0.8.7; an existing database is upgraded by recreating the container and running `ALTER EXTENSION vector UPDATE;` in each database that has the extension, after a full backup)
 * **SQL Query Builder**: `sqlc` (with `pgvector-go` overriding PostgreSQL vector types)
 * **Migrations**: `goose`
 * **Job Queue / Background Tasks**: River (PostgreSQL-backed, replacing Redis)
