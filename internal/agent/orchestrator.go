@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/attachments"
@@ -126,55 +125,18 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// The room for the files attached to the conversation comes out of the history and
-	// the dynamic part of the prompt.
-	plan := o.planAttachments(r.Context(), userID, req.SessionID, o.limits())
-	chatCtx, memoryIDs, err := o.loadContextWithLimits(r.Context(), userID, req, plan.limits)
-	chatCtx.Attachments = plan.files
+	prep, err := o.prepareTurn(r.Context(), userID, req, false)
 	if err != nil {
 		// Streaming has not started, so the client can still receive a normal
 		// HTTP error instead of a "200 OK" with an empty body that leaves the
 		// caller waiting for events that never arrive.
-		slog.ErrorContext(ctx, "failed to load context", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to prepare the chat turn", "err", err, "session_id", req.SessionID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	r = r.WithContext(prep.ctx)
 
-	// The tools of this turn share its state: what untrusted text it has read and
-	// which proposals it made (see turnState).
-	turnCtx, turn := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
-	if plan.hasText() {
-		turn.markExternal(sourceAttachments)
-	}
-	r = r.WithContext(turnCtx)
-
-	o.trace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
-		"query":      req.Content,
-		"memory_ids": memoryIDs,
-	})
-
-	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
-	chatCtx.RollingSum = o.rollingSummary(r.Context(), userID, req.SessionID, chatCtx.windowStart(len(history)))
-
-	systemMessage, err := buildSystemPrompt(chatCtx)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to render system prompt", "err", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	var finalMessages []openai.ChatCompletionMessage
-	finalMessages = append(finalMessages, systemMessage)
-	finalMessages = append(finalMessages, history...)
-
-	o.trace(r.Context(), userID, req.SessionID, "prune", map[string]interface{}{
-		"total_messages": len(chatCtx.History) + 1,
-		"pruned_to":      len(finalMessages),
-	})
-
-	tools := toolDefinitions()
-
-	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, finalMessages, tools, chatCtx.Sources)
+	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources)
 	if err != nil {
 		// The response is already committed and the reason has been sent to the
 		// client as an SSE error frame, so only log it here and skip persisting
@@ -185,7 +147,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(turnFrom(r.Context()), chatCtx.Sources))
+	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(prep.turn, prep.sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
@@ -260,62 +222,17 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// model omits the "query" argument.
 	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
 
-	// The room for the files attached to the conversation comes out of the history and
-	// the dynamic part of the prompt.
-	plan := o.planAttachments(r.Context(), userID, req.SessionID, o.limits())
-	chatCtx, memoryIDs, err := o.loadContextWithLimits(r.Context(), userID, req, plan.limits)
-	chatCtx.Attachments = plan.files
+	prep, err := o.prepareTurn(r.Context(), userID, req, true)
 	if err != nil {
 		// Streaming has not started, so the client can still receive a normal
 		// HTTP error instead of a "200 OK" with an empty body.
-		slog.ErrorContext(ctx, "failed to load context", "err", err, "session_id", req.SessionID)
+		slog.ErrorContext(ctx, "failed to prepare the chat turn", "err", err, "session_id", req.SessionID)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	r = r.WithContext(prep.ctx)
 
-	// The previous answer is still persisted, so it is fetched as part of the
-	// history. Drop it from the prompt: the model must regenerate the reply,
-	// not read (and copy) the one it is replacing.
-	chatCtx.History = dropTrailingAssistantMessages(chatCtx.History)
-	if len(chatCtx.HistoryAt) > len(chatCtx.History) {
-		chatCtx.HistoryAt = chatCtx.HistoryAt[:len(chatCtx.History)]
-	}
-
-	// The tools of this turn share its state: what untrusted text it has read and
-	// which proposals it made (see turnState).
-	turnCtx, turn := withTurn(r.Context(), req.SessionID, len(chatCtx.Chunks) > 0)
-	if plan.hasText() {
-		turn.markExternal(sourceAttachments)
-	}
-	r = r.WithContext(turnCtx)
-
-	o.trace(r.Context(), userID, req.SessionID, "search", map[string]interface{}{
-		"query":      req.Content,
-		"memory_ids": memoryIDs,
-	})
-
-	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
-	chatCtx.RollingSum = o.rollingSummary(r.Context(), userID, req.SessionID, chatCtx.windowStart(len(history)))
-
-	systemMessage, err := buildSystemPrompt(chatCtx)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to render system prompt", "err", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	var finalMessages []openai.ChatCompletionMessage
-	finalMessages = append(finalMessages, systemMessage)
-	finalMessages = append(finalMessages, history...)
-
-	o.trace(r.Context(), userID, req.SessionID, "prune", map[string]interface{}{
-		"total_messages": len(chatCtx.History) + 1,
-		"pruned_to":      len(finalMessages),
-	})
-
-	tools := toolDefinitions()
-
-	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, finalMessages, tools, chatCtx.Sources)
+	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources)
 	if err != nil {
 		// The previous answer is untouched, so a failed regeneration leaves the
 		// session as it was instead of losing the reply it replaced.
@@ -346,7 +263,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(turnFrom(r.Context()), chatCtx.Sources))
+	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(prep.turn, prep.sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
@@ -386,44 +303,13 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 		return ChatTurn{}, fmt.Errorf("failed to save user message: %w", err)
 	}
 
-	plan := o.planAttachments(ctx, userID, req.SessionID, o.limits())
-	chatCtx, memoryIDs, err := o.loadContextWithLimits(ctx, userID, req, plan.limits)
-	chatCtx.Attachments = plan.files
+	prep, err := o.prepareTurn(ctx, userID, req, false)
 	if err != nil {
 		return ChatTurn{}, err
 	}
+	ctx = prep.ctx
 
-	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
-	if plan.hasText() {
-		turn.markExternal(sourceAttachments)
-	}
-
-	o.trace(ctx, userID, req.SessionID, "search", map[string]interface{}{
-		"query":      req.Content,
-		"memory_ids": memoryIDs,
-	})
-
-	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
-	chatCtx.RollingSum = o.rollingSummary(ctx, userID, req.SessionID, chatCtx.windowStart(len(history)))
-
-	systemMessage, err := buildSystemPrompt(chatCtx)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to render system prompt", "err", err)
-		return ChatTurn{}, fmt.Errorf("failed to render system prompt: %w", err)
-	}
-
-	var finalMessages []openai.ChatCompletionMessage
-	finalMessages = append(finalMessages, systemMessage)
-	finalMessages = append(finalMessages, history...)
-
-	o.trace(ctx, userID, req.SessionID, "prune", map[string]interface{}{
-		"total_messages": len(chatCtx.History) + 1,
-		"pruned_to":      len(finalMessages),
-	})
-
-	tools := toolDefinitions()
-
-	assistantContent, _, toolCalls, err := o.generateResponse(ctx, finalMessages, tools, nil)
+	assistantContent, _, toolCalls, err := o.generateResponse(ctx, prep.messages, prep.tools, nil)
 	if err != nil {
 		return ChatTurn{}, err
 	}
@@ -432,11 +318,11 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(turn, chatCtx.Sources))
+	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(prep.turn, prep.sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(answer),
 	})
 
-	return ChatTurn{Answer: answer, Proposals: turn.madeProposals()}, nil
+	return ChatTurn{Answer: answer, Proposals: prep.turn.madeProposals()}, nil
 }
