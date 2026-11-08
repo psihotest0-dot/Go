@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -406,6 +407,40 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 	}, nil
 }
 
+const (
+	// queryENArg is the optional argument of search_documents that carries the query
+	// in English; maxQueryENRunes bounds it, as it comes from the model.
+	queryENArg      = "query_en"
+	maxQueryENRunes = 300
+)
+
+// mergePassages joins the results of two searches of one question, best score first.
+// A passage found by both is listed once, with its higher score; at most limit remain.
+// Scores of the two searches compare: both are 1 - cosine distance of the passage to
+// its query (or the lower score of a text match), so a Bulgarian book found by the
+// Bulgarian query and an English one found by the English query stand side by side.
+func mergePassages(limit int, lists ...[]retrieval.SearchResult) []retrieval.SearchResult {
+	var merged []retrieval.SearchResult
+	at := map[uuid.UUID]int{}
+	for _, list := range lists {
+		for _, res := range list {
+			if i, seen := at[res.ID]; seen {
+				if res.Score > merged[i].Score {
+					merged[i].Score = res.Score
+				}
+				continue
+			}
+			at[res.ID] = len(merged)
+			merged = append(merged, res)
+		}
+	}
+	sort.SliceStable(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
+	if limit > 0 && len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
+}
+
 func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
 	query, err := searchQueryArg(ctx, "search_documents", args)
 	if err != nil {
@@ -425,6 +460,17 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search documents: %w", err)
+	}
+	// The same question in English, when the model supplied it: many books are in
+	// English and a Bulgarian query often misses them (task 32, 2026-11-08). The
+	// first search stands on its own, so a failure of the second one costs nothing.
+	if queryEN, ok := stringArg(args, queryENArg); ok && !strings.EqualFold(queryEN, query) {
+		second, err := r.retrieval.SearchRawChunks(ctx, userID, truncateRunes(queryEN, maxQueryENRunes), limit)
+		if err != nil {
+			slog.WarnContext(ctx, "the English search of search_documents failed, using the first one", "error", err)
+		} else {
+			results = mergePassages(limit, results, second)
+		}
 	}
 	if len(results) > 0 {
 		turnFrom(ctx).markExternal(sourceSearchDocuments)

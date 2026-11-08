@@ -91,6 +91,10 @@ func toolDefinitions() []openai.Tool {
 							"type":        "string",
 							"description": "The text to search for.",
 						},
+						queryENArg: map[string]interface{}{
+							"type":        "string",
+							"description": "The same query in English. Always give it when the query is not in English: many books are in English and are found by English words. Both queries are searched.",
+						},
 						"limit": map[string]interface{}{
 							"type":        "integer",
 							"description": limitDescription(maxDocumentSearchResults),
