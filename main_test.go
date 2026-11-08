@@ -130,14 +130,27 @@ func TestMainPackageIsASingleFile(t *testing.T) {
 	assert.Equal(t, []string{"main.go"}, sources)
 }
 
+// waitForOneCompressedBackup waits until lumberjack has finished its work in the
+// background (it archives and prunes in a goroutine of its own): exactly one
+// backup is left, and it is compressed. Without waiting, a test could end while
+// a file is still open and its temporary folder could not be removed.
+func waitForOneCompressedBackup(t *testing.T, dir string) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		backups, _ := filepath.Glob(filepath.Join(dir, "backend-*"))
+		return len(backups) == 1 && strings.HasSuffix(backups[0], ".log.gz")
+	}, 5*time.Second, 20*time.Millisecond, "exactly one compressed backup is kept")
+}
+
 // backend.log must not grow without a limit: at the configured size it is
 // compressed and kept as one backup.
 func TestLogFileIsRotatedAtTheConfiguredSize(t *testing.T) {
-	t.Chdir(t.TempDir())
-	logFile := newLogFile(1)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backend.log")
+	logFile := newLogFile(path, 1)
 	t.Cleanup(func() { _ = logFile.Close() })
 
-	assert.Equal(t, "backend.log", logFile.Filename)
+	assert.Equal(t, path, logFile.Filename)
 	assert.Equal(t, 1, logFile.MaxSize)
 	assert.Equal(t, 1, logFile.MaxBackups, "one backup, so the logs take about twice the limit at most")
 
@@ -147,29 +160,50 @@ func TestLogFileIsRotatedAtTheConfiguredSize(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	info, err := os.Stat("backend.log")
+	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.LessOrEqual(t, info.Size(), int64(1<<20), "the current file stays under the limit")
 
-	// The backup is compressed in the background.
-	assert.Eventually(t, func() bool {
-		backups, _ := filepath.Glob("backend-*.log*")
-		return len(backups) == 1
-	}, 5*time.Second, 50*time.Millisecond, "exactly one backup is kept")
+	waitForOneCompressedBackup(t, dir)
 }
 
 // A log that is already over the limit when the backend starts (the limit was
 // lowered, or the old build never rotated it) is rotated at once.
 func TestOversizedLogFileIsRotatedOnTheFirstWrite(t *testing.T) {
-	t.Chdir(t.TempDir())
-	require.NoError(t, os.WriteFile("backend.log", make([]byte, 3<<20), 0o600))
-	logFile := newLogFile(1)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backend.log")
+	require.NoError(t, os.WriteFile(path, make([]byte, 3<<20), 0o600))
+	logFile := newLogFile(path, 1)
 	t.Cleanup(func() { _ = logFile.Close() })
 
 	_, err := logFile.Write([]byte("first line\n"))
 	require.NoError(t, err)
 
-	info, err := os.Stat("backend.log")
+	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Less(t, info.Size(), int64(1<<10))
+
+	waitForOneCompressedBackup(t, dir)
+}
+
+// The backup is made by a background goroutine. It must keep working in the
+// folder of the log even when the process changes its current directory (a
+// test finishing, or any code that calls os.Chdir): this used to leave a 3 MB
+// archive of zeros in the project folder and could delete a real one there.
+func TestLogFileDoesNotFollowTheCurrentDirectory(t *testing.T) {
+	logDir, elsewhere := t.TempDir(), t.TempDir()
+	t.Chdir(logDir)
+	logFile := newLogFile("backend.log", 1)
+	t.Cleanup(func() { _ = logFile.Close() })
+	require.True(t, filepath.IsAbs(logFile.Filename), "a relative name is resolved when the file is created")
+
+	t.Chdir(elsewhere)
+	require.NoError(t, os.WriteFile(filepath.Join(logDir, "backend.log"), make([]byte, 3<<20), 0o600))
+	_, err := logFile.Write([]byte("first line\n"))
+	require.NoError(t, err)
+
+	waitForOneCompressedBackup(t, logDir)
+	left, err := os.ReadDir(elsewhere)
+	require.NoError(t, err)
+	assert.Empty(t, left, "nothing is written to the folder the process moved to")
 }

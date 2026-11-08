@@ -73,9 +73,17 @@ func (h *LevelFilterHandler) WithGroup(name string) slog.Handler {
 // compressed and kept as the one backup (backend-<time>.log.gz), so the logs
 // never take much more than maxMB. A file that is already larger than the limit
 // is rotated on the first write.
-func newLogFile(maxMB int) *lumberjack.Logger {
+//
+// The name is made absolute here: lumberjack archives and prunes the old files
+// in a goroutine of its own and looks the name up against the current directory
+// each time, so a relative name followed a later change of directory and could
+// write or delete a backup in the wrong folder.
+func newLogFile(name string, maxMB int) *lumberjack.Logger {
+	if abs, err := filepath.Abs(name); err == nil {
+		name = abs
+	}
 	return &lumberjack.Logger{
-		Filename:   "backend.log",
+		Filename:   name,
 		MaxSize:    maxMB, // megabytes
 		MaxBackups: 1,
 		Compress:   true,
@@ -95,7 +103,7 @@ func run() error {
 	// Read once, right after .env: the size limit of the log file is part of it.
 	cfg := config.Load()
 
-	logFile := newLogFile(cfg.LogMaxMB)
+	logFile := newLogFile("backend.log", cfg.LogMaxMB)
 	defer logFile.Close()
 
 	// The Prometheus scrapes ask /metrics every 15 s, and the "Бот" tab of the client
