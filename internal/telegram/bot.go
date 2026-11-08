@@ -136,16 +136,34 @@ func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool
 		return nil, fmt.Errorf("telegram token is empty")
 	}
 
-	// The client timeout must outlast the 60s long-poll in Start.
-	api, err := tgbotapi.NewBotAPIWithClient(token, tgbotapi.APIEndpoint, &http.Client{Timeout: 90 * time.Second})
+	api, err := newAPI(token, tgbotapi.APIEndpoint)
 	if err != nil {
-		// Transport errors embed the request URL, which contains the bot token.
-		return nil, errors.New(strings.ReplaceAll(err.Error(), token, "<redacted>"))
+		return nil, err
 	}
 
 	bot := newBot(api, orch, pgUserStore{pool: pool}, desk, allowedChatIDs)
 	bot.api = api
 	return bot, nil
+}
+
+// newAPI connects to the Bot API. Transport errors embed the request URL, which
+// contains the bot token, so nothing the library returns or prints may reach a
+// log as it is (redact.go). endpoint has the form of tgbotapi.APIEndpoint.
+func newAPI(token, endpoint string) (*tgbotapi.BotAPI, error) {
+	// The library prints its own long-poll failures. The logger is a package
+	// global: set it before the first call, never while a bot is polling.
+	if err := tgbotapi.SetLogger(newLibraryLogger(token)); err != nil {
+		return nil, err
+	}
+
+	// The client timeout must outlast the 60s long-poll in Start.
+	client := newRedactingClient(&http.Client{Timeout: 90 * time.Second}, token)
+	api, err := tgbotapi.NewBotAPIWithClient(token, endpoint, client)
+	if err != nil {
+		// Not every error comes from the client (e.g. a bad response body).
+		return nil, redactToken(err, token)
+	}
+	return api, nil
 }
 
 const (
