@@ -34,6 +34,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - run: go version
       # Installed for the runner. `go run` with GOOS=windows would build a
       # program that cannot start here, so GOOS is set only for the check.
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest

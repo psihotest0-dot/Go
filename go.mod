@@ -2,6 +2,8 @@ module go-monolith
 
 go 1.26.0
 
+toolchain go1.26.10
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/gabriel-vasile/mimetype v1.4.16
