@@ -1,5 +1,5 @@
 # Every package is pinned, the transitive ones too, to the versions the embedder
-# was built and tested with (Python 3.11): two builds made months apart give the
+# was built and tested with (Python 3.15): two builds made months apart give the
 # same service. The file is a `pip freeze` of the tested image, minus the CUDA
 # packages.
 #
@@ -8,7 +8,7 @@
 # service never uses: it runs with CUDA_VISIBLE_DEVICES=-1. Because the pin names
 # a local version ("+cpu"), pip can only take it from this index.
 #
-# To update: in a clean Python 3.11 virtualenv install the "Direct" packages below
+# To update: in a clean Python 3.15 virtualenv install the "Direct" packages below
 # without versions (`--extra-index-url` as here, `torch+cpu`), run
 # `python -m pytest test_main.py`, write the new `pip freeze` here (without
 # CUDA packages), and rebuild the image. services/embedder/main.py must keep
@@ -49,7 +49,7 @@ mdurl==0.1.2
 mpmath==1.3.0
 narwhals==2.28.0
 networkx==3.6.1
-numpy==2.4.6
+numpy==2.5.4
 opentelemetry-api==1.45.2
 packaging==26.3
 pluggy==1.7.0
@@ -60,7 +60,7 @@ regex==2026.9.29
 rich==15.0.0
 safetensors==0.8.0
 scikit-learn==1.9.1
-scipy==1.17.1
+scipy==1.18.1
 shellingham==1.5.4
 starlette==1.10.0
 sympy==1.14.0

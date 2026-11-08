@@ -1,8 +1,10 @@
-# Pinned by digest (Python 3.11.18): a rebuild months later starts from the same
-# base the versions in requirements.txt were tested on. To move to a newer base,
-# replace the digest (`docker buildx imagetools inspect python:3.11-slim`), run the
-# tests in the new image and check that requirements.txt still installs.
-FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
+# Pinned by digest (Python 3.15.2, Debian trixie): a rebuild months later starts
+# from the same base the versions in requirements.txt were tested on. To move to a
+# newer base, replace the digest (`docker buildx imagetools inspect python:3.15-slim`),
+# run the tests in the new image and check that requirements.txt still installs.
+# Moved from 3.11.18 on 2026-11-08: the vectors came out bit-identical for the same
+# texts, so the stored embeddings and the cache stay valid.
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 WORKDIR /app
 
