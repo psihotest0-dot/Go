@@ -37,6 +37,25 @@ services:
       # itself; the mapping makes it work on Linux hosts too.
       - "host.docker.internal:host-gateway"
 
+  # Sends the alerts of prometheus/alerts.yml to Telegram (alertmanager/alertmanager.yml). The token and
+  # the chat id are read from alertmanager/secrets/, which git ignores: create them once with
+  # scripts/alertmanager-secrets.ps1. Without those files only this service fails; the rest is unaffected.
+  alertmanager:
+    image: prom/alertmanager:v0.34.2
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager:/etc/alertmanager:ro
+      # Silences and the log of what was sent survive a restart (otherwise every
+      # firing alert would be announced again).
+      - alertmanager_data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9093/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   grafana:
     image: grafana/grafana:13.2.3
     restart: unless-stopped
@@ -51,6 +70,8 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
 
 volumes:
+  alertmanager_data:
+    name: go_alertmanager_data
   prometheus_data:
     # Explicit name, like pgdata in docker-compose.override.yml: it must not
     # depend on the folder name. `docker compose down -v` deletes it, plain

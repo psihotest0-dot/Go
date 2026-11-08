@@ -1,0 +1,44 @@
+# Alertmanager: sends the alerts of prometheus/alerts.yml to the owner's Telegram chat, through the
+# same bot as the chat (@Lili_Smart_bot). Only sendMessage is used, so it does not compete with the
+# backend's long-poll for updates.
+#
+# The token and the chat id are NOT in this file (the repository is public): they are read from
+# alertmanager/secrets/telegram_token and alertmanager/secrets/telegram_chat_id, which are ignored
+# by git. Create them with scripts/alertmanager-secrets.ps1 (it reads .env and prints nothing secret).
+#
+# What is sent: severity critical and warning. `info` is never sent (it is for looking at in
+# Prometheus or Grafana). Alerts of one name are grouped into one message: the first one goes out 30 s
+# after the alert starts (so that a burst becomes one message), a change in the group after 5 minutes
+# at the earliest, and a still-firing alert is repeated every 6 hours (critical: every 2 hours).
+# "Resolved" is sent too. Check the file with:
+#   docker run --rm --entrypoint amtool -v "C:\GO\alertmanager:/etc/alertmanager:ro" prom/alertmanager:v0.34.2 check-config /etc/alertmanager/alertmanager.yml
+global:
+  resolve_timeout: 5m
+
+templates:
+  - /etc/alertmanager/lili.tmpl
+
+route:
+  receiver: telegram
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 6h
+  routes:
+    - matchers: [severity="info"]
+      receiver: nobody
+    - matchers: [severity="critical"]
+      receiver: telegram
+      repeat_interval: 2h
+
+receivers:
+  - name: nobody
+  - name: telegram
+    telegram_configs:
+      - bot_token_file: /etc/alertmanager/secrets/telegram_token
+        chat_id_file: /etc/alertmanager/secrets/telegram_chat_id
+        send_resolved: true
+        # Plain text: the default HTML mode breaks on a "<" or "&" in a description
+        # and Telegram then refuses the whole message.
+        parse_mode: ""
+        message: '{{ template "lili.message" . }}'

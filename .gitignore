@@ -10,3 +10,5 @@ backups/
 *.exe
 # working notes of the owner, kept locally only
 ACTION_PLAN.md
+# Telegram token and chat id for Alertmanager (scripts/alertmanager-secrets.ps1)
+alertmanager/secrets/

@@ -6,6 +6,12 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yml
 
+# Where the firing alerts go: alertmanager/alertmanager.yml decides who gets what (Telegram).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
 scrape_configs:
   - job_name: 'go-monolith'
     static_configs:

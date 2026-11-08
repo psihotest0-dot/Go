@@ -1,0 +1,11 @@
+{{ define "lili.message" -}}
+{{ if eq .Status "firing" -}}
+{{ if eq .CommonLabels.severity "critical" }}🔴 СПЕШНО{{ else }}🟠 Внимание{{ end -}}
+{{ else -}}
+✅ Мина
+{{- end }}: {{ .CommonLabels.alertname }}
+{{ range .Alerts -}}
+{{ if .Labels.service }}[{{ .Labels.service }}] {{ end }}{{ .Annotations.summary }}
+{{ .Annotations.description }}
+{{ end -}}
+{{- end }}

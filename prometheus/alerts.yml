@@ -1,8 +1,9 @@
 # Alert rules for the backend. Prometheus evaluates them and shows the state at
 # http://127.0.0.1:9090/alerts (and Grafana lists them under Alerting, from its
-# Prometheus data source). There is no Alertmanager in this setup, so NOTHING IS
-# SENT anywhere: an alert is something to look at, not a notification. To get a
-# message, add an Alertmanager (or Grafana contact points) later.
+# Prometheus data source). They are also SENT: Alertmanager (alertmanager/alertmanager.yml)
+# delivers severity critical and warning to the owner's Telegram chat; `info` is only
+# for looking at. So the severity of a rule decides whether it can wake someone up:
+# critical = needs action now, warning = look at it today, info = just a fact.
 #
 # The metrics come from the backend (/metrics); the dashboard in
 # grafana/dashboards/main.json shows the same series. The last group watches the
