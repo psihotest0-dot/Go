@@ -12,7 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.3
-	github.com/pdfcpu/pdfcpu v0.16.3
+	github.com/pdfcpu/pdfcpu v0.16.4
 	github.com/pgvector/pgvector-go v0.4.1
 	github.com/pressly/goose/v3 v3.29.0
 	github.com/prometheus/client_golang v1.25.0
