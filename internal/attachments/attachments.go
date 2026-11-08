@@ -42,7 +42,8 @@ const (
 	MaxSessionIDRunes = 128
 
 	// StaleAfter is how long an attachment lives without being attached again.
-	// Conversations are not deleted anywhere, so age is the only clean-up.
+	// A deleted conversation takes its files with it (DELETE /chat/sessions/{id}); for the
+	// rest, age is the clean-up.
 	StaleAfter = 30 * 24 * time.Hour
 
 	// BytesPerToken is the cost of a token for code. It is measured (Gemma, Python and Go:

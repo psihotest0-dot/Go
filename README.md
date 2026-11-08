@@ -5,7 +5,7 @@
 A high-performance Go monolith backing an AI Agent service, providing vector similarity search, long-term memory consolidation, and standard chat streaming. It runs on the host (Windows is the primary target, Linux/macOS work too); PostgreSQL, the embedder, Prometheus and Grafana run in Docker.
 
 ## Tech Stack
-* **Language**: Go 1.26.0
+* **Language**: Go 1.26 (`go.mod` pins the toolchain, 1.26.10)
 * **Database**: PostgreSQL 15 (requires `pgvector` and `pg_trgm` extensions; the bundled image is `pgvector/pgvector:0.8.7-pg15-bookworm`, PostgreSQL 15.19 with pgvector 0.8.7; an existing database is upgraded by recreating the container and running `ALTER EXTENSION vector UPDATE;` in each database that has the extension, after a full backup)
 * **SQL Query Builder**: `sqlc` (with `pgvector-go` overriding PostgreSQL vector types)
 * **Migrations**: `goose`
@@ -29,6 +29,7 @@ All token budgets of one request derive from the context window of one slot (`LL
 ### What the model saves, and what waits for the user
 * **Memories** (`create_memory`) are saved at once: what to remember is the model's decision, as in a conversation between people. A memory written in a turn that read a web page or a document carries `metadata.source = "chat_tool"` and `metadata.external_sources`, so a doubtful one can be found and deleted later (`GET /memories`, `DELETE /memories/{id}`).
 * **Global rules** (`save_global_rule`) do not write directly, because a rule is the first thing in the system prompt of every session. The model's request becomes a **proposal** that waits for the user (`GET /proposals`, `POST /proposals/{id}/approve|reject`, or `/pending`, `/approve`, `/reject` in Telegram). A proposal that rests on text from the web or from a document says so. Global rules (they apply to every session) are capped in number and can be listed and deleted (`GET /rules`, `DELETE /rules/{id}`). The chat stream announces new proposals with an `event: proposals` frame.
+* **Deleting a chat** (`DELETE /chat/sessions/{id}`) removes the messages, the rolling summary, the traces and the attached files of that session in one transaction. Memories are kept (they only lose the link to the message). A user message the background memory job has not read yet is moved to a `deleted:<id>` session and removed after it has been read, so a fact told just before the chat was deleted still becomes a memory.
 
 ### Files attached to a conversation
 A text file (code, a log, a long paste) can be attached to **one conversation** (`POST /chat/attachments`, see `docs/openapi.yaml`). It is not the library: nothing is split, embedded or summarised, and other conversations never see it. The prompt shows the newest files in full (every line with its number) within about 4 000 tokens, which are taken from the history and the retrieved context; the model looks into the rest, or into any file, with the `read_attachment` tool (a part by line numbers, or the lines that contain a text, so a function can be found in a file of thousands of lines). Limits: 256 KB a file, 20 files and 1 MB a conversation; a file nobody attaches again for 30 days is removed. The text of a file is untrusted: a memory written after reading it carries `external_sources: ["attachments"]`, and a global rule waits for the user as always.

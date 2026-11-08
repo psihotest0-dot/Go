@@ -827,6 +827,38 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /chat/sessions/{id}:
+    delete:
+      summary: Delete a conversation for good
+      description: |
+        Removes the messages of one chat session, its rolling summary, the agent traces and
+        the attached files, in one transaction. The user's memories are kept (they only lose
+        the link to the message they came from). A user message that the background memory
+        analysis has not read yet is not deleted at once: it is moved out of the session and
+        removed after it has been read (within about five minutes), so a fact told just
+        before the chat was deleted still becomes a memory. A session that does not exist is
+        not an error (204). A chat turn still being generated in the session may write its
+        answer after the deletion, so clients should not delete while one runs.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: The session id, 1 to 128 characters without control characters. Ids that
+          start with `deleted:` are refused.
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 128
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: Conversation deleted (or there was none)
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /oracle/evaluate:
     post:
       summary: Second opinion on a trading signal (called by the trading bot)

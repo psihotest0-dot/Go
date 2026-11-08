@@ -59,7 +59,23 @@ func (w *MemoryConsolidationPeriodicWorker) Work(ctx context.Context, job *river
 		}
 	}
 
+	w.purgeRetired(ctx)
+
 	return nil
+}
+
+// purgeRetired removes the messages of deleted chats that were waiting to be read for
+// memories (see db.Database.DeleteSession) and have been read since. A failure is only
+// logged: the next run tries again, and the messages are already out of every chat.
+func (w *MemoryConsolidationPeriodicWorker) purgeRetired(ctx context.Context) {
+	n, err := w.dbClient.Queries.PurgeRetiredMessages(ctx)
+	if err != nil {
+		slog.Error("failed to purge the messages of deleted chats", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("purged the messages of deleted chats after the memory analysis", "messages", n)
+	}
 }
 
 // uniqueWhileInFlightStates is the set of job states in which an already

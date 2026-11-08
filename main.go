@@ -263,6 +263,7 @@ func run() error {
 	// global rules can be read and deleted.
 	proposalService.RegisterRoutes(protectedMux)
 	apiService.RegisterRuleRoutes(protectedMux)
+	apiService.RegisterSessionRoutes(protectedMux)
 	attachmentService.RegisterRoutes(protectedMux)
 
 	// The Oracle: the trading bot's second opinion on a signal (APPROVE / VETO / HOLD).
