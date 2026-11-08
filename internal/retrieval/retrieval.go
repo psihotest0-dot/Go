@@ -30,6 +30,16 @@ const (
 	// do not cover at 0.168-0.236 (median 0.205). 0.20 keeps every relevant one with
 	// a margin and drops the four farthest unrelated questions; the old 0.45
 	// dropped nothing. Re-measure after a change of model.
+	//
+	// Measured again on 2026-11-08 with 97 files (131 816 chunks), on 47 questions the
+	// books answer and 31 messages they do not: the nearest chunk was at 0.062-0.188
+	// (median 0.122) for the first and 0.117-0.199 (median 0.148) for the second, so
+	// the limit separates nothing now. Of the five nearest chunks of a question the
+	// books answer, none beyond 0.16 came from a right book (0 of 25). Limits from
+	// 0.16 to 0.45 find the same books (a right one among the first eight for 43 of
+	// 47), because the text half of the search and the 400 candidates decide what is
+	// returned; 0.17 returns 0.3-0.5 of a passage less per question. Left at 0.20: a
+	// right passage that is dropped costs more than one the model ignores.
 	chunkMaxDistance = 0.20
 
 	// chunkCrossLanguageMargin is added to chunkMaxDistance for a chunk written in
@@ -51,6 +61,13 @@ const (
 	// ranges overlap a little, so 0.25 cannot separate them cleanly, but it keeps every
 	// summary of a covered question and drops most of the rest; the old 0.40 returned
 	// three unrelated summaries for a question about the capital of France.
+	//
+	// 2026-11-08, 97 files: the nearest summary was at 0.102-0.228 for 47 questions the
+	// books answer and at 0.174-0.269 for 31 messages they do not, so 0.25 still keeps
+	// every right one and still drops only 3 of the 31. The themes now help less: a
+	// right book among the first eight passages for 43 of 47 questions with them, 41
+	// without (42 and 40 among the first five); limits of 0.22 and 0.30 gave the same
+	// 42 and 43, 0.20 one less.
 	conceptMaxDistance = 0.25
 
 	// contextConceptMaxDistance is the limit for the summaries that go into the chat
@@ -65,6 +82,13 @@ const (
 	// 0.17 lets in none of the 21 and loses one useful match (0.182), but the margin to
 	// the nearest unrelated one is 0.004: re-measure when files are added. The old
 	// 0.25, calibrated on 4-8 books, let in 18 of the 21.
+	//
+	// 2026-11-08, 97 files (26 398 summaries), 47 questions the books answer and 31
+	// messages they do not: the nearest summary of the 31 was at 0.174-0.269, none
+	// below 0.17 (the margin is the same 0.004 as with 56 files); 27 of the 47 have
+	// a summary below 0.17, and 68 % of the summaries below 0.17 come from a right
+	// book (between 0.17 and 0.21 it is 24-57 %, the worst bucket 0.18-0.19). Kept. The sample
+	// of messages is small; look at it again if an unrelated idea turns up in a reply.
 	contextConceptMaxDistance = 0.17
 
 	// conceptMatchCount is how many concept summaries a search may return.
