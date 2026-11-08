@@ -100,15 +100,19 @@ var (
 		Help: "Concept summaries made by the distillation pass, by result.",
 	}, []string{"result"}) // result: ok, error
 
-	CacheHits = promauto.NewCounter(prometheus.CounterOpts{
+	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
+	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
+	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever
+	// found again (plan item P14): they were not, 0.2 % in three days.
+	CacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cache_hits_total",
-		Help: "Total number of embedding cache hits",
-	})
+		Help: "Total number of embedding cache hits, by kind of text (query, passage)",
+	}, []string{"kind"})
 
-	CacheMisses = promauto.NewCounter(prometheus.CounterOpts{
+	CacheMisses = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cache_misses_total",
-		Help: "Total number of embedding cache misses",
-	})
+		Help: "Total number of embedding cache misses, by kind of text (query, passage)",
+	}, []string{"kind"})
 )
 
 func init() {
@@ -122,4 +126,15 @@ func init() {
 	for _, verdict := range []string{"APPROVE", "VETO", "HOLD"} {
 		OracleVerdicts.WithLabelValues(verdict)
 	}
+	// The same for the cache, so that the first hit of a kind shows in rate().
+	for _, kind := range []string{CacheKindQuery, CacheKindPassage} {
+		CacheHits.WithLabelValues(kind)
+		CacheMisses.WithLabelValues(kind)
+	}
 }
+
+// The values of the kind label of CacheHits and CacheMisses.
+const (
+	CacheKindQuery   = "query"
+	CacheKindPassage = "passage"
+)

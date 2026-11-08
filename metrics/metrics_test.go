@@ -25,8 +25,8 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 	IngestJobs.WithLabelValues("completed").Inc()
 	IngestDuration.WithLabelValues("completed").Observe(1)
 	DistillationSummaries.WithLabelValues("ok").Inc()
-	CacheHits.Inc()
-	CacheMisses.Inc()
+	CacheHits.WithLabelValues(CacheKindQuery).Inc()
+	CacheMisses.WithLabelValues(CacheKindPassage).Inc()
 
 	families, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
@@ -92,10 +92,32 @@ func TestOracleSeriesExistFromTheStart(t *testing.T) {
 func TestCountersOnlyGoUp(t *testing.T) {
 	before := counterValue(t, "cache_hits_total")
 
-	CacheHits.Inc()
-	CacheHits.Inc()
+	CacheHits.WithLabelValues(CacheKindQuery).Inc()
+	CacheHits.WithLabelValues(CacheKindQuery).Inc()
 
 	assert.Equal(t, before+2, counterValue(t, "cache_hits_total"))
+}
+
+// Both kinds exist at zero from the start, so rate() sees the first hit of each.
+func TestCacheCountersExistForBothKindsFromTheStart(t *testing.T) {
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	for _, name := range []string{"cache_hits_total", "cache_misses_total"} {
+		kinds := map[string]bool{}
+		for _, family := range families {
+			if family.GetName() != name {
+				continue
+			}
+			for _, metric := range family.GetMetric() {
+				for _, label := range metric.GetLabel() {
+					if label.GetName() == "kind" {
+						kinds[label.GetValue()] = true
+					}
+				}
+			}
+		}
+		assert.True(t, kinds[CacheKindQuery] && kinds[CacheKindPassage], "%s is exported for query and passage", name)
+	}
 }
 
 func counterValue(t *testing.T, name string) float64 {
@@ -104,7 +126,12 @@ func counterValue(t *testing.T, name string) float64 {
 	require.NoError(t, err)
 	for _, family := range families {
 		if family.GetName() == name && len(family.GetMetric()) > 0 {
-			return family.GetMetric()[0].GetCounter().GetValue()
+			// The sum of all the series, so that a metric with labels counts as one number.
+			total := 0.0
+			for _, metric := range family.GetMetric() {
+				total += metric.GetCounter().GetValue()
+			}
+			return total
 		}
 	}
 	t.Fatalf("metric %s not found", name)

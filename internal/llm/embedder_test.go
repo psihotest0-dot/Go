@@ -13,12 +13,15 @@ import (
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
+	"go-monolith/metrics"
 )
 
 func constVector(x float32) []float32 {
@@ -441,4 +444,40 @@ func TestEmbedRemoteStopsWaitingWhenTheLimitRunsOutBetweenAttempts(t *testing.T)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.EqualValues(t, 1, calls.Load(), "no second attempt after the limit")
 	assert.Less(t, time.Since(start), embedRetryDelay*4, "the call returned when the limit ran out, not after all attempts")
+}
+
+// The cache counters are split by the kind of text (plan item P14): a search question is
+// "query", everything else "passage". Misses and hits go to the kind of the call.
+func TestCacheCountersAreSplitByKindOfText(t *testing.T) {
+	f := newFakeEmbedderService(t)
+	e, _ := newTestEmbedder(t, f)
+	ctx := context.Background()
+	question := "Коя е столицата на България? " + uuid.NewString()
+	piece := "Откъс от книга " + uuid.NewString()
+
+	value := func(c *prometheus.CounterVec, kind string) float64 {
+		var m dto.Metric
+		require.NoError(t, c.WithLabelValues(kind).Write(&m))
+		return m.GetCounter().GetValue()
+	}
+	qHits, qMiss := value(metrics.CacheHits, "query"), value(metrics.CacheMisses, "query")
+	pHits, pMiss := value(metrics.CacheHits, "passage"), value(metrics.CacheMisses, "passage")
+
+	_, err := e.EmbedTexts(ctx, []string{question}, true)
+	require.NoError(t, err)
+	_, err = e.EmbedTexts(ctx, []string{piece}, false)
+	require.NoError(t, err)
+	assert.Equal(t, qMiss+1, value(metrics.CacheMisses, "query"), "the question was a miss of kind query")
+	assert.Equal(t, pMiss+1, value(metrics.CacheMisses, "passage"), "the piece was a miss of kind passage")
+	assert.Equal(t, qHits, value(metrics.CacheHits, "query"))
+	assert.Equal(t, pHits, value(metrics.CacheHits, "passage"))
+
+	_, err = e.EmbedTexts(ctx, []string{question}, true)
+	require.NoError(t, err)
+	_, err = e.EmbedTexts(ctx, []string{piece}, false)
+	require.NoError(t, err)
+	assert.Equal(t, qHits+1, value(metrics.CacheHits, "query"), "asked again: a hit of kind query")
+	assert.Equal(t, pHits+1, value(metrics.CacheHits, "passage"), "again: a hit of kind passage")
+	assert.Equal(t, qMiss+1, value(metrics.CacheMisses, "query"), "no new misses")
+	assert.Equal(t, pMiss+1, value(metrics.CacheMisses, "passage"))
 }

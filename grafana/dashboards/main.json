@@ -97,12 +97,12 @@
       "title": "Cache Performance",
       "targets": [
         {
-          "expr": "rate(cache_hits_total[1m])",
-          "legendFormat": "Hits"
+          "expr": "sum by (kind) (rate(cache_hits_total[1m]))",
+          "legendFormat": "Hits ({{kind}})"
         },
         {
-          "expr": "rate(cache_misses_total[1m])",
-          "legendFormat": "Misses"
+          "expr": "sum by (kind) (rate(cache_misses_total[1m]))",
+          "legendFormat": "Misses ({{kind}})"
         }
       ],
       "gridPos": {

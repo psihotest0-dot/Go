@@ -145,8 +145,10 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery b
 	}
 
 	prefix := "passage: "
+	kind := metrics.CacheKindPassage
 	if isQuery {
 		prefix = "query: "
+		kind = metrics.CacheKindQuery
 	}
 	prefixed := make([]string, len(texts))
 	keys := make([]string, len(texts))
@@ -165,13 +167,13 @@ func (c *HTTPEmbedder) EmbedTexts(ctx context.Context, texts []string, isQuery b
 	var hitKeys []string
 	for i, key := range keys {
 		if vec, ok := cached[key]; ok {
-			metrics.CacheHits.Inc()
+			metrics.CacheHits.WithLabelValues(kind).Inc()
 			resultVectors[i] = vec
 			hitKeys = append(hitKeys, key)
 			continue
 		}
 
-		metrics.CacheMisses.Inc()
+		metrics.CacheMisses.WithLabelValues(kind).Inc()
 		if _, seen := missIndices[key]; !seen {
 			missKeys = append(missKeys, key)
 			missTexts = append(missTexts, prefixed[i])
