@@ -273,6 +273,36 @@ func TestCacheCleaningGoesByLastUseNotByCreation(t *testing.T) {
 	assert.Equal(t, usedKey, rows[0].ContentHash, "the vector that is still in use survives its age")
 }
 
+// The measurement of 2026-11-08 (plan item P14) showed that a cached vector is
+// almost never used again after its first day, so the cache keeps an entry for a
+// week after its last use, not a month. The test pins the line between 6 and 8 days.
+func TestCacheKeepsAnEntryForAWeekAfterItsLastUse(t *testing.T) {
+	f := newFakeEmbedderService(t)
+	e, _, database := newCountingEmbedder(t, f)
+	ctx := context.Background()
+	texts := uniqueTexts(3)
+	_, err := e.EmbedTexts(ctx, texts, false)
+	require.NoError(t, err)
+	keyOf := func(i int) string { return cacheKey(config.DefaultEmbedModel, "passage: "+texts[i]) }
+
+	setLastAccessed(t, database, keyOf(0), 6*24*time.Hour)  // inside the week
+	setLastAccessed(t, database, keyOf(1), 8*24*time.Hour)  // just outside it
+	setLastAccessed(t, database, keyOf(2), 20*24*time.Hour) // would have stayed under the old 30-day rule
+
+	for {
+		deleted, err := database.Queries.DeleteOldEmbeddingCache(ctx)
+		require.NoError(t, err)
+		if deleted == 0 {
+			break
+		}
+	}
+
+	rows, err := database.Queries.GetEmbeddingCacheByHashes(ctx, []string{keyOf(0), keyOf(1), keyOf(2)})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, keyOf(0), rows[0].ContentHash, "only the entry used within the last week is kept")
+}
+
 func TestEmbedTextsTimeoutIsConfigurable(t *testing.T) {
 	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(400 * time.Millisecond)

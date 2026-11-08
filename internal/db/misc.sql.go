@@ -94,7 +94,7 @@ func (q *Queries) CreateEmbeddingCacheBatch(ctx context.Context, arg CreateEmbed
 const deleteOldEmbeddingCache = `-- name: DeleteOldEmbeddingCache :execrows
 WITH deleted AS (
     SELECT id FROM embedding_cache
-    WHERE last_accessed_at < NOW() - INTERVAL '30 days'
+    WHERE last_accessed_at < NOW() - INTERVAL '7 days'
     LIMIT 1000
     FOR UPDATE SKIP LOCKED
 )
