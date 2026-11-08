@@ -22,8 +22,8 @@ require (
 	github.com/sashabaranov/go-openai v1.43.0
 	github.com/sqlc-dev/pqtype v0.3.0
 	github.com/stretchr/testify v1.12.1
-	github.com/xuri/excelize/v2 v2.11.0
-	golang.org/x/net v0.61.0
+	github.com/xuri/excelize/v2 v2.11.1
+	golang.org/x/net v0.62.0
 	golang.org/x/sync v0.24.0
 	golang.org/x/text v0.43.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -55,7 +55,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
-	github.com/xuri/efp v0.0.2 // indirect
+	github.com/xuri/efp v0.0.3-0.20260924042702-217b81952dec // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
