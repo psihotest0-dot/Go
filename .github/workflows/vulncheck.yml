@@ -1,0 +1,42 @@
+name: Vulncheck
+
+# Known vulnerabilities in the Go standard library (the version in go.mod) and in
+# the dependencies the code really calls. govulncheck gets its database at run
+# time, so the weekly run reports a new advisory even when nobody has pushed.
+# A separate workflow on purpose: the weekly run must not start the database
+# tests, and a finding must not turn the Go workflow red.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 5 * * 1" # Mondays, 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vulncheck-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The backend runs on Windows; some standard library findings are
+        # specific to the operating system, so both are checked.
+        goos: [linux, windows]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # Installed for the runner. `go run` with GOOS=windows would build a
+      # program that cannot start here, so GOOS is set only for the check.
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: $(go env GOPATH)/bin/govulncheck ./...
+        env:
+          GOOS: ${{ matrix.goos }}
