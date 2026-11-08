@@ -317,7 +317,13 @@ func run() error {
 		AllowCredentials: true,
 	})
 
-	handler := api.Middleware(logger, api.WithMetricsLogger(metricsLogger))(api.RecoveryMiddleware(logger)(c.Handler(api.RecordRoute(mux))))
+	// The API has no token, so a web page must not reach it by DNS rebinding: only
+	// requests addressed to this machine by name are served (api.HostCheck).
+	allowedHosts := api.AllowedHosts(cfg.ListenAddr)
+	logger.Info("accepted Host names", slog.String("hosts", strings.Join(allowedHosts, ", ")))
+	hostCheck := api.HostCheck(allowedHosts)
+
+	handler := api.Middleware(logger, api.WithMetricsLogger(metricsLogger))(hostCheck(api.RecoveryMiddleware(logger)(c.Handler(api.RecordRoute(mux)))))
 
 	// LISTEN_ADDR defaults to loopback only (config.DefaultListenAddr). Bind
 	// before announcing the address so that a port already taken by a stale
