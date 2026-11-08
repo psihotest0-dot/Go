@@ -36,6 +36,15 @@ const (
 
 	// shutdownGrace is how long Start waits for in-flight turns after cancellation.
 	shutdownGrace = 10 * time.Second
+
+	// typingInterval is how often the "typing..." action is repeated while a turn
+	// runs. Telegram shows it for about 5 seconds, and a turn with tools and a
+	// large prompt takes much longer.
+	typingInterval = 4 * time.Second
+
+	// typingStopWait bounds how long the end of a turn waits for a "typing"
+	// request that is still on its way, so that it cannot arrive after the reply.
+	typingStopWait = 2 * time.Second
 )
 
 // sender is the part of the Telegram API the handlers write to.
@@ -107,6 +116,9 @@ type Bot struct {
 	// slots is the global limit on concurrent chat turns.
 	slots chan struct{}
 
+	// typingEvery is typingInterval; a field so that tests can shorten it.
+	typingEvery time.Duration
+
 	// chatLocks serialises the turns of one chat so replies cannot overtake
 	// each other. Only allowed chats get an entry, so the map stays small.
 	locksMu   sync.Mutex
@@ -121,13 +133,14 @@ func newBot(s sender, processor chatProcessor, store userStore, desk proposalDes
 		allowed[id] = struct{}{}
 	}
 	return &Bot{
-		sender:    s,
-		processor: processor,
-		store:     store,
-		desk:      desk,
-		allowed:   allowed,
-		slots:     make(chan struct{}, maxConcurrentChats),
-		chatLocks: make(map[int64]chan struct{}),
+		sender:      s,
+		processor:   processor,
+		store:       store,
+		desk:        desk,
+		allowed:     allowed,
+		slots:       make(chan struct{}, maxConcurrentChats),
+		typingEvery: typingInterval,
+		chatLocks:   make(map[int64]chan struct{}),
 	}
 }
 
@@ -356,15 +369,17 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 	defer b.releaseSlot()
 
-	// Send an initial "typing" action to make it feel responsive
-	_, _ = b.sender.Send(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
-
 	turnCtx, cancel := context.WithTimeout(ctx, chatTurnTimeout)
 	defer cancel()
+	stopTyping := b.keepTyping(turnCtx, chatID)
+	defer stopTyping()
 	turn, err := b.processor.ProcessChatTurn(turnCtx, userID, agent.ChatRequest{
 		SessionID: fmt.Sprintf("tg-%d", chatID),
 		Content:   msg.Text,
 	})
+	// Before anything is sent: a "typing" action that arrives after the reply
+	// would show the indicator for another five seconds with nothing coming.
+	stopTyping()
 	if err != nil {
 		if ctx.Err() != nil {
 			return // shutting down
@@ -385,6 +400,44 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 	}
 	if len(turn.Proposals) > 0 {
 		b.sendReply(chatID, proposalNotice(turn.Proposals))
+	}
+}
+
+// keepTyping shows "typing..." in the chat at once and repeats it every
+// typingEvery until the returned stop function is called or ctx ends. stop may
+// be called more than once. It waits (for at most typingStopWait) for a request
+// that is already on its way, so nothing is sent after stop returns.
+func (b *Bot) keepTyping(ctx context.Context, chatID int64) (stop func()) {
+	send := func() {
+		_, _ = b.sender.Send(tgbotapi.NewChatAction(chatID, tgbotapi.ChatTyping))
+	}
+	send()
+
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(b.typingEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				send()
+			}
+		}
+	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(done) })
+		select {
+		case <-finished:
+		case <-time.After(typingStopWait):
+		}
 	}
 }
 

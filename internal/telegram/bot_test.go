@@ -23,15 +23,47 @@ import (
 type fakeSender struct {
 	mu       sync.Mutex
 	messages []tgbotapi.MessageConfig
+	// events is the order in which things reached the chat: "typing" (recorded
+	// when the request has finished) and "message" (recorded when it starts).
+	events []string
+
+	// typingDelay and messageDelay make a request take that long, like a slow
+	// network. Set them before the bot starts.
+	typingDelay  time.Duration
+	messageDelay time.Duration
 }
 
 func (s *fakeSender) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
-	if m, ok := c.(tgbotapi.MessageConfig); ok {
+	switch m := c.(type) {
+	case tgbotapi.ChatActionConfig:
+		time.Sleep(s.typingDelay)
+		s.mu.Lock()
+		s.events = append(s.events, "typing")
+		s.mu.Unlock()
+	case tgbotapi.MessageConfig:
 		s.mu.Lock()
 		s.messages = append(s.messages, m)
+		s.events = append(s.events, "message")
 		s.mu.Unlock()
+		time.Sleep(s.messageDelay)
 	}
 	return tgbotapi.Message{}, nil
+}
+
+func (s *fakeSender) eventLog() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.events...)
+}
+
+func (s *fakeSender) typingCount() int {
+	n := 0
+	for _, e := range s.eventLog() {
+		if e == "typing" {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *fakeSender) texts() []string {
