@@ -3,12 +3,22 @@
 # themselves; one stopped by hand (`docker compose stop` / `down`) stays stopped. Docker Desktop
 # itself must start with Windows (Settings > General > "Start Docker Desktop when you sign in").
 # The backend is NOT a container: main.exe runs on the host and nothing here starts it.
+#
+# Memory ceilings (`mem_limit`, here and in docker-compose.override.yml). The Docker VM is capped at
+# 6 GB (C:\Users\<user>\.wslconfig, memory=6GB); the containers use ~2.4 GB together. Each ceiling
+# sits above the peak measured on 2026-11-08 (cgroup memory.peak, which includes reclaimable page
+# cache), so a runaway container is killed and restarted by `restart: unless-stopped` instead of
+# starving the others. `memswap_limit` equals `mem_limit` so the container cannot spill into swap
+# and thrash the whole VM. They are ceilings, not reservations: the sum may exceed the VM size.
+# If a service is OOM-killed (`docker inspect -f '{{.State.OOMKilled}}' <name>`), raise its limit.
 services:
   embedder:
     build:
       context: ./services/embedder
       dockerfile: Dockerfile
     restart: unless-stopped
+    mem_limit: 2g          # steady 0.9-1.1 GB, peak 1.5 GB (model load)
+    memswap_limit: 2g
     ports:
       # Published on the loopback interface only: the host backend is the only client.
       - "127.0.0.1:8000:8000"
@@ -22,6 +32,8 @@ services:
   prometheus:
     image: prom/prometheus:v3.15.0
     restart: unless-stopped
+    mem_limit: 1g          # steady ~50 MB
+    memswap_limit: 1g
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml
@@ -43,6 +55,8 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.34.2
     restart: unless-stopped
+    mem_limit: 256m        # steady ~20 MB
+    memswap_limit: 256m
     volumes:
       - ./alertmanager:/etc/alertmanager:ro
       # Silences and the log of what was sent survive a restart (otherwise every
@@ -59,6 +73,8 @@ services:
   grafana:
     image: grafana/grafana:13.2.3
     restart: unless-stopped
+    mem_limit: 1536m       # steady ~430 MB, peak 1.1 GB at start (provisioning)
+    memswap_limit: 1536m
     ports:
       - "127.0.0.1:3000:3000"
     volumes:

@@ -5,6 +5,11 @@ services:
     # The tag is pinned: a new minor version of PostgreSQL or pgvector is a decision, not a surprise.
     image: pgvector/pgvector:0.8.7-pg15-bookworm
     restart: unless-stopped
+    # Worst case: the shared_buffers that actually fill (the database is ~0.8 GB, so ~1 GB, not the
+    # full 2 GB) + one maintenance_work_mem (1 GB, an index build) + the backends. If the database
+    # grows past ~2 GB, shared_buffers can fill completely: raise this limit then.
+    mem_limit: 3g          # steady 0.6-0.9 GB
+    memswap_limit: 3g
     ports:
       - "127.0.0.1:5432:5432"
     environment:
@@ -54,6 +59,8 @@ services:
   backup:
     image: pgvector/pgvector:0.8.7-pg15-bookworm   # the same image as db: its pg_dump always matches the server
     restart: unless-stopped
+    mem_limit: 512m                 # steady ~10 MB; pg_dump runs briefly
+    memswap_limit: 512m
     init: true                      # `docker stop` reaches the script at once, not after 10 s
     depends_on:
       db:
