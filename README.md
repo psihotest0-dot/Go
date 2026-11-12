@@ -5,7 +5,7 @@
 A high-performance Go monolith backing an AI Agent service, providing vector similarity search, long-term memory consolidation, and standard chat streaming. It runs on the host (Windows is the primary target, Linux/macOS work too); PostgreSQL, the embedder, Prometheus and Grafana run in Docker.
 
 ## Tech Stack
-* **Language**: Go 1.26 (`go.mod` pins the toolchain, 1.26.10)
+* **Language**: Go 1.26 (`go.mod` pins the toolchain, 1.26.11)
 * **Database**: PostgreSQL 15 (requires `pgvector` and `pg_trgm` extensions; the bundled image is `pgvector/pgvector:0.8.7-pg15-bookworm`, PostgreSQL 15.19 with pgvector 0.8.7; an existing database is upgraded by recreating the container and running `ALTER EXTENSION vector UPDATE;` in each database that has the extension, after a full backup)
 * **SQL Query Builder**: `sqlc` (with `pgvector-go` overriding PostgreSQL vector types)
 * **Migrations**: `goose`
