@@ -57,8 +57,14 @@ const (
 	// chat prompt had become Bulgarian in the character part (2 691 tokens before) and
 	// got a section for attached files and a tool for reading them: template 2 823 plus
 	// tool definitions 796 = 3 619 (the text of a section for attached files comes on top,
-	// and is paid from the room of those files). 3 750 keeps about 130 of slack.
-	fixedPromptTokens = 3750
+	// and is paid from the room of those files).
+	// On 2026-11-11 it was measured again (the Gemma-4-12B tokenizer through llama-server's
+	// /tokenize, the template rendered with an empty context and the tool definitions as JSON):
+	// template 2 911 plus tool definitions 899 = 3 810. The same method gives about 3 695 for
+	// the prompt before the rule that sends questions about the world to the web (about 115
+	// tokens), so the figure had also grown by the argument query_en of search_documents.
+	// 3 950 keeps about 140 of slack.
+	fixedPromptTokens = 3950
 
 	// toolFloorTokens is what the derived budgets leave free for tool results
 	// even when the conversation and the dynamic prompt are as large as they may

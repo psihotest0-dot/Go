@@ -18,10 +18,12 @@ import (
 // It was calibrated on 2026-11-08. The estimate was 4 508 (template 3 330, tool
 // definitions 1 172) while the model's own tokenizer counted 3 619 on 2026-11-07,
 // so the estimate runs about 25 % above the real count (20-35 % in backend.log).
-// fixedPromptTokens keeps only 131 tokens (3.6 %) of slack over that count, so
-// the limit sits 3 % above today's estimate: past it the real count may already
-// be over the reserve.
-const maxFixedPromptEstimate = 4650
+// Recalibrated on 2026-11-11, when the rule about facts of the world was added to
+// the prompt: the estimate is 4 672 (template 3 449, tool definitions 1 223) and the
+// tokenizer counts 3 810 (see fixedPromptTokens), 23 % below it. fixedPromptTokens
+// keeps about 140 tokens (3.7 %) of slack over that count, so the limit sits 3 %
+// above today's estimate: past it the real count may already be over the reserve.
+const maxFixedPromptEstimate = 4810
 
 // fixedPromptTokens is measured by hand with the tokenizer of the model, and it
 // once fell behind unnoticed (task 62: the V4 prompt had grown past the old

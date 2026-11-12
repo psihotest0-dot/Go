@@ -36,8 +36,11 @@ func TestNewBudgetsDerivesFromTheWindow(t *testing.T) {
 		minPrompt    int
 		wantMessages int
 	}{
-		{name: "thinking off", thinking: false, wantAnswer: defaultAnswerTokens, minHistory: 3700, minPrompt: 2500, wantMessages: 25},
-		{name: "thinking on reserves more for the answer", thinking: true, wantAnswer: defaultThinkingAnswerTokens, minHistory: 2500, minPrompt: 1700, wantMessages: 25},
+		// The floors went down by 100 on 2026-11-11, when fixedPromptTokens went from 3 750 to 3 950
+		// (the real count of the fixed prompt had grown to 3 810): the 16 384 window gives 3 669 and
+		// 2 446 tokens (thinking off), 2 469 and 1 646 (thinking on).
+		{name: "thinking off", thinking: false, wantAnswer: defaultAnswerTokens, minHistory: 3600, minPrompt: 2400, wantMessages: 25},
+		{name: "thinking on reserves more for the answer", thinking: true, wantAnswer: defaultThinkingAnswerTokens, minHistory: 2400, minPrompt: 1600, wantMessages: 25},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

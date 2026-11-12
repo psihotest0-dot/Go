@@ -122,6 +122,28 @@ func TestChatPromptKeepsTheCloseRegisterAndTheRulesThatLimitIt(t *testing.T) {
 	}
 }
 
+// Facts of the world that the library does not answer go to the web, not to the
+// memory of the model (2026-11-11, Gemma 4 12B, tool calls and answers measured on
+// 28 questions): without the rule the model named "Кутев, 2994 м" as the highest peak
+// of Rila in 2 of 2 tries, with it "Мусала, 2925 м" in 2 of 2 after a web search, and
+// a final of the world cup was once given to the wrong opponent. The exceptions keep
+// arithmetic, plain words and conversation (and the books, which the library answers)
+// away from the web: 0 of 18 questions about books and 0 of 9 trivial or chat
+// messages went to it.
+func TestChatPromptSendsFactsOfTheWorldToTheWeb(t *testing.T) {
+	chat := chatPrompt(t)
+
+	for name, want := range map[string]string{
+		"facts the library did not answer are not given from memory": "do not answer them from memory",
+		"the web is searched": "Call web_search",
+		"the best page is read when the snippets do not answer": "call web_fetch on the best page",
+		"the source is named":                               "name the source in a few words",
+		"arithmetic, words and conversation need no search": "No search is needed for plain arithmetic",
+	} {
+		assert.Contains(t, chat, want, name)
+	}
+}
+
 // Gemma follows an example to the letter. With a question allowed at the end 14 of 14
 // answers ended with one, and an example for a situation the person is likely to
 // write about came back word for word 4 times in 4. So no example reply ends with a
