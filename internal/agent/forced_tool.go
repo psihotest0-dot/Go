@@ -121,7 +121,14 @@ func forcedFirstTool(tools []openai.Tool, message string) string {
 // водата"). Measured on 2026-11-14 with 18 requests × 2: a long quote that is not
 // in the passages in 13 of 36 answers without the note, 2 of 36 with it; the same
 // rule as a line of the system prompt made no difference (10 of 36).
-const passageQuoteNote = "Note for the answer: the person asked for the words of a book. Copy a quote word for word from the passages above, in the language of the passage. If none of the passages holds what was asked for, say that you did not find it in the library and do not write a quote of your own."
+//
+// Many books of the library are English texts under Bulgarian file names. Without
+// the sentence about the language the model gave the English original to a
+// Bulgarian question, or its own translation as if it were the book's words; with
+// it, 7 of 36 answers gave the original and a translation called a translation,
+// and 1 of 36 had a long quote that is neither in the passages nor called a
+// translation (2 of 36 without the sentence, 13 of 36 without any note).
+const passageQuoteNote = "Note for the answer: the person asked for the words of a book. Copy a quote word for word from the passages above, in the language of the passage. If that language is not the language of the person's message, give the quote in its own language first and then your translation, and call it your translation. If none of the passages holds what was asked for, say that you did not find it in the library and do not write a quote of your own."
 
 // toolNoteSeparator puts a note apart from the JSON of a tool result.
 const toolNoteSeparator = "\n\n"
