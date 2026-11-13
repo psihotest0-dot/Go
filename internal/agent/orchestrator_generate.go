@@ -277,6 +277,9 @@ func mergeToolCallDeltas(calls *[]openai.ToolCall, deltas []openai.ToolCall) {
 // still gets an answer.
 func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.ToolCall, budgetTokens int) []openai.ChatCompletionMessage {
 	contents := make([]string, len(calls))
+	// notes end a successful result (see toolResultNote); the budget counts them
+	// and a result that has to be cut keeps its note.
+	notes := make([]string, len(calls))
 
 	for i, tc := range calls {
 		var content string
@@ -329,6 +332,9 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 						break
 					}
 					content = string(resBytes)
+					if note := toolResultNote(ctx, tc.Function.Name); note != "" {
+						notes[i] = toolNoteSeparator + note
+					}
 					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
 				}
 			}
@@ -339,18 +345,23 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 
 	sizes := make([]int, len(contents))
 	for i, content := range contents {
-		sizes[i] = estimateTokens(content)
+		sizes[i] = estimateTokens(content) + estimateTokens(notes[i])
 	}
 	allowed := allocateTokens(sizes, budgetTokens)
 
 	messages := make([]openai.ChatCompletionMessage, 0, len(calls))
 	for i, tc := range calls {
-		content := contents[i]
+		content, note := contents[i], notes[i]
 		if sizes[i] > allowed[i] {
 			slog.WarnContext(ctx, "tool result cut to fit the context window",
 				"tool", tc.Function.Name, "result_tokens", sizes[i], "allowed_tokens", allowed[i], "round_budget", budgetTokens)
-			content = fitToolResult(content, allowed[i])
+			if allowed[i]-estimateTokens(note) < minToolResultTokens {
+				// No room for the passages, so there is nothing to quote from.
+				note = ""
+			}
+			content = fitToolResult(content, allowed[i]-estimateTokens(note))
 		}
+		content += note
 
 		messages = append(messages, openai.ChatCompletionMessage{
 			Role:       openai.ChatMessageRoleTool,
