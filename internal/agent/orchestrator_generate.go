@@ -9,8 +9,12 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
+
+	"go-monolith/metrics"
 )
 
 const (
@@ -28,6 +32,19 @@ const (
 	// a short prefix is enough to see what went wrong.
 	maxLoggedToolArgsRunes = 256
 )
+
+// silentStreamTimeout is how long a completion that has started may send nothing
+// before it is cut off. With thinking off, Gemma 4 sometimes repeats its empty
+// thought marker until the token limit; llama-server drops the markers and sends
+// nothing at all for ~50 s, and the answer comes out empty. Measured 2026-11-13: a
+// normal stream (text, or the arguments of a tool call) never paused for more
+// than 0.2 s, so 8 s leaves a wide margin, also for two busy slots. The clock
+// starts with the first chunk, i.e. after the prompt has been read, which takes
+// ~6 s for 12 000 tokens. A variable so a test can shorten it.
+var silentStreamTimeout = 8 * time.Second
+
+// errSilentStream is returned by streamOnce when the model went silent.
+var errSilentStream = errors.New("the model streamed nothing for too long")
 
 // deltaFunc receives streamed content and reasoning chunks. Returning an error
 // aborts the stream.
@@ -87,12 +104,38 @@ func (o *Orchestrator) logUsage(ctx context.Context, req openai.ChatCompletionRe
 // streamOnce runs one streaming completion and collects text, reasoning and tool
 // call deltas. Provider, network and callback errors are all returned: a
 // truncated answer must never look like a finished one.
+//
+// A stream that has started and then sends nothing for silentStreamTimeout is cut
+// off (closing the connection also stops the generation in llama-server) and
+// errSilentStream is returned with what had arrived.
 func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletionRequest, onDelta deltaFunc) (streamResult, error) {
-	stream, err := o.llmClient.ChatStream(ctx, req)
+	streamCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	stream, err := o.llmClient.ChatStream(streamCtx, req)
 	if err != nil {
 		return streamResult{}, err
 	}
 	defer stream.Close()
+
+	// The watchdog starts with the first chunk and is reset by every later one.
+	var silent atomic.Bool
+	var watchdog *time.Timer
+	defer func() {
+		if watchdog != nil {
+			watchdog.Stop()
+		}
+	}()
+	resetWatchdog := func() {
+		if watchdog == nil {
+			watchdog = time.AfterFunc(silentStreamTimeout, func() {
+				silent.Store(true)
+				cancel()
+			})
+			return
+		}
+		watchdog.Reset(silentStreamTimeout)
+	}
 
 	var content, reasoning strings.Builder
 	var toolCalls []openai.ToolCall
@@ -114,8 +157,12 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 			break
 		}
 		if recvErr != nil {
+			if silent.Load() && ctx.Err() == nil {
+				return snapshot(), errSilentStream
+			}
 			return snapshot(), recvErr
 		}
+		resetWatchdog()
 		// The usage arrives in a final chunk that has no choices.
 		if resp.Usage != nil {
 			usage = resp.Usage
@@ -147,6 +194,45 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 	}
 
 	return snapshot(), nil
+}
+
+// streamWithRescue runs streamOnce and handles a stream that went silent:
+//   - text was already shown: it is kept as the answer and the turn ends there
+//     (a half-made tool call is dropped, never executed);
+//   - nothing was shown and thinking was off: the same request is sent once more
+//     with thinking on, which ended the loop in every measured case (4-9 s);
+//   - thinking was already on: the error is returned, the client gets the usual
+//     error frame and the question stays in the history for /chat/regenerate.
+func (o *Orchestrator) streamWithRescue(ctx context.Context, req openai.ChatCompletionRequest, onDelta deltaFunc) (streamResult, error) {
+	result, err := o.streamOnce(ctx, req, onDelta)
+	if !errors.Is(err, errSilentStream) {
+		return result, err
+	}
+
+	if sanitizeAssistantText(result.content) != "" {
+		slog.WarnContext(ctx, "the model went silent after part of its answer; the part is kept",
+			"silent_after", silentStreamTimeout, "kept_bytes", len(result.content))
+		metrics.LLMSilentStreams.WithLabelValues("kept_partial").Inc()
+		result.toolCalls = nil
+		return result, nil
+	}
+
+	if thinking, _ := req.ChatTemplateKwargs["enable_thinking"].(bool); thinking {
+		slog.WarnContext(ctx, "the model went silent with thinking on; giving up", "silent_after", silentStreamTimeout)
+		metrics.LLMSilentStreams.WithLabelValues("failed").Inc()
+		return result, err
+	}
+
+	slog.WarnContext(ctx, "the model went silent before it showed anything; asking again with thinking on",
+		"silent_after", silentStreamTimeout)
+	metrics.LLMSilentStreams.WithLabelValues("retried").Inc()
+	retry := req
+	retry.ChatTemplateKwargs = make(map[string]any, len(req.ChatTemplateKwargs)+1)
+	for k, v := range req.ChatTemplateKwargs {
+		retry.ChatTemplateKwargs[k] = v
+	}
+	retry.ChatTemplateKwargs["enable_thinking"] = true
+	return o.streamOnce(ctx, retry, onDelta)
 }
 
 // mergeToolCallDeltas folds streamed tool call fragments into calls. Both the
@@ -308,7 +394,7 @@ func (o *Orchestrator) generateResponse(
 			req.Tools = onlyTool(tools, forced)
 			req.ToolChoice = "required"
 		}
-		result, err := o.streamOnce(ctx, req, onDelta)
+		result, err := o.streamWithRescue(ctx, req, onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {
@@ -345,7 +431,7 @@ func (o *Orchestrator) generateResponse(
 	// the conversation, so nothing is repeated here: an earlier version appended
 	// them a second time, which doubled the prompt of the final call.
 	if strings.TrimSpace(assistantContent.String()) == "" {
-		result, err := o.streamOnce(ctx, o.chatRequest(messages, nil), onDelta)
+		result, err := o.streamWithRescue(ctx, o.chatRequest(messages, nil), onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {

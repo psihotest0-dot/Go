@@ -34,6 +34,17 @@ var (
 		Buckets: []float64{0.01, 0.1, 0.5, 1, 5, 15, 60, 180, 600},
 	}, []string{"priority"}) // priority: interactive, background
 
+	// LLMSilentStreams counts chat completions that went silent after they started: the
+	// model kept generating but llama-server sent nothing (Gemma 4 repeating its empty
+	// thought marker until the token limit, found 2026-11-13). "retried" means nothing
+	// had been shown yet and the turn was asked again with thinking on, "kept_partial"
+	// that the text shown so far was kept as the answer, and "failed" that thinking was
+	// already on, so the turn ended with an error.
+	LLMSilentStreams = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "llm_silent_streams_total",
+		Help: "Chat completions cut off after the model streamed nothing for too long, by outcome.",
+	}, []string{"outcome"}) // outcome: retried, kept_partial, failed
+
 	// Proposals counts the writes the model asked for that wait for the user.
 	Proposals = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_proposals_total",
