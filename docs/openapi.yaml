@@ -488,7 +488,8 @@ paths:
           saved until the user decides (`/proposals/{id}/approve`). (A memory
           the model decides to keep is saved at once and is not announced.);
 
-        * `data: [DONE]` - the end of a good answer;
+        * `data: [DONE]` - the end of a good answer; by then the answer is
+          stored, so the history already has it;
 
         * `event: error` with `{"error": "..."}` - the generation failed; no
           `[DONE]` follows and the answer is not stored. The message carries a

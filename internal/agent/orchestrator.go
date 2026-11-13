@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/attachments"
@@ -136,18 +137,23 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 	r = r.WithContext(prep.ctx)
 
-	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources)
+	// The answer is stored before the final [DONE] frame (see streamResponse), on
+	// its own context: a client that leaves right after the last piece of text
+	// must not abort the write.
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBg()
+	store := func(content string, toolCalls []openai.ToolCall) {
+		o.storeAnswer(bgCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources))
+	}
+
+	assistantContent, _, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, store)
 	if err != nil {
 		// The response is already committed and the reason has been sent to the
-		// client as an SSE error frame, so only log it here and skip persisting
-		// a partial answer.
+		// client as an SSE error frame, so only log it here; a partial answer is
+		// never stored.
 		slog.ErrorContext(ctx, "stream failed", "err", err, "session_id", req.SessionID)
 		return
 	}
-
-	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(prep.turn, prep.sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
@@ -232,38 +238,32 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	}
 	r = r.WithContext(prep.ctx)
 
-	assistantContent, toolCalls, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources)
+	// The answer is complete when replace runs (just before [DONE]), so the write
+	// phase gets its own context and is not aborted by a client that disconnects
+	// right after the last piece of text.
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelBg()
+	replace := func(content string, toolCalls []openai.ToolCall) {
+		// A model that only "thought" leaves nothing to show; keep the old answer
+		// rather than replacing it with an empty one.
+		if sanitizeAssistantText(content) == "" && len(toolCalls) == 0 {
+			slog.WarnContext(ctx, "regenerated answer is empty; keeping the previous one", "session_id", req.SessionID)
+			return
+		}
+		// The old answer goes only now that a complete new one exists, and in the
+		// same transaction as the new one is written.
+		if err := o.replaceAnswer(bgCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources)); err != nil {
+			slog.ErrorContext(ctx, "failed to replace the previous answer; it is kept", "err", err, "session_id", req.SessionID)
+		}
+	}
+
+	assistantContent, _, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, replace)
 	if err != nil {
 		// The previous answer is untouched, so a failed regeneration leaves the
 		// session as it was instead of losing the reply it replaced.
 		slog.ErrorContext(ctx, "stream failed", "err", err, "session_id", req.SessionID)
 		return
 	}
-
-	// The answer is already complete, so the write phase must not be aborted by
-	// a client that disconnects right after the final event.
-	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelBg()
-
-	// A model that only "thought" leaves nothing to show; keep the old answer
-	// rather than replacing it with an empty one.
-	if sanitizeAssistantText(assistantContent) == "" && len(toolCalls) == 0 {
-		slog.WarnContext(ctx, "regenerated answer is empty; keeping the previous one", "session_id", req.SessionID)
-		return
-	}
-
-	// Replace the old answer only now that a complete new one exists.
-	if err := o.db.Queries.DeleteLastAssistantMessage(bgCtx, db.DeleteLastAssistantMessageParams{
-		SessionID: req.SessionID,
-		UserID:    userID,
-	}); err != nil {
-		// Persisting as well would leave two answers for the same question, so
-		// keep the stored history consistent and drop the new one.
-		slog.ErrorContext(ctx, "failed to delete last assistant message", "err", err, "session_id", req.SessionID)
-		return
-	}
-
-	o.storeAnswer(bgCtx, userID, req.SessionID, assistantContent, toolCalls, answerSources(prep.turn, prep.sources))
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),

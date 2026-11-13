@@ -152,7 +152,11 @@ func sanitizeAssistantText(s string) string {
 	return strings.TrimSpace(f.Process(dropOrphanThinking(s)) + f.Flush())
 }
 
-func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo) (assistantContent string, toolCalls []openai.ToolCall, err error) {
+// streamResponse streams one answer as Server-Sent Events. beforeDone (may be nil)
+// gets the finished answer just before the final "[DONE]" frame and stores it: a
+// client that reads the history, or sends the next message, as soon as the stream
+// ends must find the answer there. It is not called when the generation fails.
+func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo, beforeDone func(content string, toolCalls []openai.ToolCall)) (assistantContent string, toolCalls []openai.ToolCall, err error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.ErrorContext(r.Context(), "streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
@@ -179,7 +183,13 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	sourcesBytes, _ := json.Marshal(sources)
+	// The contract promises a list, "[]" when there are none; a nil slice would
+	// be marshalled as "null".
+	firstSources := sources
+	if firstSources == nil {
+		firstSources = []api.SourceInfo{}
+	}
+	sourcesBytes, _ := json.Marshal(firstSources)
 	fmt.Fprintf(w, "event: sources\ndata: %s\n\n", string(sourcesBytes))
 	flusher.Flush()
 
@@ -260,6 +270,10 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		proposalBytes, _ := json.Marshal(made)
 		fmt.Fprintf(w, "event: proposals\ndata: %s\n\n", string(proposalBytes))
 		flusher.Flush()
+	}
+
+	if beforeDone != nil {
+		beforeDone(assistantContent, toolCalls)
 	}
 
 	fmt.Fprintf(w, "data: [DONE]\n\n")

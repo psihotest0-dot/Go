@@ -29,7 +29,9 @@ func (o *Orchestrator) saveUserMessage(ctx context.Context, userID uuid.UUID, se
 	return err
 }
 
-func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) error {
+// persistAssistantMessage writes the answer through q, which is the orchestrator's
+// own queries or those of a transaction.
+func (o *Orchestrator) persistAssistantMessage(ctx context.Context, q *db.Queries, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) error {
 	// Raw model output can carry <think> blocks and tool markup that the live
 	// stream hides; they must not end up in the history either.
 	contentToSave := sanitizeAssistantText(content)
@@ -53,7 +55,7 @@ func (o *Orchestrator) persistAssistantMessage(ctx context.Context, userID uuid.
 	}
 	dbSourcesBytes, _ := json.Marshal(dbSources)
 
-	_, err := o.db.Queries.CreateMessage(ctx, db.CreateMessageParams{
+	_, err := q.CreateMessage(ctx, db.CreateMessageParams{
 		UserID:    userID,
 		SessionID: sessionID,
 		Role:      "assistant",
@@ -78,9 +80,36 @@ func answerSources(turn *turnState, promptSources []api.SourceInfo) []api.Source
 // screen, so a failure is not returned, but it must not pass silently: the
 // answer is then missing from the history and from every later context.
 func (o *Orchestrator) storeAnswer(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) {
-	if err := o.persistAssistantMessage(ctx, userID, sessionID, content, toolCalls, sources); err != nil {
+	if err := o.persistAssistantMessage(ctx, o.db.Queries, userID, sessionID, content, toolCalls, sources); err != nil {
 		slog.ErrorContext(ctx, "failed to store the assistant answer", "err", err, "session_id", sessionID)
 	}
+}
+
+// replaceAnswer swaps the last stored answer of the session for a new one in one
+// transaction. Done as two separate writes, a reader in between saw the question
+// without an answer, and a failed insert after the delete lost both answers.
+func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) error {
+	tx, err := o.db.SqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	// A no-op after Commit.
+	defer func() { _ = tx.Rollback() }()
+
+	q := o.db.Queries.WithTx(tx)
+	if err := q.DeleteLastAssistantMessage(ctx, db.DeleteLastAssistantMessageParams{
+		SessionID: sessionID,
+		UserID:    userID,
+	}); err != nil {
+		return fmt.Errorf("delete the previous answer: %w", err)
+	}
+	if err := o.persistAssistantMessage(ctx, q, userID, sessionID, content, toolCalls, sources); err != nil {
+		return fmt.Errorf("store the new answer: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }
 
 // trace writes a diagnostic step. The trace is for debugging only, so a failure

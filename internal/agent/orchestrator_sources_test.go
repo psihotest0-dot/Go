@@ -127,7 +127,7 @@ func streamedFrames(t *testing.T, mock *llm.MockLLM, tools ToolRegistry, promptS
 
 	_, _, err := o.streamResponse(rec, req.WithContext(ctx), "s",
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "какво пише в книгата"}},
-		toolDefinitions(), promptSources)
+		toolDefinitions(), promptSources, nil)
 
 	require.NoError(t, err)
 	return strings.Split(strings.TrimSpace(rec.Body.String()), "\n\n")
