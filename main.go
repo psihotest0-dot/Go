@@ -99,7 +99,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := godotenv.Load(); err != nil && !os.IsNotExist(err) && !errors.Is(err, os.ErrNotExist) {
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("warning: failed to load .env file: %v\n", err)
 	}
 

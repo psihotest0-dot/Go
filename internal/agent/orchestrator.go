@@ -26,6 +26,11 @@ import (
 // It is a variable so a test can shorten it.
 var persistTimeout = 30 * time.Second
 
+// chatRequestTimeout bounds one chat request (a new turn or a regeneration):
+// preparing the prompt, every tool round and the streamed answer. A cancelled
+// client ends it sooner; storing the answer has its own persistTimeout.
+const chatRequestTimeout = 5 * time.Minute
+
 // Orchestrator orchestrates the main agent pipeline.
 type Orchestrator struct {
 	db        *db.Database
@@ -86,7 +91,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), chatRequestTimeout)
 	defer cancel()
 	r = r.WithContext(ctx)
 
@@ -181,7 +186,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), chatRequestTimeout)
 	defer cancel()
 	r = r.WithContext(ctx)
 
