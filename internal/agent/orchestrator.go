@@ -20,6 +20,12 @@ import (
 	"go-monolith/internal/retrieval"
 )
 
+// persistTimeout bounds the writes after an answer (storing it, the trace). Each
+// such context is started when the answer is complete: one made before the
+// generation would expire during a long answer and the answer would be lost.
+// It is a variable so a test can shorten it.
+var persistTimeout = 30 * time.Second
+
 // Orchestrator orchestrates the main agent pipeline.
 type Orchestrator struct {
 	db        *db.Database
@@ -139,11 +145,12 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 	// The answer is stored before the final [DONE] frame (see streamResponse), on
 	// its own context: a client that leaves right after the last piece of text
-	// must not abort the write.
-	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelBg()
+	// must not abort the write. The context starts when the answer is complete,
+	// not before the generation, which can take longer than its timeout.
 	store := func(content string, toolCalls []openai.ToolCall) {
-		o.storeAnswer(bgCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources))
+		storeCtx, cancelStore := context.WithTimeout(context.Background(), persistTimeout)
+		defer cancelStore()
+		o.storeAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources))
 	}
 
 	assistantContent, _, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, store)
@@ -155,6 +162,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), persistTimeout)
+	defer cancelBg()
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
@@ -239,11 +248,11 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	r = r.WithContext(prep.ctx)
 
 	// The answer is complete when replace runs (just before [DONE]), so the write
-	// phase gets its own context and is not aborted by a client that disconnects
-	// right after the last piece of text.
-	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancelBg()
+	// phase gets its own context, started then, and is not aborted by a client
+	// that disconnects right after the last piece of text.
 	replace := func(content string, toolCalls []openai.ToolCall) {
+		storeCtx, cancelStore := context.WithTimeout(context.Background(), persistTimeout)
+		defer cancelStore()
 		// A model that only "thought" leaves nothing to show; keep the old answer
 		// rather than replacing it with an empty one.
 		if sanitizeAssistantText(content) == "" && len(toolCalls) == 0 {
@@ -252,7 +261,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		}
 		// The old answer goes only now that a complete new one exists, and in the
 		// same transaction as the new one is written.
-		if err := o.replaceAnswer(bgCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources)); err != nil {
+		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources)); err != nil {
 			slog.ErrorContext(ctx, "failed to replace the previous answer; it is kept", "err", err, "session_id", req.SessionID)
 		}
 	}
@@ -265,6 +274,8 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), persistTimeout)
+	defer cancelBg()
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
@@ -316,7 +327,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	answer := sanitizeAssistantText(assistantContent)
 
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
-	bgCtx, cancelBg := context.WithTimeout(context.Background(), 30*time.Second)
+	bgCtx, cancelBg := context.WithTimeout(context.Background(), persistTimeout)
 	defer cancelBg()
 	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(prep.turn, prep.sources))
 

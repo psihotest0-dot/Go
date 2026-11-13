@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/db"
@@ -81,6 +83,38 @@ func TestRegenerateKeepsTheOldAnswerWhenTheNewOneCannotBeStored(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, []string{"Стар отговор"}, f.storedContents(t, "s-regen-tx", "assistant"))
+}
+
+// slowLLM answers like its inner model, but only after delay: a long generation.
+type slowLLM struct {
+	llm.LLMClient
+	delay time.Duration
+}
+
+func (s slowLLM) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (llm.Stream, error) {
+	time.Sleep(s.delay)
+	return s.LLMClient.ChatStream(ctx, req)
+}
+
+// The context of the write starts when the answer is complete. One made before
+// the generation expired during a long answer (over 30 s with a real model) and
+// the answer was never stored ("context deadline exceeded").
+func TestAnAnswerThatTakesLongerThanTheWriteTimeoutIsStillStored(t *testing.T) {
+	old := persistTimeout
+	persistTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { persistTimeout = old })
+
+	f := newSanitizeFixture(t, "Дълъг отговор")
+	f.orchestrator.llmClient = slowLLM{LLMClient: f.orchestrator.llmClient, delay: 150 * time.Millisecond}
+
+	rec, req := f.request(t, "/chat/stream", ChatRequest{SessionID: "s-slow", Content: "Въпрос"})
+	f.orchestrator.HandleStreamChat(rec, req)
+	require.Equal(t, []string{"Дълъг отговор"}, f.storedContents(t, "s-slow", "assistant"))
+
+	f.seedTurn(t, "s-slow-regen", "Въпрос", "Стар отговор")
+	rec, req = f.request(t, "/chat/regenerate", RegenerateRequest{SessionID: "s-slow-regen"})
+	f.orchestrator.HandleRegenerate(rec, req)
+	require.Equal(t, []string{"Дълъг отговор"}, f.storedContents(t, "s-slow-regen", "assistant"))
 }
 
 // openapi.yaml promises a list in the first "sources" frame, "[]" when the prompt
