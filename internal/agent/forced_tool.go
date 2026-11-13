@@ -37,7 +37,47 @@ var (
 		`днес|утре|вчера|сега|часът|времето|` +
 		`you|your|yourself|today|tomorrow|yesterday|weather` +
 		`)(?:[^\p{L}]|$)`)
+
+	// requestFiller: the little words a speaker puts in front of a request.
+	requestFiller = `(?i)^\s*(?:(?:а|и|ами|добре|моля|хайде|please)[,\s]+)?`
+
+	// passageRequest: a request that opens with a verb asking for something
+	// ("дай ми", "покажи", "прочети", "give me", "find") - it asks for words of a
+	// text only together with a passageWord, so "дай ми съвет" stays small talk.
+	passageRequest = regexp.MustCompile(requestFiller + `(?:` +
+		`дай|даи|дайте|цитирай|цитирайте|покажи|покажете|прочети|прочетете|намери|намерете|изреди|преразкажи|резюмирай|обобщи|` +
+		`give|quote|show|read|find|list|summari[sz]e|cite` +
+		`)(?:[^\p{L}]|$)`)
+
+	// quoteRequest: a verb that asks for the words of a text by itself.
+	quoteRequest = regexp.MustCompile(requestFiller + `(?:цитирай|цитирайте|quote|cite)(?:[^\p{L}]|$)`)
+
+	// passageWords: a piece of a text or a book, as a whole word.
+	passageWords = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:` +
+		`абзац\p{L}*|откъс\p{L}*|цитат\p{L}*|пасаж\p{L}*|глав[аи]\p{L}*|страниц\p{L}*|книг\p{L}*|` +
+		`paragraphs?|passages?|quotes?|quotations?|excerpts?|chapters?|pages?|books?` +
+		`)(?:[^\p{L}]|$)`)
 )
+
+// asksForPassage tells whether a message asks for the words of a book: "цитирай
+// Марк Аврелий за смъртта", "дай ми абзац от …", "give me a paragraph from …".
+// Such a request does not open with a question word, so asksForKnowledge misses
+// it, and left alone the model wrote a quote of its own: measured on 2026-11-13
+// with 18 requests (12 Bulgarian, 6 English) × 2, the model did not search for 9
+// of 36 and 7 of those 9 answers carried a long "quote" that is not in the book;
+// forced, all 36 searched. None of 11 requests for something else ("дай ми
+// съвет", "покажи ми как се прави кафе", "find me a good name for my cat") is
+// caught.
+func asksForPassage(message string) bool {
+	message = strings.TrimSpace(message)
+	if utf8.RuneCountInString(message) > maxKnowledgeQuestionRunes || len(strings.Fields(message)) < 2 {
+		return false
+	}
+	if quoteRequest.MatchString(message) {
+		return true
+	}
+	return passageRequest.MatchString(message) && passageWords.MatchString(message)
+}
 
 // asksForKnowledge tells whether a message looks like a question to the books:
 // it opens with a question word or a request to explain, has a subject (three
@@ -62,12 +102,13 @@ func asksForKnowledge(message string) bool {
 }
 
 // forcedFirstTool names the tool the first round must call, or "" when the model
-// is left to choose. A question about what the library holds comes first.
+// is left to choose. A question about what the library holds comes first; a
+// question to the books and a request for a passage of one both search.
 func forcedFirstTool(tools []openai.Tool, message string) string {
 	switch {
 	case asksAboutLibrary(message) && onlyTool(tools, listDocumentsTool) != nil:
 		return listDocumentsTool
-	case asksForKnowledge(message) && onlyTool(tools, searchDocumentsTool) != nil:
+	case (asksForKnowledge(message) || asksForPassage(message)) && onlyTool(tools, searchDocumentsTool) != nil:
 		return searchDocumentsTool
 	}
 	return ""

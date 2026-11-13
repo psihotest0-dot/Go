@@ -81,6 +81,73 @@ func TestAsksForKnowledge(t *testing.T) {
 	assert.False(t, asksForKnowledge("Как"+strings.Repeat(" дума", 120)))
 }
 
+func TestAsksForPassage(t *testing.T) {
+	asks := []string{
+		// the request that got an invented quote on 2026-11-10, typo and all
+		`даи ми някой кратък абзац от "Даото на Уорън Бъфет"`,
+		// the requests of the measurement on 2026-11-13
+		"цитирай Марк Аврелий за смъртта",
+		"Дай ми откъс от Граф Монте Кристо",
+		"Покажи ми цитат от Сенека за гнева",
+		"Прочети ми абзац от Питър Пан",
+		"Намери ми пасаж от Хокинг за черните дупки",
+		"Цитирай Ницше от Ecce Homo",
+		"Дай ми кратък откъс от Смелостта да не те харесват",
+		"Преразкажи първата глава на Винету",
+		"Дайте ми цитат от Лао Дзъ за водата",
+		"Give me a paragraph from The Count of Monte Cristo",
+		"Quote Marcus Aurelius on death",
+		"Show me a passage from Hawking's A Brief History of Time",
+		"Find an excerpt from William James about habit",
+		"Read me a short passage from Seneca's letters",
+		"Give me a quote from Ray Dalio's Principles",
+		// a filler in front, a request for a page
+		"моля, прочети ми страница от книгата за Дао",
+		"а дай ми още един цитат",
+	}
+	for _, m := range asks {
+		assert.True(t, asksForPassage(m), m)
+	}
+
+	doesNotAsk := []string{
+		"",
+		"цитирай", // nothing to quote
+		// the requests for something else of the measurement on 2026-11-13
+		"дай ми съвет",
+		"покажи ми как се прави кафе",
+		"кажи ми как си",
+		"дай ми идея за вечеря довечера",
+		"напиши ми стихотворение за есента",
+		"покажи ми какво можеш",
+		"give me a minute, I'll be right back",
+		"show me some love",
+		"дай ми кураж за утрешния ден",
+		"find me a good name for my cat",
+		"прочети ми мислите",
+		// a passage word, but not a request
+		"тази книга ми хареса много",
+		"Вчера прочетох една глава преди сън",
+		// a word that only begins like a passage word
+		"дай ми главния ключ",
+	}
+	for _, m := range doesNotAsk {
+		assert.False(t, asksForPassage(m), m)
+	}
+
+	// A story or a task, however it opens.
+	assert.False(t, asksForPassage("Цитирай"+strings.Repeat(" дума", 120)))
+}
+
+func TestForcedFirstToolSearchesForARequestForAPassage(t *testing.T) {
+	all := toolDefinitions()
+
+	assert.Equal(t, searchDocumentsTool, forcedFirstTool(all, `даи ми някой кратък абзац от "Даото на Уорън Бъфет"`))
+	assert.Equal(t, searchDocumentsTool, forcedFirstTool(all, "Quote Marcus Aurelius on death"))
+	assert.Equal(t, "", forcedFirstTool(all, "дай ми съвет"))
+	// A request that names the library is answered by the list first.
+	assert.Equal(t, listDocumentsTool, forcedFirstTool(all, "Покажи откъс от книгата на Фром Да имаш или да бъдеш"))
+}
+
 func TestForcedFirstToolPrefersTheLibraryList(t *testing.T) {
 	all := toolDefinitions()
 
