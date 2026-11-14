@@ -80,7 +80,8 @@ func TestMiddlewareMetricsLogIsOnlyForTheScrapePath(t *testing.T) {
 
 // The "Бот" tab of the client reads the journal every 10 s (and all of it, page by
 // page, for its counters): those lines were most of backend.log. The bot's own
-// calls are real traffic and stay in the main log.
+// ping (every few seconds) is polling too. Its evaluate calls are real traffic and stay
+// in the main log.
 func TestMiddlewareSendsTheJournalPollingToTheMetricsLog(t *testing.T) {
 	mainLogger, mainBuf := newBufferLogger()
 	metricsLogger, metricsBuf := newBufferLogger()
@@ -94,9 +95,9 @@ func TestMiddlewareSendsTheJournalPollingToTheMetricsLog(t *testing.T) {
 	assert.Contains(t, metricsBuf.String(), `"path":"/oracle/decisions"`, "the query string is not part of the path")
 	assert.Contains(t, metricsBuf.String(), `"request_id"`, "the line keeps its request id")
 	assert.NotContains(t, metricsBuf.String(), "/oracle/evaluate")
-	assert.NotContains(t, metricsBuf.String(), "/oracle/ping")
+	assert.Contains(t, metricsBuf.String(), `"path":"/oracle/ping"`, "the availability check is polling")
 
 	assert.NotContains(t, mainBuf.String(), "/oracle/decisions", "the polling must not reach the main log")
 	assert.Contains(t, mainBuf.String(), `"path":"/oracle/evaluate"`)
-	assert.Contains(t, mainBuf.String(), `"path":"/oracle/ping"`)
+	assert.NotContains(t, mainBuf.String(), "/oracle/ping", "the availability check must not reach the main log")
 }

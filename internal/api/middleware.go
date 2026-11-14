@@ -103,10 +103,12 @@ func RecoveryMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 // their "incoming request" lines would fill the main log: Prometheus scrapes
 // /metrics every 15 s, and the "Бот" tab of the client reads /oracle/decisions every
 // 10 s while it is open (and the whole journal, page by page, for its counters). Only
-// the exact path counts: /oracle/evaluate, the bot's call, is real traffic.
+// the exact path counts: /oracle/evaluate, the bot's call, is real traffic, while
+// /oracle/ping, its availability check, is polling.
 var polledPaths = map[string]bool{
 	"/metrics":          true,
 	"/oracle/decisions": true,
+	"/oracle/ping":      true,
 }
 
 // MiddlewareOption changes how Middleware logs.
@@ -117,7 +119,7 @@ type middlewareConfig struct {
 }
 
 // WithMetricsLogger sends the "incoming request" line of every request to a polled
-// path (polledPaths: /metrics and /oracle/decisions) to l instead of the main
+// path (polledPaths: /metrics, /oracle/decisions and /oracle/ping) to l instead of the main
 // logger, so the polling does not bury the real traffic.
 func WithMetricsLogger(l *slog.Logger) MiddlewareOption {
 	return func(c *middlewareConfig) { c.metricsLogger = l }
