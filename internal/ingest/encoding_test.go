@@ -55,6 +55,12 @@ func TestHTMLWindows1251(t *testing.T) {
 			t.Fatalf("got %q", got)
 		}
 	})
+	t.Run("declared in an xml declaration", func(t *testing.T) {
+		doc := append([]byte(`<?xml version='1.0' encoding='windows-1251'?><html><body>`), toCP1251(t, body)...)
+		if got := extractHTML(t, doc); got != bgSentence {
+			t.Fatalf("got %q", got)
+		}
+	})
 	t.Run("not declared at all", func(t *testing.T) {
 		// Old Bulgarian pages often declare nothing; x/net would call this Windows-1252.
 		doc := append([]byte(`<html><body>`), toCP1251(t, body)...)
@@ -66,6 +72,24 @@ func TestHTMLWindows1251(t *testing.T) {
 		head := "<html><head><style>" + strings.Repeat("a{b:c}", 400) + "</style></head><body>"
 		doc := append([]byte(head), toCP1251(t, body)...)
 		if got := extractHTML(t, doc); got != bgSentence {
+			t.Fatalf("got %q", got)
+		}
+	})
+}
+
+func TestHTMLWesternEncodingsAsDeclared(t *testing.T) {
+	// "café crème" in a Latin code page; read as Windows-1251 it would become "cafй crиme".
+	latin := []byte("<p>caf\xe9 cr\xe8me</p>")
+
+	t.Run("iso-8859-1 in an xml declaration", func(t *testing.T) {
+		doc := append([]byte(`<?xml version='1.0' encoding='iso-8859-1'?><html><body>`), latin...)
+		if got := extractHTML(t, doc); got != "café crème" {
+			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("windows-1252 in a meta charset", func(t *testing.T) {
+		doc := append([]byte(`<html><head><meta charset="windows-1252"></head><body>`), latin...)
+		if got := extractHTML(t, doc); got != "café crème" {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -91,6 +115,26 @@ func TestHTMLUTF8StaysUTF8(t *testing.T) {
 		doc := `<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><body>` + body
 		if got := extractHTML(t, []byte(doc)); got != bgSentence {
 			t.Fatalf("got %q", got)
+		}
+	})
+	t.Run("xml declaration, the 1024-byte cut inside a character", func(t *testing.T) {
+		// A Project Gutenberg chapter: charset reads only the first 1024 bytes and,
+		// when they end in half a character, calls the page Windows-1252.
+		prefix := "<?xml version='1.0' encoding='utf-8'?>\n<html xmlns=\"http://www.w3.org/1999/xhtml\"><body><p>"
+		prefix += strings.Repeat("a", 1023-len(prefix))
+		doc := prefix + "’ Peter’s " + bgSentence + "</p>"
+		got := extractHTML(t, []byte(doc))
+		if !strings.HasSuffix(got, "’ Peter’s "+bgSentence) {
+			t.Fatalf("mojibake: %q", got[len(got)-80:])
+		}
+	})
+	t.Run("xml declaration with a name charset does not know", func(t *testing.T) {
+		// The word "encoding" alone is no declaration: the content decides.
+		prefix := "<?xml version='1.0' encoding='utf8-unknown'?><html><body><p>"
+		prefix += strings.Repeat("a", 1023-len(prefix))
+		doc := prefix + "’ " + bgSentence + "</p>"
+		if got := extractHTML(t, []byte(doc)); !strings.HasSuffix(got, "’ "+bgSentence) {
+			t.Fatalf("mojibake: %q", got[len(got)-80:])
 		}
 	})
 	t.Run("utf-8 BOM", func(t *testing.T) {

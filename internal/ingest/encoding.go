@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"io"
+	"regexp"
 	"unicode/utf8"
 
 	"golang.org/x/net/html/charset"
@@ -92,9 +93,19 @@ func detectHTMLEncoding(sample []byte, truncated bool) encoding.Encoding {
 	if certain {
 		return enc // a BOM
 	}
+	// charset does not read an XML declaration, so an XHTML chapter of an EPUB
+	// ("<?xml version='1.0' encoding='utf-8'?>") is decided by its content: UTF-8
+	// when the first 1024 bytes are valid, Windows-1252 when the cut falls inside
+	// a character. That turned 10 of the 19 chapters of a Project Gutenberg book
+	// into mojibake ("Peterâ€™s"), so the declaration is read here.
+	if m := xmlDeclaredEncoding.FindSubmatch(head); m != nil {
+		if declared, _ := charset.Lookup(string(m[1])); declared != nil {
+			return declared
+		}
+	}
 	// charset reports Windows-1252 both for a declared "windows-1252" and for
 	// "found nothing"; only the latter needs a decision.
-	if name != "windows-1252" || declaresEncoding(head) {
+	if name != "windows-1252" || declaresCharset(head) {
 		return enc
 	}
 	if looksLikeUTF8(sample, truncated) {
@@ -103,9 +114,14 @@ func detectHTMLEncoding(sample []byte, truncated bool) encoding.Encoding {
 	return charmap.Windows1251
 }
 
-func declaresEncoding(head []byte) bool {
-	lower := bytes.ToLower(head)
-	return bytes.Contains(lower, []byte("charset")) || bytes.Contains(lower, []byte("encoding"))
+// xmlDeclaredEncoding finds the encoding of an XML declaration at the start of a
+// document, in single or double quotes.
+var xmlDeclaredEncoding = regexp.MustCompile(`^\s*<\?xml\s[^>]*?\bencoding\s*=\s*["']([A-Za-z0-9._:-]+)["']`)
+
+// declaresCharset tells whether a <meta> may declare the encoding, which charset
+// has then read.
+func declaresCharset(head []byte) bool {
+	return bytes.Contains(bytes.ToLower(head), []byte("charset"))
 }
 
 // looksLikeUTF8 reports whether sample is valid UTF-8. When the sample is a cut
