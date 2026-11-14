@@ -24,7 +24,8 @@ const DefaultEmbedModel = "intfloat/multilingual-e5-small"
 // FileCategories are the categories a file can have: the ones the automatic
 // classification (retrieval.CategoryManager) chooses from and the ones the
 // category endpoint accepts. DefaultFileCategory is what a file gets when no
-// other one fits.
+// other one fits. The Flet client lists them by hand, with their Bulgarian names
+// (CATEGORIES in views/files.py): a new category needs a line there too.
 var FileCategories = []string{"medicine", "economics", "programming", "law", "psychology", "literature", "philosophy", "self_help", "history", DefaultFileCategory}
 
 const DefaultFileCategory = "general"
