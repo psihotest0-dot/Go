@@ -26,8 +26,10 @@ SELECT CAST(COUNT(*) AS BIGINT) AS chunk_count
 FROM document_chunks
 WHERE file_id = $1 AND user_id = $2;
 
+-- A deleted file keeps its "deleted" status: an ingest job that was running when
+-- the file was deleted must not turn it into "completed" or "failed".
 -- name: UpdateIngestedFileStatus :exec
-UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3;
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL;
 
 -- DeleteIngestedFile is a hard delete. Only used to roll back an upload that
 -- never produced chunks; anything a client asks to remove goes through
@@ -35,14 +37,18 @@ UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user
 -- name: DeleteIngestedFile :exec
 DELETE FROM ingested_files WHERE id = $1 AND user_id = $2;
 
--- SoftDeleteIngestedFile marks the file as gone without destroying its chunks,
--- so a mistaken delete can be undone. The partial unique index on
+-- SoftDeleteIngestedFile marks the file as gone and keeps the row as a record.
+-- A delete asked for by a client goes through Database.DeleteFile, which also
+-- deletes the chunks in the same transaction. The partial unique index on
 -- (user_id, file_hash) only covers live rows, which keeps re-uploads of the same
 -- document working.
 -- name: SoftDeleteIngestedFile :exec
 UPDATE ingested_files
 SET deleted_at = NOW(), status = 'deleted', updated_at = NOW()
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL;
+
+-- name: DeleteFileChunks :execrows
+DELETE FROM document_chunks WHERE file_id = $1 AND user_id = $2;
 
 -- name: UpdateIngestedFileCategory :exec
 UPDATE ingested_files SET category = $2, manual_override = true, updated_at = NOW() WHERE id = $1 AND user_id = $3;
@@ -56,17 +62,26 @@ JOIN ingested_files f ON c.file_id = f.id
 WHERE c.file_id = $1 AND c.user_id = $2 AND f.deleted_at IS NULL
 ORDER BY c.chunk_index ASC;
 
+-- Chunks of a file that is deleted are not written: an ingest still running when
+-- the file was deleted would otherwise leave them behind. FOR SHARE waits for a
+-- delete in progress (Database.DeleteFile) and then sees the file as deleted, so
+-- no chunk can slip in between that delete's two statements.
 -- name: CreateDocumentChunksBatch :exec
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
-SELECT
-    unnest(@file_ids::uuid[]),
-    unnest(@user_ids::uuid[]),
-    unnest(@chunk_indices::int[]),
-    unnest(@texts::text[]),
-    unnest(@embeddings::vector[]),
-    unnest(@chunk_types::text[]),
-    CAST(unnest(@metadatas::text[]) AS jsonb),
-    sqlc.arg('embedding_model')::text;
+SELECT u.file_id, u.user_id, u.chunk_index, u.text, u.embedding, u.chunk_type,
+       CAST(u.metadata AS jsonb), sqlc.arg('embedding_model')::text
+FROM (
+    SELECT
+        unnest(@file_ids::uuid[]) AS file_id,
+        unnest(@user_ids::uuid[]) AS user_id,
+        unnest(@chunk_indices::int[]) AS chunk_index,
+        unnest(@texts::text[]) AS text,
+        unnest(@embeddings::vector[]) AS embedding,
+        unnest(@chunk_types::text[]) AS chunk_type,
+        unnest(@metadatas::text[]) AS metadata
+) u
+JOIN ingested_files f ON f.id = u.file_id AND f.deleted_at IS NULL
+FOR SHARE OF f;
 
 -- The chunks whose vector was not made by the given model (or not known to be),
 -- after last_id, with what is needed to rebuild the text that was embedded.

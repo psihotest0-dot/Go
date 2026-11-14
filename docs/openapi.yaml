@@ -397,9 +397,10 @@ paths:
     delete:
       summary: Delete a file
       description: >-
-        A soft delete: the file no longer shows in lists or in search (and the
-        same file can be uploaded again), but its row, its chunks and the stored
-        original are kept, so a mistake can be undone.
+        The file no longer shows in lists or in search, and the same file can be
+        uploaded again. Its chunks (text, summaries and their vectors) and the
+        stored original are deleted; the row stays, marked deleted, as a record.
+        A delete cannot be undone through the API: upload the file again.
       parameters:
       - $ref: '#/components/parameters/FileId'
       - $ref: '#/components/parameters/UserId'

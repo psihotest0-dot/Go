@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -26,6 +27,29 @@ var uploadDir = "storage"
 // UploadDir is the directory uploads are stored in (relative to the working
 // directory); main logs it as an absolute path at start.
 func UploadDir() string { return uploadDir }
+
+// removeOriginal deletes the stored upload of a deleted file. Only a file directly
+// in uploadDir is removed: local_path comes from the database, and a path that
+// points anywhere else (a restored dump from another layout, a hand edit) is left
+// alone and logged. A failure is logged, not returned: the file is already gone
+// for the user, and what is left is a stray file in storage.
+func removeOriginal(ctx context.Context, localPath string) {
+	dir, err := filepath.Abs(uploadDir)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to resolve the upload directory", slog.Any("error", err))
+		return
+	}
+	path, err := filepath.Abs(localPath)
+	if err != nil || filepath.Dir(path) != dir {
+		slog.WarnContext(ctx, "the original of a deleted file is not in the upload directory, so it is left alone",
+			slog.String("local_path", localPath))
+		return
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.ErrorContext(ctx, "failed to remove the original of a deleted file",
+			slog.String("local_path", localPath), slog.Any("error", err))
+	}
+}
 
 const (
 	// maxUploadBytes is the default cap on a single upload request (MAX_UPLOAD_MB

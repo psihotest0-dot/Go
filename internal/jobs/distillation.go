@@ -394,16 +394,23 @@ Constraints:
 			continue
 		}
 
-		// Store it directly
-		_, err = w.dbClient.SqlDB.ExecContext(ctx,
+		// Store it directly, unless the file was deleted while the job ran: the
+		// delete took its chunks, and a summary written now would be left behind.
+		// FOR SHARE waits for a delete in progress, as in CreateDocumentChunksBatch.
+		res, err := w.dbClient.SqlDB.ExecContext(ctx,
 			`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			SELECT $1, $2, $3, $4, $5, $6, $7, $8
+			FROM ingested_files f WHERE f.id = $1 AND f.deleted_at IS NULL
+			FOR SHARE OF f`,
 			file.ID, file.UserID, nextConceptIndex, result.Summary, embedding, ingest.ChunkTypeConcept, metaBytes, config.DefaultEmbedModel,
 		)
 		if err != nil {
 			slog.Error("failed to insert concept_summary",
 				"chunk_index", nextConceptIndex, "error", err)
 			return fmt.Errorf("failed to insert concept_summary at index %d: %w", nextConceptIndex, err)
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return river.JobCancel(fmt.Errorf("ingested file %s was deleted during the distillation", file.ID))
 		}
 		nextConceptIndex++
 		successCount++

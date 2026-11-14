@@ -317,8 +317,8 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A soft deleted row is kept so the delete can be undone, but it is gone as
-	// far as clients are concerned.
+	// A deleted row is kept as a record, but it is gone as far as clients are
+	// concerned.
 	if file.DeletedAt.Valid {
 		slog.WarnContext(r.Context(), "access to soft deleted file", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -331,22 +331,19 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(toIngestedFileDTO(file, a.fileChunkCount(r.Context(), file.ID, userID)))
 
 	case http.MethodDelete:
-		// Soft delete: the row and its chunks are kept, and so is the original
-		// upload, so an accidental delete can be undone with one UPDATE. A hard
-		// delete cascades into document_chunks, which is how the whole library
-		// was destroyed on 2026-10-30 (the 2026-10-30 incident).
-		err = a.db.Queries.SoftDeleteIngestedFile(r.Context(), db.SoftDeleteIngestedFileParams{
-			ID:     fileID,
-			UserID: userID,
-		})
+		// The row stays as a record; the chunks and the original upload go (see
+		// db.DeleteFile for why they are no longer kept).
+		chunks, err := a.db.DeleteFile(r.Context(), userID, fileID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "failed to delete file from db", slog.Any("error", err))
 			http.Error(w, "failed to delete file from db", http.StatusInternalServerError)
 			return
 		}
+		removeOriginal(r.Context(), file.LocalPath)
 
-		slog.Info("soft deleted ingested file",
+		slog.Info("deleted ingested file",
 			slog.String("file_id", fileID.String()),
+			slog.Int64("chunks", chunks),
 			slog.String("local_path", file.LocalPath))
 
 		w.WriteHeader(http.StatusNoContent)

@@ -17,18 +17,24 @@ import (
 
 const createDocumentChunksBatch = `-- name: CreateDocumentChunksBatch :exec
 INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata, embedding_model)
-SELECT
-    unnest($1::uuid[]),
-    unnest($2::uuid[]),
-    unnest($3::int[]),
-    unnest($4::text[]),
-    unnest($5::vector[]),
-    unnest($6::text[]),
-    CAST(unnest($7::text[]) AS jsonb),
-    $8::text
+SELECT u.file_id, u.user_id, u.chunk_index, u.text, u.embedding, u.chunk_type,
+       CAST(u.metadata AS jsonb), $1::text
+FROM (
+    SELECT
+        unnest($2::uuid[]) AS file_id,
+        unnest($3::uuid[]) AS user_id,
+        unnest($4::int[]) AS chunk_index,
+        unnest($5::text[]) AS text,
+        unnest($6::vector[]) AS embedding,
+        unnest($7::text[]) AS chunk_type,
+        unnest($8::text[]) AS metadata
+) u
+JOIN ingested_files f ON f.id = u.file_id AND f.deleted_at IS NULL
+FOR SHARE OF f
 `
 
 type CreateDocumentChunksBatchParams struct {
+	EmbeddingModel string            `json:"embedding_model"`
 	FileIds        []uuid.UUID       `json:"file_ids"`
 	UserIds        []uuid.UUID       `json:"user_ids"`
 	ChunkIndices   []int32           `json:"chunk_indices"`
@@ -36,11 +42,15 @@ type CreateDocumentChunksBatchParams struct {
 	Embeddings     []pgvector.Vector `json:"embeddings"`
 	ChunkTypes     []string          `json:"chunk_types"`
 	Metadatas      []string          `json:"metadatas"`
-	EmbeddingModel string            `json:"embedding_model"`
 }
 
+// Chunks of a file that is deleted are not written: an ingest still running when
+// the file was deleted would otherwise leave them behind. FOR SHARE waits for a
+// delete in progress (Database.DeleteFile) and then sees the file as deleted, so
+// no chunk can slip in between that delete's two statements.
 func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocumentChunksBatchParams) error {
 	_, err := q.db.ExecContext(ctx, createDocumentChunksBatch,
+		arg.EmbeddingModel,
 		pq.Array(arg.FileIds),
 		pq.Array(arg.UserIds),
 		pq.Array(arg.ChunkIndices),
@@ -48,7 +58,6 @@ func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocum
 		pq.Array(arg.Embeddings),
 		pq.Array(arg.ChunkTypes),
 		pq.Array(arg.Metadatas),
-		arg.EmbeddingModel,
 	)
 	return err
 }
@@ -96,6 +105,23 @@ func (q *Queries) CreateIngestedFile(ctx context.Context, arg CreateIngestedFile
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const deleteFileChunks = `-- name: DeleteFileChunks :execrows
+DELETE FROM document_chunks WHERE file_id = $1 AND user_id = $2
+`
+
+type DeleteFileChunksParams struct {
+	FileID uuid.UUID `json:"file_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteFileChunks(ctx context.Context, arg DeleteFileChunksParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteFileChunks, arg.FileID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteIngestedFile = `-- name: DeleteIngestedFile :exec
@@ -761,8 +787,9 @@ type SoftDeleteIngestedFileParams struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
-// SoftDeleteIngestedFile marks the file as gone without destroying its chunks,
-// so a mistaken delete can be undone. The partial unique index on
+// SoftDeleteIngestedFile marks the file as gone and keeps the row as a record.
+// A delete asked for by a client goes through Database.DeleteFile, which also
+// deletes the chunks in the same transaction. The partial unique index on
 // (user_id, file_hash) only covers live rows, which keeps re-uploads of the same
 // document working.
 func (q *Queries) SoftDeleteIngestedFile(ctx context.Context, arg SoftDeleteIngestedFileParams) error {
@@ -822,7 +849,7 @@ func (q *Queries) UpdateIngestedFileCategoryAuto(ctx context.Context, arg Update
 }
 
 const updateIngestedFileStatus = `-- name: UpdateIngestedFileStatus :exec
-UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3
+UPDATE ingested_files SET status = $2, updated_at = NOW() WHERE id = $1 AND user_id = $3 AND deleted_at IS NULL
 `
 
 type UpdateIngestedFileStatusParams struct {
@@ -831,6 +858,8 @@ type UpdateIngestedFileStatusParams struct {
 	UserID uuid.UUID `json:"user_id"`
 }
 
+// A deleted file keeps its "deleted" status: an ingest job that was running when
+// the file was deleted must not turn it into "completed" or "failed".
 func (q *Queries) UpdateIngestedFileStatus(ctx context.Context, arg UpdateIngestedFileStatusParams) error {
 	_, err := q.db.ExecContext(ctx, updateIngestedFileStatus, arg.ID, arg.Status, arg.UserID)
 	return err
