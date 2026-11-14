@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go-monolith/internal/api"
 	"go-monolith/internal/db"
 )
 
@@ -206,4 +207,23 @@ func TestLogFileDoesNotFollowTheCurrentDirectory(t *testing.T) {
 	left, err := os.ReadDir(elsewhere)
 	require.NoError(t, err)
 	assert.Empty(t, left, "nothing is written to the folder the process moved to")
+}
+
+// The console shows only errors and the "listening" line, so the warning about
+// listening beyond loopback must pass the filter too: in backend.log alone nobody
+// would see it (plan item P32). Other warnings stay in the file.
+func TestConsoleShowsTheWarningAboutListeningBeyondLoopback(t *testing.T) {
+	var file, console bytes.Buffer
+	logger := slog.New(&LevelFilterHandler{
+		fileHandler:   slog.NewTextHandler(&file, nil),
+		stdoutHandler: slog.NewTextHandler(&console, nil),
+	})
+
+	logger.Warn("some other warning")
+	logger.Warn(api.BeyondLoopbackWarning, slog.String("address", "0.0.0.0:8080"))
+
+	assert.Contains(t, file.String(), "some other warning")
+	assert.NotContains(t, console.String(), "some other warning")
+	assert.Contains(t, console.String(), api.BeyondLoopbackWarning)
+	assert.Contains(t, console.String(), "0.0.0.0:8080")
 }

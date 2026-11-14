@@ -48,7 +48,7 @@ func (h *LevelFilterHandler) Handle(ctx context.Context, r slog.Record) error {
 	if err := h.fileHandler.Handle(ctx, r); err != nil {
 		return err
 	}
-	if r.Level >= slog.LevelError || strings.HasPrefix(r.Message, "server listening on") {
+	if r.Level >= slog.LevelError || strings.HasPrefix(r.Message, "server listening on") || r.Message == api.BeyondLoopbackWarning {
 		return h.stdoutHandler.Handle(ctx, r)
 	}
 	return nil
@@ -331,6 +331,9 @@ func run() error {
 		return fmt.Errorf("failed to listen on %s (is another instance of the server already running, or is LISTEN_ADDR invalid? check the port with: netstat -ano | findstr :8080): %w", cfg.ListenAddr, err)
 	}
 	addr := listener.Addr().String()
+	if api.ListensBeyondLoopback(addr) {
+		logger.Warn(api.BeyondLoopbackWarning, slog.String("address", addr))
+	}
 
 	// No ReadTimeout: it would cut off slow large uploads. Body deadlines are set
 	// per request where the body is read (see api.NewHTTPServer).

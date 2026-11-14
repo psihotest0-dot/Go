@@ -95,3 +95,25 @@ func TestAllowedHostsAddsASpecificListenAddress(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, get(t, srv, "192.168.1.10:8080"))
 	assert.Equal(t, http.StatusMisdirectedRequest, get(t, srv, "192.168.1.11:8080"))
 }
+
+// Listening beyond loopback exposes a bare X-User-ID and /metrics, so the server
+// warns at start (plan item P32). Only the loopback addresses are quiet.
+func TestListensBeyondLoopback(t *testing.T) {
+	for addr, beyond := range map[string]bool{
+		"127.0.0.1:8080":   false,
+		"127.0.0.2:8080":   false,
+		"[::1]:8080":       false,
+		"localhost:8080":   false,
+		"LOCALHOST:8080":   false,
+		"0.0.0.0:8080":     true,
+		"[::]:8080":        true,
+		":8080":            true,
+		"192.168.1.5:8080": true,
+		"[fe80::1]:8080":   true,
+		"mybox:8080":       true,
+		"127.0.0.1":        true, // not an address at all
+		"":                 true,
+	} {
+		assert.Equal(t, beyond, ListensBeyondLoopback(addr), addr)
+	}
+}

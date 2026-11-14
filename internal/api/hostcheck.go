@@ -42,6 +42,28 @@ func AllowedHosts(listenAddr string) []string {
 	return hosts
 }
 
+// BeyondLoopbackWarning is the message logged at start when the server listens
+// on more than this machine (ListensBeyondLoopback). The console shows it too.
+const BeyondLoopbackWarning = "listening beyond loopback: the API identifies users by a bare X-User-ID header and /metrics has no authentication"
+
+// ListensBeyondLoopback reports whether addr, the address the server listens on,
+// can be reached from other machines: every interface ("", 0.0.0.0, ::), an
+// address of a network card, or anything that cannot be read as a loopback
+// address. It is meant for the bound address (net.Listener.Addr), where a name
+// such as "localhost" is already an IP; "localhost" itself still counts as
+// loopback. Listening there may be deliberate, so it is a warning, not an error.
+func ListensBeyondLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
+}
+
 // hostName reduces a Host header value to a comparable name: no port, no
 // brackets around an IPv6 address, lower case, no trailing dot.
 func hostName(hostport string) string {
