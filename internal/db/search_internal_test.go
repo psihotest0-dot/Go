@@ -176,7 +176,67 @@ func TestSearchesSeeTheirOwnChunkTypeBehindManyOfTheOther(t *testing.T) {
 		conceptPlan := plan(searchConceptChunks, user.ID, 0.4, 10, query, 200)
 		assert.Contains(t, conceptPlan, "idx_document_chunks_concept_embedding", conceptPlan)
 		hybridPlan := plan(searchHybridChunks, user.ID, 10, query, 200, 0.4, true, 0.03, "")
-		assert.Contains(t, hybridPlan, "idx_document_chunks_raw_embedding", hybridPlan)
+		assert.Contains(t, hybridPlan, "idx_document_chunks_raw_cyrillic_embedding", hybridPlan)
+		assert.Contains(t, hybridPlan, "idx_document_chunks_raw_other_embedding", hybridPlan)
 		return nil
 	}))
+}
+
+// The vector candidates come from the Cyrillic chunks and the others separately.
+// From one pool, a Bulgarian question near hundreds of Bulgarian passages had no
+// room left for an English book that was a little farther (the usual distance
+// across languages), and in production one HNSW graph over both scripts did not
+// even reach the English passages that were the nearest of all.
+func TestHybridSearchTakesCandidatesFromEachScript(t *testing.T) {
+	connString := dbtest.ConnString(t)
+	t.Chdir("../..")
+	require.NoError(t, RunMigrations(connString))
+	ctx := context.Background()
+	d, err := Connect(ctx, connString)
+	require.NoError(t, err)
+	defer d.Close()
+	user, err := d.Queries.CreateUser(ctx)
+	require.NoError(t, err)
+	defer dbtest.DeleteUser(t, d.Pool, user.ID)
+
+	newFile := func(name string) uuid.UUID {
+		var id uuid.UUID
+		require.NoError(t, d.SqlDB.QueryRowContext(ctx,
+			`INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
+			 VALUES ($1, $2, $3, 'text/plain', 1, 'completed', 'x') RETURNING id`, user.ID, name, "h-"+uuid.NewString()).Scan(&id))
+		return id
+	}
+	bulgarian, english := newFile("bulgarian.txt"), newFile("english.txt")
+	insert := func(fileID uuid.UUID, text string, n int, v pgvector.Vector) {
+		_, err := d.SqlDB.ExecContext(ctx,
+			`INSERT INTO document_chunks (file_id, user_id, chunk_index, text, embedding, chunk_type, metadata)
+			 SELECT $1, $2, g, $3 || g, $4, 'raw_text', '{}' FROM generate_series(1, $5) g`,
+			fileID, user.ID, text, v, n)
+		require.NoError(t, err)
+	}
+	_, err = d.SqlDB.ExecContext(ctx, `VACUUM document_chunks`)
+	require.NoError(t, err)
+
+	query := vec(map[int]float32{40: 1})
+	insert(bulgarian, "Питър Пан живее в Небивала земя ", SearchVectorCandidates+100, query) // distance 0
+	insert(english, "Peter Pan lives in Neverland ", 5, vec(map[int]float32{40: 2, 41: 1}))  // distance 0.106
+
+	var files []string
+	require.NoError(t, d.inSearchTx(ctx, func(tx *sql.Tx) error {
+		for _, setting := range []string{"enable_seqscan", "enable_bitmapscan", "enable_sort"} {
+			_, err := tx.ExecContext(ctx, "SET LOCAL "+setting+" = off")
+			require.NoError(t, err)
+		}
+		rows, err := d.Queries.WithTx(tx).SearchHybridChunks(ctx, SearchHybridChunksParams{
+			UserID: user.ID, Embedding: query, VectorLimit: SearchVectorCandidates, MaxDistance: 0.2,
+			QueryCyrillic: true, CrossLanguageMargin: 0.03, MatchCount: 8,
+		})
+		require.NoError(t, err)
+		for _, r := range rows {
+			files = append(files, r.FileName)
+		}
+		return nil
+	}))
+	assert.Contains(t, files, "english.txt", "the English book was crowded out of the candidates by the nearer Bulgarian chunks")
+	assert.Contains(t, files, "bulgarian.txt")
 }

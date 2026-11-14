@@ -484,7 +484,8 @@ type SearchConceptChunksRow struct {
 // Vector side: "WHERE chunk_type = '...' ORDER BY embedding <=> $v LIMIT n" is the
 // form the HNSW indexes serve (5 ms on 250 000 chunks, against 20 s for a scan
 // that filtered and ranked every row). There is one partial index per chunk type
-// (migration 00022), and the WHERE clause must repeat its predicate for the
+// (migration 00022; the raw chunks have two, one per script, since migration
+// 00028), and the WHERE clause must repeat its predicate for the
 // planner to use it. pgvector 0.5 applies every other filter (user, file status)
 // after the index scan, to the n nearest rows of that type; n is large enough
 // that this does not matter for one user's library.
@@ -535,13 +536,21 @@ func (q *Queries) SearchConceptChunks(ctx context.Context, arg SearchConceptChun
 
 const searchHybridChunks = `-- name: SearchHybridChunks :many
 WITH nearest AS (
-    SELECT c.id, c.file_id, c.user_id, c.chunk_type,
+    (SELECT c.id, c.file_id, c.user_id, c.chunk_type,
            (c.embedding <=> $3) AS distance,
-           (c.text ~ '[А-Яа-я]{3}') AS cyrillic
+           true AS cyrillic
     FROM document_chunks c
-    WHERE c.chunk_type = 'raw_text'
+    WHERE c.chunk_type = 'raw_text' AND c.text ~ '[А-Яа-я]{3}'
     ORDER BY c.embedding <=> $3
-    LIMIT $4
+    LIMIT $4)
+    UNION ALL
+    (SELECT c.id, c.file_id, c.user_id, c.chunk_type,
+           (c.embedding <=> $3) AS distance,
+           false AS cyrillic
+    FROM document_chunks c
+    WHERE c.chunk_type = 'raw_text' AND NOT (c.text ~ '[А-Яа-я]{3}')
+    ORDER BY c.embedding <=> $3
+    LIMIT $4)
 ),
 per_file AS (
     SELECT GREATEST(2, CEIL($2::float8 / GREATEST(COUNT(*), 1)))::int AS max_per_file
@@ -632,6 +641,17 @@ type SearchHybridChunksRow struct {
 // whose language differs from the question's gets cross_language_margin more
 // distance before it is dropped. "Cyrillic" is decided per chunk by three letters
 // in a row.
+//
+// The vector candidates are taken separately from the Cyrillic chunks and from
+// the others, vector_limit from each, through one partial HNSW index per script
+// (migration 00028). With one index over both, the passages of an English book
+// formed an island in the graph that a Bulgarian question did not reach: for
+// "Питър Пан къде живее" none of the 32 nearest chunks of the whole library (all
+// from the English book, distance 0.18) were among the index's 400 candidates,
+// and m=32/ef_construction=200 did not help. The split also keeps a book in the
+// other script from being crowded out of the candidates by the nearer chunks of
+// the question's own. Measured on 98 questions (2026-11-14): the right book in
+// the first 8 results 77 -> 84, 16 -> 22 ms.
 // At most this many chunks per file, so one long book cannot fill the whole
 // result: 2 when the library has many files, more when it has few (a library of
 // one book would otherwise return two chunks in total).
