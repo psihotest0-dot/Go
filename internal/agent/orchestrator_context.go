@@ -233,6 +233,21 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 		}
 	}
 
+	// A question about the library itself ("с какви книги разполагаш") is answered
+	// from list_documents, which forcedFirstTool calls first. The summaries the search
+	// finds for it match the word "книги", not a topic - the cover of one book, the
+	// introduction of another - and they went into the prompt and the panel as if
+	// they were the answer's sources. Measured on 2026-11-14 (13 library questions,
+	// 52 turns with the real model): the answers are as good without them, also for
+	// a topic ("a book about black holes" still names Hawking, from the list). The
+	// memories stay: they are about the user, not about the books.
+	if asksAboutLibrary(req.Content) && len(conceptChunks) > 0 {
+		o.trace(ctx, userID, req.SessionID, "library_question_without_summaries", map[string]interface{}{
+			"dropped": len(conceptChunks),
+		})
+		conceptChunks = nil
+	}
+
 	// Fetch Top Memories. Best effort as well, so a profile lookup failure does
 	// not abort the generation. They are fetched before the retrieved memories are
 	// used because the prompt carries them at every message, and a retrieved memory

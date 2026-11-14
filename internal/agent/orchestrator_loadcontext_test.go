@@ -131,6 +131,35 @@ func TestLoadContextDoesNotRepeatTheProfileAndShowsDistances(t *testing.T) {
 	assert.Equal(t, 0.15, chatCtx.Sources[1].Score)
 }
 
+// A question about the library gets no concept summaries, in the prompt or in the
+// panel: its answer is the list of files, and the summaries near it are covers and
+// introductions that only match the word "книги". The memories stay, and any
+// other question still gets its summaries.
+func TestLoadContextLeavesTheSummariesOutOfALibraryQuestion(t *testing.T) {
+	e := newContextEnv(t)
+	for i := 0; i < topMemoryLimit; i++ {
+		e.memory(t, "important and far "+uuid.NewString(), 9, 0.90)
+	}
+	e.memory(t, "unimportant but near", 1, 0.10)
+	e.summaries(t, map[string]float64{"The cover of a book": 0.12})
+	load := func(question string) chatContext {
+		chatCtx, _, err := e.o.loadContext(context.Background(), e.userID, ChatRequest{SessionID: "session", Content: question})
+		require.NoError(t, err)
+		return chatCtx
+	}
+
+	for _, q := range []string{"С какви книги разполагаш?", "What books do you have?", "Имаш ли книга за стоицизма?"} {
+		lib := load(q)
+		assert.Empty(t, lib.Chunks, q)
+		assert.Equal(t, []string{"unimportant but near"}, lib.Memories, q)
+		require.Len(t, lib.Sources, 1, q)
+		assert.Equal(t, "memory", lib.Sources[0].SourceType, q)
+	}
+
+	other := load("Какво казва Марк Аврелий за смъртта?")
+	assert.Equal(t, []string{"The cover of a book"}, other.Chunks, "a question that is not about the library keeps its summaries")
+}
+
 // Beyond the profile's limit a memory that fits the message is still found and
 // shown: as a source with no measure, after the summaries.
 func TestLoadContextStillFindsAMemoryOutsideTheProfile(t *testing.T) {
