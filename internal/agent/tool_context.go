@@ -65,6 +65,8 @@ type turnState struct {
 	// fileWrites counts the times a file tool wrote or added text in this turn (a write
 	// that waits for the user is not one).
 	fileWrites int
+	// by is the model that gave the answer, when the paid model is configured (see model_routing.go).
+	by answeredBy
 }
 
 // withTurn starts the state of a chat turn. retrievedDocuments tells that text
@@ -169,6 +171,26 @@ func (t *turnState) newSources() []api.SourceInfo {
 	fresh := slices.Clone(t.found[t.announced:])
 	t.announced = len(t.found)
 	return fresh
+}
+
+// setAnsweredBy records which model answers this turn.
+func (t *turnState) setAnsweredBy(by answeredBy) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.by = by
+}
+
+// answeredByWhom is the model that answered this turn (the zero value when not recorded).
+func (t *turnState) answeredByWhom() answeredBy {
+	if t == nil {
+		return answeredBy{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.by
 }
 
 // noteFileWrite records that a file tool wrote or added text.

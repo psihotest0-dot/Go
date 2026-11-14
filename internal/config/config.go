@@ -165,6 +165,12 @@ type Config struct {
 	// PaidLLMDailyUSD (PAID_LLM_DAILY_USD) is the most the paid model may cost in a day,
 	// estimated at the peak prices; at the limit the Oracle answers HOLD until tomorrow.
 	PaidLLMDailyUSD float64
+	// PaidLLMModel (PAID_LLM_MODEL) is the model the chat uses at the paid provider (the
+	// questions to the library and a conversation sent to the cloud); empty means the cheap one.
+	PaidLLMModel string
+	// LibraryLLM (LIBRARY_LLM): "local" keeps the questions to the library on the local model
+	// even when the paid provider is on; "deepseek" or empty lets them follow it.
+	LibraryLLM string
 	// DeepSeekAPIKey (DEEPSEEK_API_KEY) is the key of the paid API; the web tools use it too.
 	// It is never logged.
 	DeepSeekAPIKey string
@@ -324,6 +330,8 @@ func Load() *Config {
 		OracleLLMModel:         strings.TrimSpace(os.Getenv("ORACLE_LLM_MODEL")),
 		DeepSeekAPIKey:         strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
 		PaidLLMEnabled:         boolEnv("PAID_LLM_ENABLED", false),
+		PaidLLMModel:           strings.TrimSpace(os.Getenv("PAID_LLM_MODEL")),
+		LibraryLLM:             strings.ToLower(strings.TrimSpace(os.Getenv("LIBRARY_LLM"))),
 		PaidLLMDailyUSD:        float64(floatEnv("PAID_LLM_DAILY_USD", DefaultPaidLLMDailyUSD, 0.01, 1000)),
 	}
 }

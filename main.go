@@ -289,20 +289,26 @@ func run() error {
 	// usable ORACLE_TOKEN they are not served at all. The journal of the answers is read
 	// through the ordinary user check.
 	oracleStore := oracle.NewDBStore(database.Queries)
-	oracleModel, err := llm.OracleClient(cfg, llmClient, logger)
+	// The paid model (PAID_LLM_ENABLED): one account and one daily limit for everything that
+	// uses it - the Oracle, the questions to the library and the conversations the owner sends
+	// to the cloud. The limit survives a restart as far as the Oracle's journal knows (the chat
+	// keeps no journal of its cost), and the balance of the account is watched.
+	paid, err := llm.NewPaid(cfg, logger)
 	if err != nil {
 		return err
 	}
-	// A paid model has a daily limit that survives a restart (what the journal says the
-	// day has cost so far) and an account whose balance is watched.
-	if paid, ok := oracleModel.(*llm.LemonadeClient); ok && paid.Spend() != nil {
+	if paid != nil {
 		spent, err := oracle.SpentToday(ctx, oracleStore, time.Now())
 		if err != nil {
 			logger.Warn("could not work out what the paid model cost today; counting from zero", slog.Any("error", err))
 		}
-		paid.Spend().Add(spent)
-		go llm.WatchBalance(ctx, cfg.DeepSeekAPIKey, llm.BalanceInterval, logger)
+		paid.Guard().Add(spent)
+		go llm.WatchBalance(ctx, paid.Key(), llm.BalanceInterval, logger)
+		if client, name, library := llm.ChatClient(cfg, paid, logger); client != nil {
+			orchestrator.WithPaidModel(client, name, library)
+		}
 	}
+	oracleModel := llm.OracleClient(cfg, llmClient, paid, logger)
 	oracleHandler := oracle.NewHandler(oracle.NewService(oracleModel, oracleStore), oracleStore, cfg.OracleToken)
 	oracleHandler.RegisterReadRoutes(protectedMux)
 	switch {

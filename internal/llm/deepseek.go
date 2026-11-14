@@ -55,20 +55,26 @@ const (
 // dailyUSD is the most the client may cost in a day (at the peak prices); at it the client
 // refuses requests with ErrSpendCap. The guard is client.Spend().
 func NewDeepSeekClient(apiKey, model string, dailyUSD float64) *LemonadeClient {
+	return NewLemonadeClientWithOptions(deepSeekOptions(apiKey, model, NewSpendGuard(dailyUSD)))
+}
+
+// deepSeekOptions are the options of a client of DeepSeek; the guard may be shared with
+// other clients of the same account (see Paid).
+func deepSeekOptions(apiKey, model string, guard *SpendGuard) Options {
 	if model == "" {
 		model = DefaultDeepSeekModel
 	}
-	return NewLemonadeClientWithOptions(Options{
+	return Options{
 		BaseURL:    DeepSeekBaseURL,
 		Model:      model,
 		ForceModel: true, // a name chosen elsewhere is a model of the local server
 		APIKey:     apiKey,
 		Dialect:    DialectDeepSeek,
-		Spend:      NewSpendGuard(dailyUSD),
+		Spend:      guard,
 		// A cloud API runs many requests at once; the slots only keep this process modest.
 		Slots:           8,
 		BackgroundSlots: 2,
-	})
+	}
 }
 
 // deepSeekRequestBody turns a request built for the local server into one DeepSeek accepts.

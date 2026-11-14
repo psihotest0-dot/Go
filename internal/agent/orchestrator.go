@@ -53,6 +53,11 @@ type Orchestrator struct {
 	// groups are the tools that are not on offer until the model asks for them (see
 	// toolGroup).
 	groups []toolGroup
+	// paid is the paid model of the chat (nil: none), paidName its name; libraryPaid says that
+	// the questions to the library go to it on their own. See model_routing.go.
+	paid        llm.LLMClient
+	paidName    string
+	libraryPaid bool
 }
 
 // WithFileTools offers the tools for the user's own files (plan item P44) as a group:
@@ -136,6 +141,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	// question so the search tools can fall back to it when the model omits
 	// "query" (small local models regularly send an empty argument object).
 	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
+	r = r.WithContext(WithLLMChoice(r.Context(), req.UsePaid))
 
 	// The user turn is stored before generation because the prompt history is
 	// read back from the database. A failed generation therefore leaves the
@@ -187,6 +193,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 
 type RegenerateRequest struct {
 	SessionID string `json:"session_id"`
+	// UsePaid is the same choice as in ChatRequest.
+	UsePaid *bool `json:"use_paid,omitempty"`
 }
 
 // HandleRegenerate handles regenerating the last assistant response.
@@ -255,11 +263,13 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	req := ChatRequest{
 		SessionID: regenReq.SessionID,
 		Content:   lastUserContent,
+		UsePaid:   regenReq.UsePaid,
 	}
 
 	// See HandleStreamChat: tool calls fall back to the user turn when the
 	// model omits the "query" argument.
 	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
+	r = r.WithContext(WithLLMChoice(r.Context(), req.UsePaid))
 
 	prep, err := o.prepareTurn(r.Context(), userID, req, true)
 	if err != nil {

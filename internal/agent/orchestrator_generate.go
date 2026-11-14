@@ -129,7 +129,7 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	stream, err := o.llmClient.ChatStream(streamCtx, req)
+	stream, err := o.clientFor(ctx).ChatStream(streamCtx, req)
 	if err != nil {
 		return streamResult{}, err
 	}

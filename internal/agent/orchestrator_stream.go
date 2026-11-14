@@ -341,6 +341,12 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		flusher.Flush()
 	}
 
+	// Who answered, for the client to show; only while the paid model is configured.
+	if frame := o.modelEvent(r.Context()); frame != "" {
+		fmt.Fprint(w, frame)
+		flusher.Flush()
+	}
+
 	if beforeDone != nil {
 		beforeDone(assistantContent, toolCalls)
 	}

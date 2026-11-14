@@ -25,6 +25,11 @@ const (
 type ChatRequest struct {
 	SessionID string `json:"session_id"`
 	Content   string `json:"content"`
+	// UsePaid is the owner's choice of the model for this turn: true - the paid one (the
+	// button "cloud" of the client), false - the local one even for a library question, left
+	// out - the default (the local model; library questions follow LIBRARY_LLM). It does
+	// nothing while the paid provider is off.
+	UsePaid *bool `json:"use_paid,omitempty"`
 }
 
 type chatContext struct {

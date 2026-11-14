@@ -103,9 +103,10 @@ func withNoteOnLastUser(messages []openai.ChatCompletionMessage, note string) []
 	return out
 }
 
-// generateResponse runs the rounds (generateRounds) and checks what the answer says about
-// the files. See the comment at the top of this file.
-func (o *Orchestrator) generateResponse(
+// generateGuarded runs the rounds (generateRounds) and checks what the answer says about
+// the files. See the comment at the top of this file. Which model runs them is decided
+// by generateResponse (model_routing.go), which calls this.
+func (o *Orchestrator) generateGuarded(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,

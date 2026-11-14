@@ -135,6 +135,16 @@ var (
 		Help: "Balance left at the paid LLM provider, in its currency.",
 	}, []string{"currency"})
 
+	// ChatRoutes counts the turns of the chat by the model that answered: "paid" (the reason
+	// is "library" for a question to the library, "chosen" for a conversation the owner sent to
+	// the cloud), "local" ("default", "chosen_local", or "fallback" after the paid model failed
+	// before it did anything) and "paid_failed" (it failed after it had begun). Counted only
+	// while the paid provider is configured.
+	ChatRoutes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chat_model_route_total",
+		Help: "Chat turns by the model that answered and why.",
+	}, []string{"route", "reason"})
+
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_web_tool_requests_total",

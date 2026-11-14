@@ -489,6 +489,11 @@ paths:
           saved until the user decides (`/proposals/{id}/approve`). (A memory
           the model decides to keep is saved at once and is not announced.);
 
+        * `event: model` - once, before the end, only while the paid provider is
+          configured (`PAID_LLM_ENABLED`): who gave the answer, `{"provider":
+          "local"}` or `{"provider": "deepseek", "model": "deepseek-flash"}`. A
+          client can show it next to the answer; the history does not keep it;
+
         * `data: [DONE]` - the end of a good answer; by then the answer is
           stored, so the history already has it;
 
@@ -516,6 +521,16 @@ paths:
                 content:
                   type: string
                   description: At most 4000 tokens (estimated).
+                use_paid:
+                  type: boolean
+                  description: >-
+                    The model for this turn: `true` - the paid one (the "cloud" button of the
+                    client), `false` - the local one even for a question to the library, left
+                    out - the default (the local model; questions to the library follow
+                    `LIBRARY_LLM`). It does nothing while the paid provider is off
+                    (`PAID_LLM_ENABLED`). If the paid model fails before it has done anything
+                    (no limit left for the day, no network, a refusal) the local one answers
+                    instead.
       responses:
         '200':
           description: Stream of events
@@ -570,6 +585,16 @@ paths:
               properties:
                 session_id:
                   type: string
+                use_paid:
+                  type: boolean
+                  description: >-
+                    The model for this turn: `true` - the paid one (the "cloud" button of the
+                    client), `false` - the local one even for a question to the library, left
+                    out - the default (the local model; questions to the library follow
+                    `LIBRARY_LLM`). It does nothing while the paid provider is off
+                    (`PAID_LLM_ENABLED`). If the paid model fails before it has done anything
+                    (no limit left for the day, no network, a refusal) the local one answers
+                    instead.
       responses:
         '200':
           description: Stream of events, as for `/chat/stream`
