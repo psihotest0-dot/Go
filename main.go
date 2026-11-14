@@ -214,12 +214,14 @@ func run() error {
 
 	// The user's own text files (plan item P44): off unless FILES_ENABLED. If the folder
 	// cannot be opened the server runs without them.
+	var fileStore *userfiles.Store
 	if cfg.FilesEnabled {
 		store, err := userfiles.Open(cfg.FilesDir, userfiles.Limits{})
 		if err != nil {
 			logger.Error("the file tools are off: the folder of the user's files cannot be opened", slog.String("dir", cfg.FilesDir), slog.Any("error", err))
 		} else {
 			defer store.Close()
+			fileStore = store
 			proposalService.WithFiles(store)
 			toolRegistry.WithFiles(store)
 			orchestrator.WithFileTools()
@@ -278,6 +280,9 @@ func run() error {
 	apiService.RegisterRuleRoutes(protectedMux)
 	apiService.RegisterSessionRoutes(protectedMux)
 	attachmentService.RegisterRoutes(protectedMux)
+	if fileStore != nil {
+		fileStore.RegisterRoutes(protectedMux)
+	}
 
 	// The Oracle: the trading bot's second opinion on a signal (APPROVE / VETO / HOLD).
 	// The bot's routes carry their own token and sit outside the user check; without a

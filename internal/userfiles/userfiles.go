@@ -16,7 +16,9 @@
 //     the file in through a temporary file;
 //   - the model has no way to delete.
 //
-// The package knows nothing about models, HTTP or the database.
+// The package knows nothing about models or the database. Its only HTTP is http.go: the
+// routes with which the user sees, reads and clears the files; the model has tools of its
+// own (in the agent) that call the same Store, and none of them deletes.
 package userfiles
 
 import (
@@ -683,4 +685,78 @@ func (s *Store) Stat(userID uuid.UUID, name string) (Info, error) {
 		return Info{}, ErrNotFound
 	}
 	return Info{Name: name, Size: info.Size(), Modified: info.ModTime()}, nil
+}
+
+// Usage counts the user's files and the bytes they take together with the previous
+// versions: what the limits are measured against.
+func (s *Store) Usage(userID uuid.UUID) (files int, bytes int64, err error) {
+	root, err := s.userRoot(userID)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer root.Close()
+	u, err := usageOf(root)
+	if err != nil {
+		return 0, 0, err
+	}
+	return u.files, u.bytes, nil
+}
+
+// Text returns the whole text of a file, for the user to read: the files the model
+// writes are small, so there is no need to read them in parts as the model does.
+func (s *Store) Text(userID uuid.UUID, name string) (string, Info, error) {
+	if err := ValidateName(name); err != nil {
+		return "", Info{}, err
+	}
+	root, err := s.userRoot(userID)
+	if err != nil {
+		return "", Info{}, err
+	}
+	defer root.Close()
+	data, err := readBounded(root, name, s.limits.MaxFileBytes*readCapFactor)
+	if err != nil {
+		return "", Info{}, err
+	}
+	if !utf8.Valid(data) {
+		return "", Info{}, invalid("%s is not a text file in UTF-8", name)
+	}
+	info, err := statInfo(root, name)
+	if err != nil {
+		return "", Info{}, err
+	}
+	return strings.TrimPrefix(string(data), "\xef\xbb\xbf"), info, nil
+}
+
+// Delete removes a file and its previous version. It is for the user, through the HTTP
+// routes; the model has no tool that calls it.
+func (s *Store) Delete(userID uuid.UUID, name string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	unlock := s.lock(userID)
+	defer unlock()
+	root, err := s.userRoot(userID)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	info, err := root.Lstat(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("userfiles: failed to read %s: %w", name, err)
+	}
+	if !info.Mode().IsRegular() {
+		return ErrNotFound
+	}
+	if err := root.Remove(name); err != nil {
+		return fmt.Errorf("userfiles: failed to delete %s: %w", name, err)
+	}
+	if prev, err := root.OpenRoot(previousDir); err == nil {
+		_ = prev.Remove(name)
+		_ = prev.Close()
+	}
+	return nil
 }

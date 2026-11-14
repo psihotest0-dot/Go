@@ -702,6 +702,88 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /workspace/files:
+    get:
+      summary: The files the assistant keeps for the user
+      description: >-
+        The user's own text files - notes, lists, drafts the assistant writes down
+        when asked (plan item P44). The routes exist only when the backend runs
+        with `FILES_ENABLED=true`; otherwise they answer `404`, as an unknown
+        path does. The folder is flat (no subfolders), one per user, and the
+        assistant has no way to delete: that is `DELETE /workspace/files/{name}`,
+        for the user. Only `.txt .md .csv .json .yaml .yml .log` files with plain
+        names are listed. Limits: 64 KB a file, 200 files, 20 MB together with
+        the previous versions.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The files by name and what they take
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserFileList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /workspace/files/{name}:
+    get:
+      summary: The text of a file
+      description: >-
+        The whole text. `version=previous` is the text a replacement took the
+        place of (one generation is kept); it has no size and no date. The text of
+        a file may have been saved from a web page or a book: the assistant
+        treats it as text from outside.
+      parameters:
+      - $ref: '#/components/parameters/UserFileName'
+      - name: version
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [current, previous]
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: The text
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserFile'
+        '400':
+          description: The name is not a plain name with an allowed extension; the body says why
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      summary: Remove a file
+      description: Removes the file and its previous version.
+      parameters:
+      - $ref: '#/components/parameters/UserFileName'
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '204':
+          description: Removed
+        '400':
+          description: The name is not a plain name with an allowed extension
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /proposals:
     get:
       summary: Proposals that wait for the user
@@ -1053,6 +1135,16 @@ components:
         type: integer
         format: int64
         minimum: 1
+    UserFileName:
+      name: name
+      in: path
+      required: true
+      description: >-
+        A plain file name, percent-encoded: letters of any alphabet, digits,
+        spaces, `-`, `_`, `.` and brackets, at most 100 characters, with one of
+        the extensions `.txt .md .csv .json .yaml .yml .log`.
+      schema:
+        type: string
   responses:
     BadRequest:
       description: Bad request (a malformed id or body, or a value out of range)
@@ -1456,6 +1548,59 @@ components:
             - completed
             - failed
             - empty
+    UserFileList:
+      type: object
+      required: [files, total_bytes, max_files, max_file_bytes, max_total_bytes]
+      properties:
+        files:
+          type: array
+          description: By name; `[]` when there are none.
+          items:
+            $ref: '#/components/schemas/UserFileInfo'
+        total_bytes:
+          type: integer
+          format: int64
+          description: What the files and their previous versions take.
+        max_files:
+          type: integer
+        max_file_bytes:
+          type: integer
+        max_total_bytes:
+          type: integer
+          format: int64
+    UserFileInfo:
+      type: object
+      required: [name, size, modified]
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+          format: int64
+          description: Bytes.
+        modified:
+          type: string
+          format: date-time
+    UserFile:
+      type: object
+      required: [name, version, content]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+          enum: [current, previous]
+        content:
+          type: string
+          description: The whole text (UTF-8; a byte order mark is dropped).
+        size:
+          type: integer
+          format: int64
+          description: Only for the current version.
+        modified:
+          type: string
+          format: date-time
+          description: Only for the current version.
     ChatAttachment:
       type: object
       properties:
