@@ -271,6 +271,31 @@ func mergeToolCallDeltas(calls *[]openai.ToolCall, deltas []openai.ToolCall) {
 	}
 }
 
+// replayableToolCalls returns the calls as they go back into the conversation for the
+// next request. llama-server parses the arguments of every tool call in the history and
+// answers HTTP 500 ("Failed to parse tool call arguments as JSON") when they are not a
+// JSON object. The model makes such calls now and then - cut off by max_tokens, a bad
+// escape in a long text, "null" - and executeToolCalls already answers each one with an
+// error the model can act on. Here the broken text only gives way to "{}", so that the
+// turn can go on. The calls the caller keeps for the trace are not changed.
+func replayableToolCalls(calls []openai.ToolCall) []openai.ToolCall {
+	out := make([]openai.ToolCall, len(calls))
+	copy(out, calls)
+	for i := range out {
+		if !isJSONObject(out[i].Function.Arguments) {
+			out[i].Function.Arguments = "{}"
+		}
+	}
+	return out
+}
+
+// isJSONObject reports whether raw is a JSON object ("null", arrays, strings, cut-off
+// text and the empty string are not).
+func isJSONObject(raw string) bool {
+	var object map[string]json.RawMessage
+	return json.Unmarshal([]byte(strings.TrimSpace(raw)), &object) == nil && object != nil
+}
+
 // executeToolCalls runs every requested tool and returns the tool messages the
 // API expects: one per call, in the order the model asked for them. Together the
 // results may use at most budgetTokens; larger ones are cut so that every call
@@ -428,7 +453,7 @@ func (o *Orchestrator) generateResponse(
 		messages = append(messages, openai.ChatCompletionMessage{
 			Role:      openai.ChatMessageRoleAssistant,
 			Content:   result.content,
-			ToolCalls: result.toolCalls,
+			ToolCalls: replayableToolCalls(result.toolCalls),
 		})
 		// The room left for the results is measured on the conversation as it
 		// stands now, including the tool calls just appended and the results of

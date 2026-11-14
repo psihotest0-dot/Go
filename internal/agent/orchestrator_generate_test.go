@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -121,6 +122,75 @@ func TestGenerateResponseRunsToolRoundThenAnswers(t *testing.T) {
 	assert.Contains(t, secondReq.Messages[2].Content, "42")
 
 	assert.Len(t, initial, 1, "the caller's slice must not be modified")
+}
+
+// llama-server answers HTTP 500 ("Failed to parse tool call arguments as JSON") to a
+// request whose history holds a tool call with arguments that are not a JSON object.
+// The model produces such calls now and then: a call cut off by max_tokens, a bad escape
+// in a long text, "null". The call is answered with an error for the model, but it must
+// not be sent back as it came.
+func TestGenerateResponseDoesNotReplayBrokenToolArguments(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    string
+		wantRan bool
+	}{
+		{"cut off in a string", `{"content":"abc`, false},
+		{"cut off after a key", `{"query":`, false},
+		{"bad escape", `{"content":"a\qb"}`, false},
+		{"an array", `[1,2]`, false},
+		{"a string", `"text"`, false},
+		{"null", `null`, false},
+		{"no arguments at all", ``, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools := &fakeToolRegistry{result: "ok"}
+			mock := &llm.MockLLM{
+				StreamScript: [][]openai.ChatCompletionStreamResponse{
+					{toolCallChunk(0, "call_1", "echo", tt.args)},
+					{textChunk("Готово")},
+				},
+			}
+			orchestrator := newGenerateOrchestrator(mock, tools)
+
+			_, _, executed, err := orchestrator.generateResponse(context.Background(),
+				[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
+
+			require.NoError(t, err)
+			require.Len(t, mock.Requests, 2)
+			replayed := mock.Requests[1].Messages[1]
+			require.Len(t, replayed.ToolCalls, 1)
+			assert.Equal(t, "{}", replayed.ToolCalls[0].Function.Arguments,
+				"the follow-up request must carry arguments the server can parse")
+			assert.True(t, json.Valid([]byte(replayed.ToolCalls[0].Function.Arguments)))
+
+			assert.Equal(t, tt.wantRan, len(tools.executed) == 1, "a call with unusable arguments must not run")
+			require.Len(t, executed, 1)
+			assert.Equal(t, tt.args, executed[0].Function.Arguments, "the trace keeps what the model really sent")
+		})
+	}
+}
+
+// A call that is fine goes back exactly as the model made it.
+func TestGenerateResponseReplaysValidToolArgumentsUnchanged(t *testing.T) {
+	const args = `{"q": "hi", "n": 2, "text": "Здравей\n\"свят\""}`
+	tools := &fakeToolRegistry{result: "ok"}
+	mock := &llm.MockLLM{
+		StreamScript: [][]openai.ChatCompletionStreamResponse{
+			{toolCallChunk(0, "call_1", "echo", args)},
+			{textChunk("Готово")},
+		},
+	}
+	orchestrator := newGenerateOrchestrator(mock, tools)
+
+	_, _, _, err := orchestrator.generateResponse(context.Background(),
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
+
+	require.NoError(t, err)
+	require.Len(t, mock.Requests, 2)
+	assert.Equal(t, args, mock.Requests[1].Messages[1].ToolCalls[0].Function.Arguments)
+	assert.Equal(t, []string{"echo"}, tools.executed)
 }
 
 func TestGenerateResponsePropagatesSecondStreamError(t *testing.T) {
