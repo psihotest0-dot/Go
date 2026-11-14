@@ -153,7 +153,14 @@ func TestSearchesSeeTheirOwnChunkTypeBehindManyOfTheOther(t *testing.T) {
 	insert("raw_text", 5, far, 0)
 	got = search()
 	assert.Equal(t, 5, got.raw, "the raw chunks were crowded out by the nearer summaries")
-	assert.Equal(t, SearchVectorCandidates, got.concepts, "a search returns at most the candidates asked for")
+	// "At most": an HNSW scan is approximate. The graph an index builds out of 500 identical
+	// vectors does not always reach all of them, so a search sometimes returns 373-388 of
+	// the 400 asked for (4 of 300 builds on 2026-11-14, the same number on every repeat of
+	// a search over one graph; the test failed one run in fifty when it asserted exactly
+	// 400). What must hold is the cap, and that the candidates are not crowded out or
+	// missing: a quarter short would be a different failure.
+	assert.LessOrEqual(t, got.concepts, SearchVectorCandidates, "a search returns at most the candidates asked for")
+	assert.GreaterOrEqual(t, got.concepts, SearchVectorCandidates*3/4, "the summaries still fill most of the candidates")
 
 	// The plan is the partial index of each type.
 	require.NoError(t, d.inSearchTx(ctx, func(tx *sql.Tx) error {
