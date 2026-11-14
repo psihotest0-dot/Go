@@ -116,6 +116,25 @@ var (
 		Help: "Requests to a paid LLM provider, by provider and status class.",
 	}, []string{"provider", "status"})
 
+	// PaidLLMSpendToday is what the paid model has cost today, estimated at the peak prices
+	// of the provider; PaidLLMSpendLimit is the daily limit (PAID_LLM_DAILY_USD). Both are
+	// set only when the paid model is on.
+	PaidLLMSpendToday = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "paid_llm_spend_today_usd",
+		Help: "Estimated cost of the paid LLM today, dollars, at the peak prices.",
+	})
+	PaidLLMSpendLimit = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "paid_llm_spend_limit_usd",
+		Help: "Daily limit of the paid LLM, dollars (PAID_LLM_DAILY_USD).",
+	})
+
+	// PaidLLMBalance is the money left on the account of the paid provider, read from its
+	// balance endpoint once an hour.
+	PaidLLMBalance = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "paid_llm_balance",
+		Help: "Balance left at the paid LLM provider, in its currency.",
+	}, []string{"currency"})
+
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_web_tool_requests_total",

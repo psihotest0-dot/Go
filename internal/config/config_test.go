@@ -442,3 +442,36 @@ func TestLoadOracleLLM(t *testing.T) {
 		t.Errorf("the key was not trimmed: %d bytes", len(cfg.DeepSeekAPIKey))
 	}
 }
+
+func TestLoadPaidLLM(t *testing.T) {
+	t.Setenv("PAID_LLM_ENABLED", "")
+	t.Setenv("PAID_LLM_DAILY_USD", "")
+	cfg := Load()
+	if cfg.PaidLLMEnabled {
+		t.Error("the paid model must be off unless the owner turns it on")
+	}
+	if cfg.PaidLLMDailyUSD != DefaultPaidLLMDailyUSD {
+		t.Errorf("PaidLLMDailyUSD = %v, want the default %v", cfg.PaidLLMDailyUSD, DefaultPaidLLMDailyUSD)
+	}
+
+	t.Setenv("PAID_LLM_ENABLED", " TRUE ")
+	t.Setenv("PAID_LLM_DAILY_USD", "2.5")
+	cfg = Load()
+	if !cfg.PaidLLMEnabled || cfg.PaidLLMDailyUSD != 2.5 {
+		t.Errorf("got enabled=%v limit=%v, want true and 2.5", cfg.PaidLLMEnabled, cfg.PaidLLMDailyUSD)
+	}
+
+	// A limit that cannot be used does not turn the limit off: the default stays.
+	for _, bad := range []string{"0", "-3", "lots", "NaN", "100000"} {
+		t.Setenv("PAID_LLM_DAILY_USD", bad)
+		if got := Load().PaidLLMDailyUSD; got != DefaultPaidLLMDailyUSD {
+			t.Errorf("PAID_LLM_DAILY_USD=%q gave %v, want the default %v", bad, got, DefaultPaidLLMDailyUSD)
+		}
+	}
+
+	// A flag that cannot be read leaves the paid model OFF.
+	t.Setenv("PAID_LLM_ENABLED", "maybe")
+	if Load().PaidLLMEnabled {
+		t.Error("an unreadable PAID_LLM_ENABLED must leave the paid model off")
+	}
+}

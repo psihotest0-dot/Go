@@ -109,6 +109,33 @@ groups:
           summary: "More than 500 paid web searches/fetches in the last day"
           description: "About $0.75 per 1000 requests; a loop in the model's tool calls would show up here first."
 
+      # The paid model (PAID_LLM_ENABLED=true; the Oracle on DeepSeek). The gauges exist only
+      # when it is on, so nothing fires while it is off.
+      - alert: PaidLLMLimitReached
+        expr: paid_llm_spend_today_usd >= paid_llm_spend_limit_usd
+        labels:
+          severity: warning
+        annotations:
+          summary: "The paid model has reached its daily limit"
+          description: "PAID_LLM_DAILY_USD is spent (estimated at the peak prices): the Oracle answers HOLD, and no request is sent, until midnight. Look at paid_llm_tokens_total{kind} to see what used it up: a loop would show as thousands of requests. The alert clears with the first request after midnight."
+
+      - alert: PaidLLMBalanceLow
+        expr: paid_llm_balance{currency="USD"} < 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than $0.50 is left on the paid model's account"
+          description: "Top the account up (platform.deepseek.com), or turn the paid model off (PAID_LLM_ENABLED=false and a restart). With an empty account the provider answers 402 and the Oracle gives HOLD."
+
+      - alert: PaidLLMRequestsFailing
+        expr: sum(increase(paid_llm_requests_total{status=~"4xx|5xx|network_error"}[15m])) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "Requests to the paid model keep failing"
+          description: "paid_llm_requests_total{status} says how: 4xx - the key (401) or the balance (402) or the request itself; 5xx - the provider; network_error - this machine's connection. The Oracle gives HOLD for each of them."
+
   - name: oracle
     rules:
       - alert: OracleGivesNoVerdict

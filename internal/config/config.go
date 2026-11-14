@@ -158,10 +158,22 @@ type Config struct {
 	// paid provider; empty means the cheap one.
 	OracleLLM      string
 	OracleLLMModel string
+	// PaidLLMEnabled (PAID_LLM_ENABLED) is the master switch of the paid model: false (the
+	// default) keeps everything on the local model, whatever ORACLE_LLM says; true sends
+	// to the paid one what ORACLE_LLM leaves to it (the Oracle, unless it says local).
+	PaidLLMEnabled bool
+	// PaidLLMDailyUSD (PAID_LLM_DAILY_USD) is the most the paid model may cost in a day,
+	// estimated at the peak prices; at the limit the Oracle answers HOLD until tomorrow.
+	PaidLLMDailyUSD float64
 	// DeepSeekAPIKey (DEEPSEEK_API_KEY) is the key of the paid API; the web tools use it too.
 	// It is never logged.
 	DeepSeekAPIKey string
 }
+
+// DefaultPaidLLMDailyUSD is the daily limit of the paid model when PAID_LLM_DAILY_USD is
+// not set: the cost measured for the Oracle on a day of 40 signals (about $0.02, 2026-11-14)
+// plus one dollar, as the owner asked.
+const DefaultPaidLLMDailyUSD = 1.0
 
 // parseChatIDs reads a comma, semicolon or space separated list of Telegram chat
 // ids. Entries that are not integers are logged and skipped.
@@ -311,5 +323,7 @@ func Load() *Config {
 		OracleLLM:              strings.ToLower(strings.TrimSpace(os.Getenv("ORACLE_LLM"))),
 		OracleLLMModel:         strings.TrimSpace(os.Getenv("ORACLE_LLM_MODEL")),
 		DeepSeekAPIKey:         strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
+		PaidLLMEnabled:         boolEnv("PAID_LLM_ENABLED", false),
+		PaidLLMDailyUSD:        float64(floatEnv("PAID_LLM_DAILY_USD", DefaultPaidLLMDailyUSD, 0.01, 1000)),
 	}
 }

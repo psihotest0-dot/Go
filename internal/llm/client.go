@@ -66,6 +66,8 @@ type Options struct {
 	APIKey string
 	// Dialect is the server behind the client; the default is the local one.
 	Dialect Dialect
+	// Spend limits what the client may cost in a day (paid servers only; nil: no limit).
+	Spend *SpendGuard
 }
 
 // LemonadeClient implements LLMClient using the standard OpenAI format. Every
@@ -80,6 +82,7 @@ type LemonadeClient struct {
 	// apiKey is sent by the raw requests (postChat); the go-openai client has it in its
 	// own configuration. Empty for the local server, which wants none.
 	apiKey  string
+	spend   *SpendGuard
 	limiter *slotLimiter
 
 	retryBaseDelay time.Duration
@@ -120,7 +123,7 @@ func NewLemonadeClientWithOptions(opts Options) *LemonadeClient {
 	}
 	apiKey := "lemonade-dummy-key"
 	if opts.Dialect == DialectDeepSeek {
-		httpClient.Transport = newDeepSeekTransport()
+		httpClient.Transport = newDeepSeekTransport(opts.Spend)
 		apiKey = opts.APIKey
 	}
 
@@ -134,6 +137,7 @@ func NewLemonadeClientWithOptions(opts Options) *LemonadeClient {
 		httpClient:     httpClient,
 		baseURL:        baseURL,
 		apiKey:         opts.APIKey,
+		spend:          opts.Spend,
 		model:          strings.TrimSpace(opts.Model),
 		forceModel:     opts.ForceModel,
 		limiter:        newSlotLimiter(opts.Slots, opts.BackgroundSlots),
@@ -378,3 +382,6 @@ func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.Chat
 	})
 	return resp, err
 }
+
+// Spend is the guard of the daily limit of a paid client (nil for the local one).
+func (c *LemonadeClient) Spend() *SpendGuard { return c.spend }

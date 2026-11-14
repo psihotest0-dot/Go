@@ -293,6 +293,16 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// A paid model has a daily limit that survives a restart (what the journal says the
+	// day has cost so far) and an account whose balance is watched.
+	if paid, ok := oracleModel.(*llm.LemonadeClient); ok && paid.Spend() != nil {
+		spent, err := oracle.SpentToday(ctx, oracleStore, time.Now())
+		if err != nil {
+			logger.Warn("could not work out what the paid model cost today; counting from zero", slog.Any("error", err))
+		}
+		paid.Spend().Add(spent)
+		go llm.WatchBalance(ctx, cfg.DeepSeekAPIKey, llm.BalanceInterval, logger)
+	}
 	oracleHandler := oracle.NewHandler(oracle.NewService(oracleModel, oracleStore), oracleStore, cfg.OracleToken)
 	oracleHandler.RegisterReadRoutes(protectedMux)
 	switch {

@@ -163,12 +163,12 @@ func TestLocalClientIsUnchangedByTheDialect(t *testing.T) {
 }
 
 func TestNewDeepSeekClientDefaultsToTheCheapModel(t *testing.T) {
-	c := NewDeepSeekClient("k", "")
+	c := NewDeepSeekClient("k", "", 1)
 	assert.Equal(t, DefaultDeepSeekModel, c.model)
 	assert.True(t, c.forceModel)
 	assert.Equal(t, DeepSeekBaseURL, c.baseURL)
 
-	assert.Equal(t, "deepseek-v4-pro", NewDeepSeekClient("k", "deepseek-v4-pro").model)
+	assert.Equal(t, "deepseek-v4-pro", NewDeepSeekClient("k", "deepseek-v4-pro", 1).model)
 }
 
 func TestCountPaidTokensTakesTheLastUsageOfTheText(t *testing.T) {

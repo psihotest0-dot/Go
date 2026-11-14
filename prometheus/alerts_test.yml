@@ -677,3 +677,80 @@ tests:
     - eval_time: 40m
       alertname: AlpacaCandidatePassBroke
       exp_alerts: []
+- name: the paid model at its limit fires
+  interval: 1m
+  input_series:
+  - series: paid_llm_spend_limit_usd
+    values: 1 1 1 1
+  - series: paid_llm_spend_today_usd
+    values: 0.2 0.6 1.0 1.0
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: PaidLLMLimitReached
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: The paid model has reached its daily limit
+        description: 'PAID_LLM_DAILY_USD is spent (estimated at the peak prices): the Oracle answers HOLD, and no request is sent, until midnight. Look at paid_llm_tokens_total{kind} to see what used it up: a loop would show as thousands of requests. The alert clears with the first request after midnight.'
+- name: the paid model under its limit is quiet
+  interval: 1m
+  input_series:
+  - series: paid_llm_spend_limit_usd
+    values: 1 1 1 1
+  - series: paid_llm_spend_today_usd
+    values: 0.2 0.3 0.3 0.4
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: PaidLLMLimitReached
+    exp_alerts: []
+- name: a low balance fires after ten minutes
+  interval: 1m
+  input_series:
+  - series: paid_llm_balance{currency="USD"}
+    values: 0.4x15
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PaidLLMBalanceLow
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: PaidLLMBalanceLow
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+        currency: USD
+      exp_annotations:
+        summary: Less than $0.50 is left on the paid model's account
+        description: Top the account up (platform.deepseek.com), or turn the paid model off (PAID_LLM_ENABLED=false and a restart). With an empty account the provider answers 402 and the Oracle gives HOLD.
+- name: a balance above fifty cents is quiet
+  interval: 1m
+  input_series:
+  - series: paid_llm_balance{currency="USD"}
+    values: 2.37x15
+  alert_rule_test:
+  - eval_time: 14m
+    alertname: PaidLLMBalanceLow
+    exp_alerts: []
+- name: paid requests that keep failing fire
+  interval: 1m
+  input_series:
+  - series: paid_llm_requests_total{provider="deepseek",status="4xx"}
+    values: 0 1 2 3 3 3
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: PaidLLMRequestsFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warning
+      exp_annotations:
+        summary: Requests to the paid model keep failing
+        description: 'paid_llm_requests_total{status} says how: 4xx - the key (401) or the balance (402) or the request itself; 5xx - the provider; network_error - this machine''s connection. The Oracle gives HOLD for each of them.'
+- name: answered paid requests are quiet
+  interval: 1m
+  input_series:
+  - series: paid_llm_requests_total{provider="deepseek",status="2xx"}
+    values: 0+5x20
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: PaidLLMRequestsFailing
+    exp_alerts: []

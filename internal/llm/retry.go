@@ -60,6 +60,10 @@ func retryable(ctx context.Context, err error) bool {
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	// The daily limit of the paid model does not lift by waiting a few hundred milliseconds.
+	if errors.Is(err, ErrSpendCap) {
+		return false
+	}
 	status := httpStatus(err)
 	if status >= 400 && status < 500 && status != http.StatusRequestTimeout && status != http.StatusTooManyRequests {
 		return false

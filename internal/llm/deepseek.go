@@ -51,7 +51,10 @@ const (
 
 // NewDeepSeekClient returns a client of the DeepSeek API for the model (empty: the cheap
 // one). The key is sent only in the Authorization header and is never logged.
-func NewDeepSeekClient(apiKey, model string) *LemonadeClient {
+//
+// dailyUSD is the most the client may cost in a day (at the peak prices); at it the client
+// refuses requests with ErrSpendCap. The guard is client.Spend().
+func NewDeepSeekClient(apiKey, model string, dailyUSD float64) *LemonadeClient {
 	if model == "" {
 		model = DefaultDeepSeekModel
 	}
@@ -61,6 +64,7 @@ func NewDeepSeekClient(apiKey, model string) *LemonadeClient {
 		ForceModel: true, // a name chosen elsewhere is a model of the local server
 		APIKey:     apiKey,
 		Dialect:    DialectDeepSeek,
+		Spend:      NewSpendGuard(dailyUSD),
 		// A cloud API runs many requests at once; the slots only keep this process modest.
 		Slots:           8,
 		BackgroundSlots: 2,
@@ -85,18 +89,27 @@ func deepSeekRequestBody(raw []byte) ([]byte, error) {
 // deepSeekTransport rewrites the chat requests to the dialect of DeepSeek and counts the
 // tokens of the replies.
 type deepSeekTransport struct {
-	base http.RoundTripper
+	base  http.RoundTripper
+	spend *SpendGuard
 }
 
-func newDeepSeekTransport() *deepSeekTransport {
+func newDeepSeekTransport(spend *SpendGuard) *deepSeekTransport {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	// A reply that has not begun in a minute is not coming; a stream may then run as long as it likes.
 	base.ResponseHeaderTimeout = time.Minute
-	return &deepSeekTransport{base: base}
+	return &deepSeekTransport{base: base, spend: spend}
 }
 
 func (t *deepSeekTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	model := ""
 	if req.Body != nil && req.Method == http.MethodPost {
+		// The limit is checked before anything is sent: the request that would cross it is not made.
+		if t.spend != nil {
+			if err := t.spend.Allow(); err != nil {
+				_ = req.Body.Close()
+				return nil, err
+			}
+		}
 		raw, err := io.ReadAll(req.Body)
 		_ = req.Body.Close()
 		if err != nil {
@@ -106,6 +119,7 @@ func (t *deepSeekTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		if err != nil {
 			return nil, err
 		}
+		model = requestModel(body)
 		req = req.Clone(req.Context())
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
@@ -118,8 +132,17 @@ func (t *deepSeekTransport) RoundTrip(req *http.Request) (*http.Response, error)
 		return resp, err
 	}
 	metrics.PaidLLMRequests.WithLabelValues(deepSeekProvider, statusClass(resp.StatusCode)).Inc()
-	resp.Body = &usageBody{rc: resp.Body}
+	resp.Body = &usageBody{rc: resp.Body, model: model, spend: t.spend}
 	return resp, nil
+}
+
+// requestModel is the model named in a request body ("" if it names none).
+func requestModel(body []byte) string {
+	var named struct {
+		Model string `json:"model"`
+	}
+	_ = json.Unmarshal(body, &named)
+	return named.Model
 }
 
 func statusClass(code int) string {
@@ -128,9 +151,11 @@ func statusClass(code int) string {
 
 // usageBody passes the reply on and, when it is closed, counts the tokens it reports.
 type usageBody struct {
-	rc   io.ReadCloser
-	tail []byte
-	once sync.Once
+	rc    io.ReadCloser
+	model string
+	spend *SpendGuard
+	tail  []byte
+	once  sync.Once
 }
 
 func (b *usageBody) Read(p []byte) (int, error) {
@@ -145,7 +170,12 @@ func (b *usageBody) Read(p []byte) (int, error) {
 }
 
 func (b *usageBody) Close() error {
-	b.once.Do(func() { countPaidTokens(deepSeekProvider, b.tail) })
+	b.once.Do(func() {
+		hit, miss, out := countPaidTokens(deepSeekProvider, b.tail)
+		if b.spend != nil {
+			b.spend.Add(EstimateCost(b.model, hit, miss, out))
+		}
+	})
 	return b.rc.Close()
 }
 
@@ -165,12 +195,15 @@ func lastNumber(re *regexp.Regexp, text []byte) float64 {
 	return n
 }
 
-// countPaidTokens adds what a reply says it used. The price is not in the code: it changes,
-// and the money is worked out from the three counters (see "The Oracle on DeepSeek" in the README).
-func countPaidTokens(provider string, reply []byte) {
-	for kind, re := range map[string]*regexp.Regexp{"cache_hit": usageHit, "cache_miss": usageMiss, "output": usageOutput} {
-		if n := lastNumber(re, reply); n > 0 {
+// countPaidTokens adds what a reply says it used to the counters and returns it. The
+// counters are the base of the money (see "The Oracle on DeepSeek" in the README); the
+// guard prices the same numbers for its daily limit.
+func countPaidTokens(provider string, reply []byte) (hit, miss, out float64) {
+	hit, miss, out = lastNumber(usageHit, reply), lastNumber(usageMiss, reply), lastNumber(usageOutput, reply)
+	for kind, n := range map[string]float64{"cache_hit": hit, "cache_miss": miss, "output": out} {
+		if n > 0 {
 			metrics.PaidLLMTokens.WithLabelValues(provider, kind).Add(n)
 		}
 	}
+	return hit, miss, out
 }
