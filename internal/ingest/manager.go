@@ -82,7 +82,7 @@ func (m *Manager) Extract(ctx context.Context, filename string, r io.Reader) (st
 		if err != nil {
 			return "", fmt.Errorf("%s: %w", ex.Name(), err)
 		}
-		return m.finish(sanitizeText(text))
+		return m.finish(stripGutenberg(sanitizeText(text)))
 	}
 
 	return "", fmt.Errorf("%w: mime type %s, extension %q", ErrUnsupported, mimeStr, ext)
