@@ -23,6 +23,17 @@ const (
 	// keep the request alive until the client times out.
 	maxToolRounds = 2
 
+	// groupExtraRounds are the rounds for tools a turn gets for each group of tools it
+	// unlocked. A task with files takes three steps - list, read, add - and with the limit
+	// of two the third was cut off: the model, offered no tools, wrote the call as text,
+	// which the filter removes, and the user got an empty answer (found by replaying the
+	// first real chat, 2026-11-14).
+	groupExtraRounds = 2
+
+	// stuckAnswer is what the user is told when tools were used and the model still
+	// ended without a word of its own.
+	stuckAnswer = "Не успях да довърша това в позволените стъпки и нищо повече не е направено. Кажи ми пак, по-просто."
+
 	// maxToolCalls bounds the number of tool calls per round. The indexes come
 	// from the model, so this also caps the slice built while merging deltas.
 	maxToolCalls = 8
@@ -398,10 +409,11 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 	return messages
 }
 
-// generateResponse handles the LLM generation and tool calling logic. Unlike
+// generateRounds handles the LLM generation and tool calling logic. Unlike
 // streamResponse it does not write SSE events; it accumulates the answer and
-// returns it, so streaming and regenerate share the same code path.
-func (o *Orchestrator) generateResponse(
+// returns it, so streaming and regenerate share the same code path. Callers use
+// generateResponse (files_guard.go), which adds what is said about the files.
+func (o *Orchestrator) generateRounds(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
@@ -466,7 +478,9 @@ func (o *Orchestrator) generateResponse(
 				unlock = false
 			}
 		}
-		if toolRounds >= maxToolRounds && !unlock {
+		// The rounds for tools: two, and more for each group that was unlocked - never for more
+		// groups than there are, whatever the model calls.
+		if toolRounds >= maxToolRounds+groupExtraRounds*min(unlocks, len(o.groups)) && !unlock {
 			slog.WarnContext(ctx, "tool round limit reached, answering without further tools",
 				"rounds", toolRounds,
 				"pending_tool_calls", len(result.toolCalls))
@@ -504,6 +518,18 @@ func (o *Orchestrator) generateResponse(
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {
 			return assistantContent.String(), reasoningContent.String(), executed, err
+		}
+	}
+
+	// The rounds for tools ran out (this point is reached only then: an answer returns above)
+	// and what is left is nothing the user can see - the model wrote the next call as text,
+	// and the filter removes that. Say so.
+	if sanitizeAssistantText(assistantContent.String()) == "" {
+		assistantContent.WriteString(stuckAnswer)
+		if onDelta != nil {
+			if err := onDelta(stuckAnswer, ""); err != nil {
+				return assistantContent.String(), reasoningContent.String(), executed, err
+			}
 		}
 	}
 

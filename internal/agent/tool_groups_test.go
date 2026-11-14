@@ -128,7 +128,7 @@ func TestAGroupUnlocksOnce(t *testing.T) {
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(mock.Requests), maxToolRounds+3, "the loop ends")
+	assert.LessOrEqual(t, len(mock.Requests), maxToolRounds+groupExtraRounds+3, "the loop ends")
 	assert.InDelta(t, before+1, counterValue(t, metrics.ToolGroupUnlocks.WithLabelValues("files")), 0.001, "unlocked once")
 }
 
@@ -147,7 +147,7 @@ func TestFreeUnlockRoundsAreBoundedEvenIfTheStubStays(t *testing.T) {
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len(mock.Requests), maxToolRounds+4, "the turn ends")
+	assert.LessOrEqual(t, len(mock.Requests), maxToolRounds+groupExtraRounds+4, "the turn ends")
 }
 
 func TestAfterReadingAFileTheWebIsNotOffered(t *testing.T) {

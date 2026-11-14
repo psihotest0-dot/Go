@@ -78,3 +78,46 @@ func TestSanitizeAssistantText(t *testing.T) {
 		})
 	}
 }
+
+// Gemma 4 writes a call as <|tool_call>call:name{...}<tool_call|>. When no tool is on offer
+// (the last round) it ends up in the answer, and the user got the call itself.
+func TestStreamFilterDropsAToolCallWrittenAsText(t *testing.T) {
+	tests := []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{"in one piece", []string{`Добавям. <|tool_call>call:append_file{content:"x",name:"a.txt"}<tool_call|> Край`}, "Добавям.  Край"},
+		{"split inside the markers and the body", []string{"Добавям. <|tool", "_call>call:append_file{con", `tent:"x"}<tool_`, "call|> Край"}, "Добавям.  Край"},
+		{"one character at a time", strings.Split(`а<|tool_call>call:f{}<tool_call|>б`, ""), "аб"},
+		{"never closed", []string{`Добавям. <|tool_call>call:append_file{content:"x"`}, "Добавям. "},
+		{"two calls", []string{`<|tool_call>call:a{}<tool_call|><|tool_call>call:b{}<tool_call|>Готово`}, "Готово"},
+		{"only the call", []string{`<|tool_call>call:a{}<tool_call|>`}, ""},
+		{"a body that holds angle brackets", []string{`<|tool_call>call:a{content:"x < y > z"}<tool_call|>ok`}, "ok"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := &streamFilter{}
+			var out strings.Builder
+			for _, chunk := range tt.chunks {
+				out.WriteString(filter.Process(chunk))
+			}
+			out.WriteString(filter.Flush())
+			if out.String() != tt.want {
+				t.Errorf("got %q, want %q", out.String(), tt.want)
+			}
+			if got := sanitizeAssistantText(strings.Join(tt.chunks, "")); got != strings.TrimSpace(tt.want) {
+				t.Errorf("sanitizeAssistantText: got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStreamFilterResetForgetsAnOpenToolCall(t *testing.T) {
+	filter := &streamFilter{}
+	filter.Process(`<|tool_call>call:a{`)
+	filter.Reset()
+	if got := filter.Process("Привет") + filter.Flush(); got != "Привет" {
+		t.Errorf("got %q", got)
+	}
+}

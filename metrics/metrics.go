@@ -70,7 +70,10 @@ var (
 	// UserFileOps counts what the model's file tools do to the user's files: list, read, write
 	// (a new file), append and propose (a write that waits for the user), each ended "ok",
 	// "saved", "appended", "created", "not_found", "exists", "refused" (a call the tool
-	// would not do: bad name, too big, over a limit) or "failed" (the server).
+	// would not do: bad name, too big, over a limit) or "failed" (the server). Two more
+	// count the checks of what the assistant says: "removal"/"note" (the request asked to
+	// delete or rename a file and the model was told it cannot) and "claim"/"corrected" (an
+	// answer claimed a change of the files that did not happen and got a correction).
 	UserFileOps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "user_files_operations_total",
 		Help: "Operations of the file tools on the user's files, by operation and result.",

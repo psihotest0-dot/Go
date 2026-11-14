@@ -250,7 +250,7 @@ func TestGenerateResponseStopsAfterToolRoundLimit(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	assert.Empty(t, content)
+	assert.Equal(t, stuckAnswer, content, "tools ran and the model never said a word: the user is told so")
 	assert.Len(t, toolCalls, maxToolRounds, "tool execution stops at the round limit")
 
 	require.Len(t, mock.Requests, maxToolRounds+2, "the final attempt runs without tools")

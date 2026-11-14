@@ -62,6 +62,9 @@ type turnState struct {
 	// told about already.
 	found     []api.SourceInfo
 	announced int
+	// fileWrites counts the times a file tool wrote or added text in this turn (a write
+	// that waits for the user is not one).
+	fileWrites int
 }
 
 // withTurn starts the state of a chat turn. retrievedDocuments tells that text
@@ -166,6 +169,26 @@ func (t *turnState) newSources() []api.SourceInfo {
 	fresh := slices.Clone(t.found[t.announced:])
 	t.announced = len(t.found)
 	return fresh
+}
+
+// noteFileWrite records that a file tool wrote or added text.
+func (t *turnState) noteFileWrite() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.fileWrites++
+}
+
+// filesWritten is how many times a file tool wrote or added text in this turn.
+func (t *turnState) filesWritten() int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.fileWrites
 }
 
 // madeProposals lists the proposals the turn made.

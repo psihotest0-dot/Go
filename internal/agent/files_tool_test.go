@@ -230,6 +230,7 @@ func TestListFiles(t *testing.T) {
 	assert.Equal(t, "a.md", files[0]["name"])
 	assert.EqualValues(t, 3, files[0]["size_bytes"])
 	assert.Empty(t, turn.externalSources(), "the names are the model's own")
+	assert.Contains(t, res["message"], readFileTool, "the listing tells that the text of a file is read with read_file")
 }
 
 // The files and the web are not used in one turn, in either order: the page or the book

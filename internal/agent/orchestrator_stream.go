@@ -25,11 +25,22 @@ const (
 	// and end a thinking block.
 	streamFilterThinkOpen  = "<think>"
 	streamFilterThinkClose = "</think>"
+	// streamFilterCallOpen and streamFilterCallClose bound a tool call that Gemma 4 wrote
+	// as text, <|tool_call>call:append_file{...}<tool_call|>. The server parses such a call
+	// when the tool is on offer; when no tool is (the last round after the rounds for tools
+	// ran out) the model writes it into the answer, and the user got the call itself.
+	streamFilterCallOpen  = "<|tool_call>"
+	streamFilterCallClose = "<tool_call|>"
+	// streamFilterCallTail is how many bytes are kept while inside such a block so that a
+	// split closing marker is still detected.
+	streamFilterCallTail = len(streamFilterCallClose) - 1
 )
 
 type streamFilter struct {
 	inThink bool
-	buffer  string
+	// inCall: inside a tool call written as text; everything up to its closing marker is dropped.
+	inCall bool
+	buffer string
 }
 
 // Process appends chunk to the internal buffer and returns the content that is
@@ -40,6 +51,20 @@ func (f *streamFilter) Process(chunk string) string {
 	var out strings.Builder
 
 	for len(f.buffer) > 0 {
+		if f.inCall {
+			idx := strings.Index(f.buffer, streamFilterCallClose)
+			if idx != -1 {
+				f.inCall = false
+				f.buffer = f.buffer[idx+len(streamFilterCallClose):]
+				continue
+			}
+
+			if len(f.buffer) > streamFilterCallTail {
+				f.buffer = f.buffer[len(f.buffer)-streamFilterCallTail:]
+			}
+			break
+		}
+
 		if f.inThink {
 			idx := strings.Index(f.buffer, streamFilterThinkClose)
 			if idx != -1 {
@@ -87,6 +112,12 @@ func (f *streamFilter) Process(chunk string) string {
 			continue
 		}
 
+		if tag == streamFilterCallOpen {
+			f.inCall = true
+			f.buffer = f.buffer[endIdx+1:]
+			continue
+		}
+
 		// A closing think marker outside a think block closes a block whose opening
 		// tag the model server put into the prompt. The tag itself is never shown;
 		// the reasoning before it was already sent and cannot be taken back here
@@ -109,7 +140,7 @@ func (f *streamFilter) Process(chunk string) string {
 }
 
 func (f *streamFilter) Flush() string {
-	if f.inThink {
+	if f.inThink || f.inCall {
 		f.buffer = ""
 		return ""
 	}
@@ -122,6 +153,7 @@ func (f *streamFilter) Flush() string {
 // stream is over, whether it finished or failed.
 func (f *streamFilter) Reset() {
 	f.inThink = false
+	f.inCall = false
 	f.buffer = ""
 }
 

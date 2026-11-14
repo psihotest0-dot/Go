@@ -65,7 +65,7 @@ func fileToolDefinitions() []openai.Tool {
 		return openai.Tool{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{Name: name, Description: description, Parameters: parameters}}
 	}
 	return []openai.Tool{
-		tool(listFilesTool, "List the files in the user's files folder.", object(map[string]any{})),
+		tool(listFilesTool, "List the names of the files in the user's files folder. It does not show what is in them: to tell the user what a file says, call "+readFileTool+".", object(map[string]any{})),
 		tool(readFileTool, "Read a text file from the user's files folder, a part at a time. If next_start_line is not 0, call again with it to read on.",
 			object(map[string]any{
 				"name":       text("File name, e.g. notes.md."),
@@ -162,6 +162,10 @@ func (r *DefaultToolRegistry) executeListFiles(userID uuid.UUID) (interface{}, e
 	result := map[string]interface{}{"status": "success", "count": len(files), "files": files}
 	if len(files) == 0 {
 		result["message"] = "There are no files yet."
+	} else {
+		// 2 of 8 turns of "open list.txt and tell me what is in it" ended here, with the answer
+		// made up from the names: the listing says nothing about the text.
+		result["message"] = "These are the names only. The text of a file is not here: call " + readFileTool + " to see it."
 	}
 	return result, nil
 }
@@ -251,6 +255,7 @@ func (r *DefaultToolRegistry) executeWriteFile(ctx context.Context, userID uuid.
 		return nil, r.fileToolError(writeFileTool, err)
 	}
 	fileOp("write", "saved")
+	turn.noteFileWrite()
 	slog.InfoContext(ctx, "a file was saved", "user_id", userID, "name", info.Name, "size_bytes", info.Size)
 	return map[string]interface{}{
 		"status":     "saved",
@@ -289,6 +294,7 @@ func (r *DefaultToolRegistry) executeAppendFile(ctx context.Context, userID uuid
 		return nil, r.fileToolError(appendFileTool, err)
 	}
 	fileOp("append", "appended")
+	turnFrom(ctx).noteFileWrite()
 	slog.InfoContext(ctx, "text was added to a file", "user_id", userID, "name", info.Name, "size_bytes", info.Size)
 	return map[string]interface{}{
 		"status":     "appended",
