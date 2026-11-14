@@ -490,22 +490,6 @@ func (q *Queries) SetMemoryStatus(ctx context.Context, arg SetMemoryStatusParams
 	return err
 }
 
-const supercedeMemory = `-- name: SupercedeMemory :exec
-UPDATE memories
-SET status = 'superseded', updated_at = NOW()
-WHERE id = $1 AND user_id = $2
-`
-
-type SupercedeMemoryParams struct {
-	ID     uuid.UUID `json:"id"`
-	UserID uuid.UUID `json:"user_id"`
-}
-
-func (q *Queries) SupercedeMemory(ctx context.Context, arg SupercedeMemoryParams) error {
-	_, err := q.db.ExecContext(ctx, supercedeMemory, arg.ID, arg.UserID)
-	return err
-}
-
 const updateMemory = `-- name: UpdateMemory :one
 UPDATE memories
 SET content = COALESCE($3, content),

@@ -7,12 +7,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
 	"go-monolith/internal/prompts"
@@ -197,11 +199,11 @@ func TestConsolidationConfirmationPromotesTheCandidate(t *testing.T) {
 	e.say("Живея във Варна")
 	e.say("Да, във Варна живея")
 
-	assert.Equal(t, map[string]string{inSofia: "superseded", inVarna: "active"}, e.statuses())
+	assert.Equal(t, map[string]string{inVarna: "active"}, e.statuses(), "the replaced fact is deleted")
 }
 
-// Saying an old, replaced fact again must bring it back; its hash is still in
-// the unique index, so inserting it as a new row would fail.
+// A replaced fact is deleted; said again, it is stored anew and replaces the one
+// in force (whose own row then goes).
 func TestConsolidationReplacedFactCanComeBack(t *testing.T) {
 	e := newConsolidationEnv(t,
 		factJSON("location", "София", inSofia, false),
@@ -210,10 +212,42 @@ func TestConsolidationReplacedFactCanComeBack(t *testing.T) {
 	)
 	e.say("Живея в София")
 	e.say("Преместих се във Варна")
-	assert.Equal(t, map[string]string{inSofia: "superseded", inVarna: "active"}, e.statuses())
+	assert.Equal(t, map[string]string{inVarna: "active"}, e.statuses())
 
 	e.say("Върнах се в София")
-	assert.Equal(t, map[string]string{inSofia: "active", inVarna: "superseded"}, e.statuses())
+	assert.Equal(t, map[string]string{inSofia: "active"}, e.statuses())
+}
+
+// A row an older version left as "superseded" still has its hash in the unique
+// index: said again, the fact must bring that row back, not fail on a new insert.
+func TestConsolidationRevivesARowLeftAsSuperseded(t *testing.T) {
+	e := newConsolidationEnv(t,
+		factJSON("location", "Варна", inVarna, false),
+		factJSON("location", "София", inSofia, true),
+	)
+	e.say("Живея във Варна")
+	_, err := e.database.SqlDB.ExecContext(e.ctx, `INSERT INTO memories (user_id, content, status, embedding, embedding_model, importance, metadata, content_hash)
+		VALUES ($1, $2, 'superseded', $3, 'x', 1, '{"fact_key": "location", "value": "София"}', $4)`,
+		e.user.ID, inSofia, pgvector.NewVector(make([]float32, config.VectorDimension)), db.GenerateHash(inSofia))
+	require.NoError(t, err)
+
+	e.say("Върнах се в София")
+	assert.Equal(t, map[string]string{inSofia: "active"}, e.statuses())
+}
+
+// A newer unconfirmed claim replaces an older candidate for the same key, and the
+// older candidate is deleted with it; the active fact stays.
+func TestConsolidationDeletesTheCandidateANewerClaimReplaces(t *testing.T) {
+	const inBurgas = "Живея в Бургас"
+	e := newConsolidationEnv(t,
+		factJSON("location", "София", inSofia, false),
+		factJSON("location", "Варна", inVarna, false),
+		factJSON("location", "Бургас", inBurgas, false),
+	)
+	e.say("Живея в София")
+	e.say("Живея във Варна")
+	e.say("Живея в Бургас")
+	assert.Equal(t, map[string]string{inSofia: "active", inBurgas: "candidate"}, e.statuses())
 }
 
 // The model gets its instructions as a system message, not as one more thing

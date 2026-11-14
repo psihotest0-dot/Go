@@ -148,21 +148,10 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// The replaced fact is deleted, not kept as "superseded".
 	mems2, err := database.Queries.GetMemories(ctx, db.GetMemoriesParams{UserID: user.ID})
 	require.NoError(t, err)
-	assert.Len(t, mems2, 2)
-
-	var superseded, active bool
-	for _, m := range mems2 {
-		switch m.Status {
-		case "superseded":
-			superseded = true
-			assert.Equal(t, "Живея в София", m.Content)
-		case "active":
-			active = true
-			assert.Equal(t, "Преместих се във Варна", m.Content)
-		}
-	}
-	assert.True(t, superseded, "Old memory should be superseded")
-	assert.True(t, active, "New memory should be active")
+	require.Len(t, mems2, 1, "the replaced memory must be gone")
+	assert.Equal(t, "Преместих се във Варна", mems2[0].Content)
+	assert.Equal(t, "active", mems2[0].Status)
 }

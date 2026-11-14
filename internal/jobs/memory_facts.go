@@ -22,7 +22,9 @@ type factAction struct {
 	store bool
 	// status is the status the memory for the fact gets: active or candidate.
 	status string
-	// supersede lists the memories that stop being in force because of it.
+	// supersede lists the memories that stop being in force because of it. They
+	// are deleted: a replaced fact used to stay as "superseded", out of every
+	// search, and only took room (2026-11-14). Said again, it is stored anew.
 	supersede []uuid.UUID
 }
 
@@ -163,14 +165,15 @@ func (w *MemoryConsolidationWorker) processFact(ctx context.Context, msg db.Mess
 		return nil
 	}
 	for _, id := range action.supersede {
-		if err := q.SupercedeMemory(ctx, db.SupercedeMemoryParams{ID: id, UserID: msg.UserID}); err != nil {
+		if _, err := q.DeleteMemory(ctx, db.DeleteMemoryParams{ID: id, UserID: msg.UserID}); err != nil {
 			return err
 		}
 	}
 
 	if stored != nil {
-		// The statement is already in the table as a candidate or as a fact that
-		// was replaced earlier: bring that row back instead of inserting a copy.
+		// The statement is already in the table (a candidate, or a row an older
+		// version left as "superseded"): change that row instead of inserting a
+		// copy, which the unique index on the content hash would refuse.
 		if err := q.SetMemoryStatus(ctx, db.SetMemoryStatusParams{ID: stored.ID, UserID: msg.UserID, Status: action.status}); err != nil {
 			return err
 		}

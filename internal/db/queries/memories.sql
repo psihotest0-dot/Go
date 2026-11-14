@@ -80,11 +80,6 @@ LIMIT sqlc.arg('match_count');
 -- name: DeleteMemory :execrows
 DELETE FROM memories WHERE id = $1 AND user_id = $2;
 
--- name: SupercedeMemory :exec
-UPDATE memories
-SET status = 'superseded', updated_at = NOW()
-WHERE id = $1 AND user_id = $2;
-
 -- name: SetMemoryStatus :exec
 UPDATE memories
 SET status = $3, updated_at = NOW()
