@@ -124,6 +124,36 @@ var (
 		Name: "cache_misses_total",
 		Help: "Total number of embedding cache misses, by kind of text (query, passage)",
 	}, []string{"kind"})
+
+	// The quality of the searches (plan item P30): the distance limits of the search
+	// (retrieval.go: 0.20 for passages, 0.23 across languages, 0.17 for the summaries in
+	// the prompt) were set by hand on measured questions, and a drift - new books, a new
+	// embedding model - showed only in a new measurement. Both are observed after the
+	// limits, once per search: a tool call with query_en is two "chunks" searches.
+	//
+	// RetrievalNearestDistance is the cosine distance of the nearest result that the
+	// vector half of a search found. A search that returned nothing, or only what the
+	// text half found, adds nothing here; it shows in RetrievalResults.
+	RetrievalNearestDistance = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "retrieval_nearest_distance",
+		Help:    "Cosine distance of the nearest result a search returned, by search.",
+		Buckets: []float64{0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.17, 0.18, 0.20, 0.23, 0.25},
+	}, []string{"search"})
+
+	// RetrievalResults is how many results a search returned, 0 included.
+	RetrievalResults = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "retrieval_results",
+		Help:    "Number of results a search returned, by search.",
+		Buckets: []float64{0, 1, 2, 3, 4, 5, 6, 8},
+	}, []string{"search"})
+)
+
+// The values of the search label of RetrievalNearestDistance and RetrievalResults:
+// "chunks" is the search of the search_documents tool (passages of the books), "context"
+// the search for the concept summaries that go into the chat prompt on every turn.
+const (
+	RetrievalSearchChunks  = "chunks"
+	RetrievalSearchContext = "context"
 )
 
 func init() {
@@ -141,6 +171,11 @@ func init() {
 	for _, kind := range []string{CacheKindQuery, CacheKindPassage} {
 		CacheHits.WithLabelValues(kind)
 		CacheMisses.WithLabelValues(kind)
+	}
+	// And for the searches, so that the panels show both from the start.
+	for _, search := range []string{RetrievalSearchChunks, RetrievalSearchContext} {
+		RetrievalNearestDistance.WithLabelValues(search)
+		RetrievalResults.WithLabelValues(search)
 	}
 }
 

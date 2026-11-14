@@ -339,12 +339,76 @@
       "id": 14
     },
     {
+      "type": "timeseries",
+      "title": "Nearest result distance p50 / p90 by search",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum by (le, search) (rate(retrieval_nearest_distance_bucket[1h])))",
+          "legendFormat": "p50 {{search}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.9, sum by (le, search) (rate(retrieval_nearest_distance_bucket[1h])))",
+          "legendFormat": "p90 {{search}}",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 3,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "description": "Косинусово разстояние до най-близкия резултат, който векторната половина е намерила (П30), след праговете: chunks — откъсите на search_documents (праг 0,20, през езика 0,23), context — резюметата в промпта на всеки ход (праг 0,17). На 2026-11-08 (97 файла) най-близкият откъс беше 0,06–0,19 при въпросите, на които книгите отговарят. Трайно изместване = дрейф (нови книги, друг модел за вграждане) — време за ново измерване на праговете. Прозорец 1 h, защото търсенията са малко.",
+      "id": 29
+    },
+    {
+      "type": "timeseries",
+      "title": "Results per search and share of empty searches",
+      "targets": [
+        {
+          "expr": "sum by (search) (rate(retrieval_results_sum[1h])) / sum by (search) (rate(retrieval_results_count[1h]))",
+          "legendFormat": "average {{search}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (search) (rate(retrieval_results_bucket{le=\"0\"}[1h])) / sum by (search) (rate(retrieval_results_count[1h]))",
+          "legendFormat": "empty share {{search}}",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 39,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "description": "Колко резултата е върнало едно търсене (средно) и каква част от търсенията не са върнали нищо (0–1). chunks: до 8 откъса; извикване на search_documents с query_en е две търсения. context: до 3 резюмета; празно е обичайно за поздрав или реплика. Растящ дял празни при chunks = праговете или индексът вече не намират книгите.",
+      "id": 30
+    },
+    {
       "type": "row",
       "title": "LLM",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 47,
         "w": 24,
         "h": 1
       },
@@ -363,7 +427,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -393,7 +457,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 40,
+        "y": 48,
         "w": 12,
         "h": 8
       },
@@ -411,7 +475,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 56,
         "w": 24,
         "h": 1
       },
@@ -430,7 +494,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 57,
         "w": 12,
         "h": 8
       },
@@ -465,7 +529,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 49,
+        "y": 57,
         "w": 12,
         "h": 8
       },
@@ -490,7 +554,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 65,
         "w": 12,
         "h": 8
       },
@@ -513,7 +577,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 57,
+        "y": 65,
         "w": 12,
         "h": 8
       },
@@ -537,7 +601,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 65,
+        "y": 73,
         "w": 24,
         "h": 1
       },
@@ -566,7 +630,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 66,
+        "y": 74,
         "w": 12,
         "h": 8
       },
@@ -589,7 +653,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 66,
+        "y": 74,
         "w": 12,
         "h": 8
       },
@@ -608,7 +672,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 74,
+        "y": 82,
         "w": 24,
         "h": 1
       },
@@ -627,7 +691,7 @@
       ],
       "gridPos": {
         "x": 0,
-        "y": 75,
+        "y": 83,
         "w": 12,
         "h": 8
       },
@@ -650,7 +714,7 @@
       ],
       "gridPos": {
         "x": 12,
-        "y": 75,
+        "y": 83,
         "w": 12,
         "h": 8
       },

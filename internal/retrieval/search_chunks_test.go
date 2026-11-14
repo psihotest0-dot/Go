@@ -5,15 +5,20 @@ import (
 	"math"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
+	"go-monolith/internal/llm"
 	"go-monolith/internal/retrieval"
+	"go-monolith/metrics"
 )
 
 // questionEmbedder answers every question with the same vector, so the tests
@@ -203,4 +208,158 @@ func TestSearchRawChunksTakesThemesFromSummariesBeyondTheContextLimit(t *testing
 
 	assert.Equal(t, []string{"The libido is psychic energy that can change its object."}, e.found(t, "зюзюфлекс"))
 	assert.Empty(t, e.contextSummaries(t, "зюзюфлекс"))
+}
+
+// searchObservations is what a series of the search quality metrics holds so far:
+// the number of observations and their sum.
+type searchObservations struct {
+	count uint64
+	sum   float64
+}
+
+func observed(t *testing.T, h *prometheus.HistogramVec, search string) searchObservations {
+	t.Helper()
+	var m dto.Metric
+	require.NoError(t, h.WithLabelValues(search).(prometheus.Histogram).Write(&m))
+	return searchObservations{count: m.GetHistogram().GetSampleCount(), sum: m.GetHistogram().GetSampleSum()}
+}
+
+// since is the observations added after before.
+func (o searchObservations) since(before searchObservations) searchObservations {
+	return searchObservations{count: o.count - before.count, sum: o.sum - before.sum}
+}
+
+// The tool search records how many passages it returned and how near the nearest
+// one the vector half found is (plan item P30): the distance limits were set by
+// hand, and a drift shows only in such a measure. A passage that only the text half
+// found has no distance and must not count as the nearest one.
+func TestSearchRawChunksMeasuresTheNearestPassage(t *testing.T) {
+	e := newChunkEnv(t, []chunkSpec{
+		{text: "Български откъс на 0.15", distance: 0.15},
+		{text: "Български откъс на 0.12", distance: 0.12},
+		{text: "Откъс, далеч от въпроса, в който пише зюзюфлекс", distance: 0.90},
+	})
+	distBefore := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchChunks)
+	resultsBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks)
+	contextBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchContext)
+
+	require.Len(t, e.found(t, "зюзюфлекс"), 3)
+
+	dist := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchChunks).since(distBefore)
+	assert.Equal(t, uint64(1), dist.count)
+	assert.InDelta(t, 0.12, dist.sum, 1e-5)
+	results := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks).since(resultsBefore)
+	assert.Equal(t, searchObservations{count: 1, sum: 3}, results)
+	// The summaries looked up for their themes are not the search of the prompt.
+	assert.Equal(t, contextBefore, observed(t, metrics.RetrievalResults, metrics.RetrievalSearchContext))
+}
+
+// A search that returned nothing, or only what the text half found, is seen in the
+// count of results; the distance has nothing to show for it.
+func TestSearchRawChunksWithoutAVectorMatchRecordsNoDistance(t *testing.T) {
+	e := newChunkEnv(t, []chunkSpec{
+		{text: "Откъс, далеч от въпроса, в който пише зюзюфлекс", distance: 0.90},
+	})
+	distBefore := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchChunks)
+	resultsBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks)
+
+	require.Len(t, e.found(t, "зюзюфлекс"), 1)
+	assert.Empty(t, e.found(t, "куркумаджия"))
+
+	assert.Equal(t, distBefore, observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchChunks))
+	results := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks).since(resultsBefore)
+	assert.Equal(t, searchObservations{count: 2, sum: 1}, results)
+}
+
+// The search for the summaries of the prompt is measured on its own, after its
+// limit of 0.17.
+func TestSearchForContextMeasuresTheNearestSummary(t *testing.T) {
+	e := newChunkEnv(t, []chunkSpec{
+		{text: "Summary at 0.15", distance: 0.15, chunkType: "concept_summary"},
+		{text: "Summary at 0.12", distance: 0.12, chunkType: "concept_summary"},
+		{text: "Summary at 0.30", distance: 0.30, chunkType: "concept_summary"},
+	})
+	distBefore := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchContext)
+	resultsBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchContext)
+	chunksBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks)
+
+	require.Len(t, e.contextSummaries(t, "зюзюфлекс"), 2)
+
+	dist := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchContext).since(distBefore)
+	assert.Equal(t, uint64(1), dist.count)
+	assert.InDelta(t, 0.12, dist.sum, 1e-5)
+	results := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchContext).since(resultsBefore)
+	assert.Equal(t, searchObservations{count: 1, sum: 2}, results)
+	assert.Equal(t, chunksBefore, observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks))
+}
+
+// A prompt search with no summary within the limit - the usual case for a greeting -
+// is a 0 in the count and nothing in the distance.
+func TestSearchForContextWithNothingCloseRecordsNoDistance(t *testing.T) {
+	e := newChunkEnv(t, []chunkSpec{
+		{text: "Summary at 0.20", distance: 0.20, chunkType: "concept_summary"},
+	})
+	distBefore := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchContext)
+	resultsBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchContext)
+
+	assert.Empty(t, e.contextSummaries(t, "зюзюфлекс"))
+
+	assert.Equal(t, distBefore, observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchContext))
+	results := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchContext).since(resultsBefore)
+	assert.Equal(t, searchObservations{count: 1, sum: 0}, results)
+}
+
+// Without the embedder the tool search falls back to the text half alone: it is
+// still a search with a count of results, and it has no distance.
+func TestSearchRawChunksTextFallbackRecordsOnlyTheCount(t *testing.T) {
+	mockDB, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer mockDB.Close()
+	d := &db.Database{SqlDB: mockDB, Queries: db.New(mockDB)}
+	svc := retrieval.NewRetrievalService(d, &llm.MockEmbedderWithConfig{EmptyVectors: true})
+
+	mock.MatchExpectationsInOrder(false)
+	expectSearchTx(mock)
+	mock.ExpectQuery(`(?i)SELECT c.id, c.text as content, f.file_name`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
+			AddRow(uuid.New(), "A chunk", "book.txt", 0.8).
+			AddRow(uuid.New(), "Another chunk", "book.txt", 0.7))
+
+	distBefore := observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchChunks)
+	resultsBefore := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks)
+
+	res, err := svc.SearchRawChunks(context.Background(), uuid.New(), "зюзюфлекс", 8)
+	require.NoError(t, err)
+	require.Len(t, res, 2)
+
+	assert.Equal(t, distBefore, observed(t, metrics.RetrievalNearestDistance, metrics.RetrievalSearchChunks))
+	results := observed(t, metrics.RetrievalResults, metrics.RetrievalSearchChunks).since(resultsBefore)
+	assert.Equal(t, searchObservations{count: 1, sum: 2}, results)
+}
+
+// Only the two measured searches have series: the searches that are only a means
+// (the themes of the tool search, SearchAll) must not add one with an empty label.
+func TestOnlyTheMeasuredSearchesHaveSeries(t *testing.T) {
+	e := newChunkEnv(t, []chunkSpec{
+		{text: "Summary at 0.15", distance: 0.15, chunkType: "concept_summary", metadata: `{"themes": ["energy"]}`},
+		{text: "Български откъс на 0.12", distance: 0.12},
+	})
+	e.found(t, "зюзюфлекс")
+	_, _, err := e.svc.SearchAll(context.Background(), e.user, "зюзюфлекс", 5)
+	require.NoError(t, err)
+
+	for _, h := range []*prometheus.HistogramVec{metrics.RetrievalNearestDistance, metrics.RetrievalResults} {
+		ch := make(chan prometheus.Metric, 16)
+		h.Collect(ch)
+		close(ch)
+		var searches []string
+		for m := range ch {
+			var pb dto.Metric
+			require.NoError(t, m.Write(&pb))
+			for _, l := range pb.GetLabel() {
+				searches = append(searches, l.GetValue())
+			}
+		}
+		assert.ElementsMatch(t, []string{metrics.RetrievalSearchChunks, metrics.RetrievalSearchContext}, searches)
+	}
 }

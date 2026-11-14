@@ -224,11 +224,26 @@ func (s *RetrievalService) searchMemories(ctx context.Context, userID uuid.UUID,
 	return res, nil
 }
 
+// observeSearch records a finished search in the quality metrics under the label
+// search (metrics.RetrievalSearch*; empty for a search that is not measured): how
+// many results it returned, and the distance of the nearest one when the vector half
+// measured it (measured is false when none of the results came from it).
+func observeSearch(search string, results int, nearest float64, measured bool) {
+	if search == "" {
+		return
+	}
+	metrics.RetrievalResults.WithLabelValues(search).Observe(float64(results))
+	if measured {
+		metrics.RetrievalNearestDistance.WithLabelValues(search).Observe(nearest)
+	}
+}
+
 // searchChunks runs the hybrid chunk search, or the
 // text-only search when queryVec is nil. The words of query - and of themes,
 // the topics of the concept summaries that matched - are what the lexical half
-// looks for in the chunk text.
-func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, query string, themes []string, limit int, queryVec []float32) ([]SearchResult, error) {
+// looks for in the chunk text. search names the search in the metrics (see
+// observeSearch).
+func (s *RetrievalService) searchChunks(ctx context.Context, search string, userID uuid.UUID, query string, themes []string, limit int, queryVec []float32) ([]SearchResult, error) {
 	var res []SearchResult
 	tsQuery := lexicalQuery(query, themes)
 
@@ -249,6 +264,7 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 		for _, m := range rows {
 			res = append(res, SearchResult{ID: m.ID, Content: m.Content, SourceType: "chunk", Score: m.Score, FileName: m.FileName})
 		}
+		observeSearch(search, len(res), 0, false)
 		return res, nil
 	}
 
@@ -270,15 +286,21 @@ func (s *RetrievalService) searchChunks(ctx context.Context, userID uuid.UUID, q
 		slog.ErrorContext(ctx, "failed to search hybrid chunks", slog.Any("error", err))
 		return nil, fmt.Errorf("failed to search hybrid chunks: %w", err)
 	}
+	nearest, measured := 0.0, false
 	for _, row := range rows {
 		res = append(res, SearchResult{ID: row.ID, Content: row.Content, SourceType: "chunk", Score: row.Score, FileName: row.FileName})
+		if row.VectorMatch && (!measured || row.Distance < nearest) {
+			nearest, measured = row.Distance, true
+		}
 	}
+	observeSearch(search, len(res), nearest, measured)
 	return res, nil
 }
 
 // searchConcepts returns the concept-summary chunks closer to queryVec than
-// maxDistance along with the themes recorded in their metadata.
-func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID, queryVec []float32, maxDistance float64) ([]SearchResult, []string, error) {
+// maxDistance along with the themes recorded in their metadata. search names the
+// search in the metrics (see observeSearch).
+func (s *RetrievalService) searchConcepts(ctx context.Context, search string, userID uuid.UUID, queryVec []float32, maxDistance float64) ([]SearchResult, []string, error) {
 	var rows []db.SearchConceptChunksRow
 	err := s.db.WithSearchSettings(ctx, func(q *db.Queries) (err error) {
 		rows, err = q.SearchConceptChunks(ctx, db.SearchConceptChunksParams{
@@ -296,7 +318,11 @@ func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID,
 
 	var res []SearchResult
 	var themes []string
-	for _, row := range rows {
+	nearest := 0.0
+	for i, row := range rows {
+		if i == 0 || row.Distance < nearest {
+			nearest = row.Distance
+		}
 		var meta struct {
 			Themes []string `json:"themes"`
 		}
@@ -312,6 +338,7 @@ func (s *RetrievalService) searchConcepts(ctx context.Context, userID uuid.UUID,
 			FileName:   row.FileName,
 		})
 	}
+	observeSearch(search, len(res), nearest, len(rows) > 0)
 	return res, themes, nil
 }
 
@@ -331,7 +358,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 	var concepts []SearchResult
 	var themes []string
 	if queryVec != nil {
-		concepts, themes, err = s.searchConcepts(ctx, userID, queryVec, conceptMaxDistance)
+		concepts, themes, err = s.searchConcepts(ctx, "", userID, queryVec, conceptMaxDistance)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to search concept chunks", "error", err)
 		}
@@ -344,7 +371,7 @@ func (s *RetrievalService) SearchAll(ctx context.Context, userID uuid.UUID, quer
 		return err
 	})
 	eg.Go(func() (err error) {
-		chunks, err = s.searchChunks(childCtx, userID, query, themes, limit, queryVec)
+		chunks, err = s.searchChunks(childCtx, "", userID, query, themes, limit, queryVec)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -416,7 +443,7 @@ func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUI
 	})
 	eg.Go(func() error {
 		var conceptErr error
-		conceptChunks, _, conceptErr = s.searchConcepts(childCtx, userID, queryVec, contextConceptMaxDistance)
+		conceptChunks, _, conceptErr = s.searchConcepts(childCtx, metrics.RetrievalSearchContext, userID, queryVec, contextConceptMaxDistance)
 		if conceptErr != nil {
 			slog.WarnContext(ctx, "failed to search concept chunks", "error", conceptErr)
 		}
@@ -449,12 +476,12 @@ func (s *RetrievalService) SearchRawChunks(ctx context.Context, userID uuid.UUID
 	var themes []string
 	if queryVec != nil {
 		// The themes only widen the search; without them it still works.
-		if _, themes, err = s.searchConcepts(ctx, userID, queryVec, conceptMaxDistance); err != nil {
+		if _, themes, err = s.searchConcepts(ctx, "", userID, queryVec, conceptMaxDistance); err != nil {
 			slog.WarnContext(ctx, "failed to search concept chunks for themes", "error", err)
 			themes = nil
 		}
 	}
-	return s.searchChunks(ctx, userID, query, themes, limit, queryVec)
+	return s.searchChunks(ctx, metrics.RetrievalSearchChunks, userID, query, themes, limit, queryVec)
 }
 
 // queryIsCyrillic reports whether text is written mostly in Cyrillic, which is

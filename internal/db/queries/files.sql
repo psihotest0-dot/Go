@@ -253,7 +253,11 @@ SELECT
             COALESCE(1.0 - cvs.distance, 0.0),
             COALESCE(cts.sim_score, 0.0)
         )
-    AS FLOAT8) as score
+    AS FLOAT8) as score,
+    -- Whether the vector half found the chunk, and its cosine distance then (0 for
+    -- one only the text half found); the nearest one is a measure of the search.
+    CAST(cvs.id IS NOT NULL AS BOOLEAN) AS vector_match,
+    CAST(COALESCE(cvs.distance, 0.0) AS FLOAT8) AS distance
 FROM chunk_vector_search cvs
 FULL OUTER JOIN chunk_text_search cts ON cvs.id = cts.id
 JOIN document_chunks c ON c.id = COALESCE(cvs.id, cts.id)

@@ -633,7 +633,11 @@ SELECT
             COALESCE(1.0 - cvs.distance, 0.0),
             COALESCE(cts.sim_score, 0.0)
         )
-    AS FLOAT8) as score
+    AS FLOAT8) as score,
+    -- Whether the vector half found the chunk, and its cosine distance then (0 for
+    -- one only the text half found); the nearest one is a measure of the search.
+    CAST(cvs.id IS NOT NULL AS BOOLEAN) AS vector_match,
+    CAST(COALESCE(cvs.distance, 0.0) AS FLOAT8) AS distance
 FROM chunk_vector_search cvs
 FULL OUTER JOIN chunk_text_search cts ON cvs.id = cts.id
 JOIN document_chunks c ON c.id = COALESCE(cvs.id, cts.id)
@@ -655,10 +659,12 @@ type SearchHybridChunksParams struct {
 }
 
 type SearchHybridChunksRow struct {
-	ID       uuid.UUID `json:"id"`
-	Content  string    `json:"content"`
-	FileName string    `json:"file_name"`
-	Score    float64   `json:"score"`
+	ID          uuid.UUID `json:"id"`
+	Content     string    `json:"content"`
+	FileName    string    `json:"file_name"`
+	Score       float64   `json:"score"`
+	VectorMatch bool      `json:"vector_match"`
+	Distance    float64   `json:"distance"`
 }
 
 // A question in one language is farther from the passages of a book in another
@@ -707,6 +713,8 @@ func (q *Queries) SearchHybridChunks(ctx context.Context, arg SearchHybridChunks
 			&i.Content,
 			&i.FileName,
 			&i.Score,
+			&i.VectorMatch,
+			&i.Distance,
 		); err != nil {
 			return nil, err
 		}

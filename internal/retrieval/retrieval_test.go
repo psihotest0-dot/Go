@@ -81,8 +81,8 @@ func TestRetrieval_SearchSimilar_Mock(t *testing.T) {
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
 	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
-			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score", "vector_match", "distance"}).
+			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1, true, 0.1))
 
 	memories, err := svc.SearchMemories(context.Background(), userID, query, 10)
 	require.NoError(t, err)
@@ -114,8 +114,8 @@ func TestRetrieval_SearchChunks_Mock(t *testing.T) {
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
 	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
-			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score", "vector_match", "distance"}).
+			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1, true, 0.1))
 
 	chunks, err := svc.SearchChunks(context.Background(), userID, query, 10)
 	require.NoError(t, err)
@@ -312,8 +312,8 @@ func TestRetrieval_SearchAll_MemoriesAndChunks(t *testing.T) {
 			AddRow(uuid.New(), "This is a test fact.", 1))
 
 	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
-			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score", "vector_match", "distance"}).
+			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1, true, 0.1))
 
 	memories, chunks, err := svc.SearchAll(context.Background(), userID, query, 10)
 	require.NoError(t, err)
@@ -343,9 +343,9 @@ func TestRetrieval_SearchAll_IncludesConceptChunks(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "score"}))
 
 	mock.ExpectQuery(`(?i)chunk_vector_search AS`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score"}).
-			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1).
-			AddRow(conceptID, "Concept summary.", "book.txt", 1))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "content", "file_name", "score", "vector_match", "distance"}).
+			AddRow(uuid.New(), "Chunk fact.", "file.txt", 1, true, 0.1).
+			AddRow(conceptID, "Concept summary.", "book.txt", 1, true, 0.1))
 
 	_, chunks, err := svc.SearchAll(context.Background(), uuid.New(), "query", 10)
 	require.NoError(t, err)
