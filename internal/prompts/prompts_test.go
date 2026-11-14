@@ -164,6 +164,22 @@ func TestChatPromptExamplesDoNotTeachQuestionsOrInviteCopying(t *testing.T) {
 	}
 }
 
+// The background reflector saved "сега съм на работа" and "още се излежавам и пия кафе"
+// as facts about the owner, and they reached every prompt for days. On the owner's 45
+// messages and 7 lasting facts (2026-11-14, Gemma 4 12B) this rule took out every passing
+// state and kept the 7 facts (plan item P43).
+func TestMemoryReflectorLeavesPassingStatesOut(t *testing.T) {
+	reflector, err := NewTemplateManager("").Render("memory_reflector.tmpl", nil)
+	require.NoError(t, err)
+	for name, want := range map[string]string{
+		"passing states are not saved":  "НЕ записвай моментни състояния",
+		"with the examples that got in": "сега съм на работа",
+		"and what a lasting fact is":    "ще е вярно и след месец",
+	} {
+		assert.Contains(t, reflector, want, name)
+	}
+}
+
 func TestUnknownTemplateIsAnError(t *testing.T) {
 	_, err := NewTemplateManager("").Render("no_such_template.tmpl", nil)
 	require.Error(t, err)
