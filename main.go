@@ -289,7 +289,11 @@ func run() error {
 	// usable ORACLE_TOKEN they are not served at all. The journal of the answers is read
 	// through the ordinary user check.
 	oracleStore := oracle.NewDBStore(database.Queries)
-	oracleHandler := oracle.NewHandler(oracle.NewService(llmClient, oracleStore), oracleStore, cfg.OracleToken)
+	oracleModel, err := llm.OracleClient(cfg, llmClient, logger)
+	if err != nil {
+		return err
+	}
+	oracleHandler := oracle.NewHandler(oracle.NewService(oracleModel, oracleStore), oracleStore, cfg.OracleToken)
 	oracleHandler.RegisterReadRoutes(protectedMux)
 	switch {
 	case oracle.TokenUsable(cfg.OracleToken):

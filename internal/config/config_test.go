@@ -418,3 +418,27 @@ func TestLoadFilesSettings(t *testing.T) {
 		}
 	})
 }
+
+func TestLoadOracleLLM(t *testing.T) {
+	t.Setenv("ORACLE_LLM", "")
+	t.Setenv("ORACLE_LLM_MODEL", "")
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	cfg := Load()
+	if cfg.OracleLLM != "" || cfg.OracleLLMModel != "" || cfg.DeepSeekAPIKey != "" {
+		t.Fatalf("nothing set: got %q %q and a key of %d bytes, want the local model", cfg.OracleLLM, cfg.OracleLLMModel, len(cfg.DeepSeekAPIKey))
+	}
+
+	t.Setenv("ORACLE_LLM", "  DeepSeek \r\n")
+	t.Setenv("ORACLE_LLM_MODEL", " deepseek-v4-pro ")
+	t.Setenv("DEEPSEEK_API_KEY", " abc \r\n")
+	cfg = Load()
+	if cfg.OracleLLM != "deepseek" {
+		t.Errorf("OracleLLM = %q, want deepseek (trimmed, lower case)", cfg.OracleLLM)
+	}
+	if cfg.OracleLLMModel != "deepseek-v4-pro" {
+		t.Errorf("OracleLLMModel = %q", cfg.OracleLLMModel)
+	}
+	if cfg.DeepSeekAPIKey != "abc" {
+		t.Errorf("the key was not trimmed: %d bytes", len(cfg.DeepSeekAPIKey))
+	}
+}

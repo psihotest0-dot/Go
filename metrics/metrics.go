@@ -101,6 +101,21 @@ var (
 		Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 20, 30},
 	})
 
+	// PaidLLMTokens counts the tokens a paid LLM provider reported (DeepSeek, for the Oracle
+	// when ORACLE_LLM=deepseek): the input that came from its cache, the input that did not,
+	// and the output. The money is worked out from these three and the price list.
+	PaidLLMTokens = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "paid_llm_tokens_total",
+		Help: "Tokens used at a paid LLM provider, by provider and kind.",
+	}, []string{"provider", "kind"}) // kind: cache_hit, cache_miss, output
+
+	// PaidLLMRequests counts the requests to a paid LLM provider by the class of the answer
+	// ("2xx", "4xx", "5xx") or "network_error".
+	PaidLLMRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "paid_llm_requests_total",
+		Help: "Requests to a paid LLM provider, by provider and status class.",
+	}, []string{"provider", "status"})
+
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_web_tool_requests_total",

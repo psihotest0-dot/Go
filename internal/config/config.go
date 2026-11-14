@@ -152,6 +152,15 @@ type Config struct {
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
 	OracleToken string
+	// OracleLLM (ORACLE_LLM) says which model answers the Oracle: "local" (the default,
+	// the same model as the chat) or "deepseek" (the paid API; it needs DEEPSEEK_API_KEY).
+	// Lower case, "" when not set. OracleLLMModel (ORACLE_LLM_MODEL) names the model at the
+	// paid provider; empty means the cheap one.
+	OracleLLM      string
+	OracleLLMModel string
+	// DeepSeekAPIKey (DEEPSEEK_API_KEY) is the key of the paid API; the web tools use it too.
+	// It is never logged.
+	DeepSeekAPIKey string
 }
 
 // parseChatIDs reads a comma, semicolon or space separated list of Telegram chat
@@ -299,5 +308,8 @@ func Load() *Config {
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),
+		OracleLLM:              strings.ToLower(strings.TrimSpace(os.Getenv("ORACLE_LLM"))),
+		OracleLLMModel:         strings.TrimSpace(os.Getenv("ORACLE_LLM_MODEL")),
+		DeepSeekAPIKey:         strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
 	}
 }

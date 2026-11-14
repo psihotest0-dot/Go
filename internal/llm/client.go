@@ -62,6 +62,10 @@ type Options struct {
 	// BackgroundSlots how many of them background work may occupy.
 	Slots           int
 	BackgroundSlots int
+	// APIKey is sent as the bearer token. Empty for the local server, which wants none.
+	APIKey string
+	// Dialect is the server behind the client; the default is the local one.
+	Dialect Dialect
 }
 
 // LemonadeClient implements LLMClient using the standard OpenAI format. Every
@@ -73,7 +77,10 @@ type LemonadeClient struct {
 	baseURL    string
 	model      string
 	forceModel bool
-	limiter    *slotLimiter
+	// apiKey is sent by the raw requests (postChat); the go-openai client has it in its
+	// own configuration. Empty for the local server, which wants none.
+	apiKey  string
+	limiter *slotLimiter
 
 	retryBaseDelay time.Duration
 
@@ -111,8 +118,13 @@ func NewLemonadeClientWithOptions(opts Options) *LemonadeClient {
 	httpClient := &http.Client{
 		Timeout: 0,
 	}
+	apiKey := "lemonade-dummy-key"
+	if opts.Dialect == DialectDeepSeek {
+		httpClient.Transport = newDeepSeekTransport()
+		apiKey = opts.APIKey
+	}
 
-	clientConfig := openai.DefaultConfig("lemonade-dummy-key")
+	clientConfig := openai.DefaultConfig(apiKey)
 	clientConfig.BaseURL = baseURL
 	clientConfig.HTTPClient = httpClient
 	clientConfig.EmptyMessagesLimit = 4294967295 // math.MaxUint32
@@ -121,6 +133,7 @@ func NewLemonadeClientWithOptions(opts Options) *LemonadeClient {
 		client:         openai.NewClientWithConfig(clientConfig),
 		httpClient:     httpClient,
 		baseURL:        baseURL,
+		apiKey:         opts.APIKey,
 		model:          strings.TrimSpace(opts.Model),
 		forceModel:     opts.ForceModel,
 		limiter:        newSlotLimiter(opts.Slots, opts.BackgroundSlots),
@@ -294,6 +307,9 @@ func (c *LemonadeClient) postChat(ctx context.Context, body []byte) (openai.Chat
 		return resp, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
