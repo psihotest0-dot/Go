@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -141,6 +142,12 @@ type Config struct {
 	TelegramAllowedChatIDs []int64
 	EnableAdaptiveSkip     bool
 	EnableDistillation     bool
+	// FilesEnabled (FILES_ENABLED) turns on the tools with which the assistant keeps the
+	// user's own text files (plan item P44). Off by default: without it nothing changes.
+	FilesEnabled bool
+	// FilesDir (FILES_DIR) is the folder of those files, an absolute path outside any
+	// folder that is synchronised to the cloud. Default: Lili-files in the home folder.
+	FilesDir string
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -180,6 +187,18 @@ func positiveIntEnv(name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// filesDir is FILES_DIR, or Lili-files in the home folder when it is not set.
+func filesDir() string {
+	if dir := strings.TrimSpace(os.Getenv("FILES_DIR")); dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Lili-files")
 }
 
 // boolEnv reads a boolean from the environment (true/false/1/0, any case). An
@@ -275,6 +294,8 @@ func Load() *Config {
 		TelegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
 		EnableAdaptiveSkip: adaptiveSkip,
 		EnableDistillation: distillation,
+		FilesEnabled:       boolEnv("FILES_ENABLED", false),
+		FilesDir:           filesDir(),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

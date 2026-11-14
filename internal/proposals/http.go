@@ -55,6 +55,7 @@ func (s *Service) decideHandler(decide func(ctx context.Context, userID uuid.UUI
 		}
 
 		p, err := decide(r.Context(), userID, id)
+		var applyErr *ApplyError
 		switch {
 		case err == nil:
 			writeJSON(w, http.StatusOK, p)
@@ -66,6 +67,10 @@ func (s *Service) decideHandler(decide func(ctx context.Context, userID uuid.UUI
 			// Not "already decided": the proposal stays open, and deleting a rule
 			// lets the user approve it again.
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		case errors.As(err, &applyErr):
+			// A file write that cannot be done as it stands; the proposal stays open and
+			// the reason says what to do.
+			http.Error(w, applyErr.Reason, http.StatusUnprocessableEntity)
 		default:
 			slog.ErrorContext(r.Context(), "failed to decide a proposal", "id", id, "err", err)
 			http.Error(w, "internal server error", http.StatusInternalServerError)

@@ -106,6 +106,9 @@ type budgets struct {
 	historyTokens       int
 	historyMessages     int
 	toolResultTokens    int
+	// extraFixedTokens is what the groups of tools cost on top of fixedPromptTokens: the
+	// stub of each is in every request (see toolGroup).
+	extraFixedTokens int
 	// thinking lets the model reason before it answers.
 	thinking bool
 	// The sampling settings sent with the chat requests. Zero is left out of the
@@ -154,7 +157,10 @@ func newBudgets(cfg *config.Config) budgets {
 
 		// Room for the dynamic prompt and the history once everything with a
 		// fixed size is paid for, including 5 % for the estimates being rough.
-		room := b.contextTokens - b.answerTokens - fixedPromptTokens - maxSummaryTokens - toolFloorTokens - b.contextTokens/20
+		if cfg.FilesEnabled {
+			b.extraFixedTokens = filesStubTokens
+		}
+		room := b.contextTokens - b.answerTokens - fixedPromptTokens - b.extraFixedTokens - maxSummaryTokens - toolFloorTokens - b.contextTokens/20
 		if room < minDerivedRoom {
 			room = minDerivedRoom
 		}
@@ -193,7 +199,7 @@ func newBudgets(cfg *config.Config) budgets {
 // worstCaseTokens is the largest request the budgets allow when every section
 // is full and the answer uses all of its reserve.
 func (b budgets) worstCaseTokens() int {
-	return fixedPromptTokens + maxSummaryTokens + b.promptContextTokens + b.historyTokens + b.answerTokens
+	return fixedPromptTokens + b.extraFixedTokens + maxSummaryTokens + b.promptContextTokens + b.historyTokens + b.answerTokens
 }
 
 // log reports the effective budgets, and warns when they cannot all fit.

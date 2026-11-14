@@ -636,3 +636,25 @@ func TestStaleTemporaryFilesAreSweptAway(t *testing.T) {
 	_, err = os.Stat(fresh)
 	assert.NoError(t, err, "a write may be going on")
 }
+
+func TestStat(t *testing.T) {
+	s, dir := newStore(t, Limits{})
+	_, err := s.Create(alice, "a.txt", "hello")
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(userDir(dir, alice), "folder.txt"), 0o700))
+
+	info, err := s.Stat(alice, "a.txt")
+	require.NoError(t, err)
+	assert.Equal(t, "a.txt", info.Name)
+	assert.EqualValues(t, 5, info.Size)
+
+	_, err = s.Stat(alice, "missing.txt")
+	require.ErrorIs(t, err, ErrNotFound)
+	_, err = s.Stat(alice, "folder.txt")
+	require.ErrorIs(t, err, ErrNotFound, "a folder is not a file")
+	_, err = s.Stat(bob, "a.txt")
+	require.ErrorIs(t, err, ErrNotFound, "another user's file")
+	var invalid *InvalidError
+	_, err = s.Stat(alice, "../a.txt")
+	require.ErrorAs(t, err, &invalid)
+}

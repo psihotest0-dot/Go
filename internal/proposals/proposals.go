@@ -26,6 +26,7 @@ import (
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/retrieval"
+	"go-monolith/internal/userfiles"
 	"go-monolith/metrics"
 )
 
@@ -34,6 +35,17 @@ const (
 	KindSaveRule      = "save_global_rule"
 	KindSaveStyleNote = "save_style_note"
 	KindCreateMemory  = "create_memory"
+	// KindWriteFile is made by write_file and append_file when the write may not be done
+	// at once (plan item P44): it replaces a file that exists, or the turn had read text
+	// from outside.
+	KindWriteFile = "write_file"
+)
+
+// The modes of a write_file proposal.
+const (
+	WriteCreate  = "create"
+	WriteReplace = "replace"
+	WriteAppend  = "append"
 )
 
 // The kinds of row in global_rules: a rule is an instruction the user gave, a style
@@ -149,6 +161,23 @@ func NormalizeMemory(content string, importance int) (MemoryPayload, error) {
 	return MemoryPayload{Content: content, Importance: importance}, nil
 }
 
+// WritePayload is the stored form of a write_file proposal.
+type WritePayload struct {
+	Mode    string `json:"mode"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+}
+
+// ApplyError: an approved proposal cannot be applied as it stands (the file it wanted to
+// make is there now, the file it wanted to change is gone, there is no room). The
+// proposal stays open; the reason is for the user, in Bulgarian.
+type ApplyError struct{ Reason string }
+
+func (e *ApplyError) Error() string { return e.Reason }
+
+// previewRunes is how much of the text of a file a proposal shows.
+const previewRunes = 160
+
 // Proposal is a proposal as the API and the bots show it.
 type Proposal struct {
 	ID        int64  `json:"id"`
@@ -162,6 +191,9 @@ type Proposal struct {
 	Value      string `json:"value,omitempty"`
 	Content    string `json:"content,omitempty"`
 	Importance int    `json:"importance,omitempty"`
+	// FileName and FileMode are set for a file write; the text is in Content.
+	FileName string `json:"file_name,omitempty"`
+	FileMode string `json:"file_mode,omitempty"`
 	// ExternalSources lists where untrusted text came from in the turn that made
 	// the proposal; empty means only the conversation.
 	ExternalSources []string  `json:"external_sources"`
@@ -203,10 +235,34 @@ func toProposal(row db.PendingAction) (Proposal, error) {
 		}
 		p.Content, p.Importance = payload.Content, payload.Importance
 		p.Summary = "Спомен: " + payload.Content
+	case KindWriteFile:
+		var payload WritePayload
+		if err := json.Unmarshal(row.Payload, &payload); err != nil {
+			return Proposal{}, fmt.Errorf("proposal %d has an unreadable payload: %w", row.ID, err)
+		}
+		p.FileName, p.FileMode, p.Content = payload.Name, payload.Mode, payload.Content
+		p.Summary = writeSummary(payload)
 	default:
 		return Proposal{}, fmt.Errorf("proposal %d has an unknown kind %q", row.ID, row.Kind)
 	}
 	return p, nil
+}
+
+// writeSummary is the one line a file write is shown as: what is done to which file, and
+// the beginning of the text, so that the user can decide.
+func writeSummary(p WritePayload) string {
+	what := "Нов файл"
+	switch p.Mode {
+	case WriteReplace:
+		what = "Замяна на файла"
+	case WriteAppend:
+		what = "Добавяне към файла"
+	}
+	text := strings.Join(strings.Fields(p.Content), " ")
+	if utf8.RuneCountInString(text) > previewRunes {
+		text = string([]rune(text)[:previewRunes]) + "…"
+	}
+	return fmt.Sprintf("%s „%s“ (%d знака): %s", what, p.Name, utf8.RuneCountInString(p.Content), text)
 }
 
 // Service stores and decides proposals.
@@ -214,11 +270,58 @@ type Service struct {
 	db        *db.Database
 	retrieval *retrieval.RetrievalService
 	now       func() time.Time
+	// files is where an approved file write goes; nil means files are not enabled.
+	files *userfiles.Store
 }
 
 // NewService creates a Service.
 func NewService(database *db.Database, r *retrieval.RetrievalService) *Service {
 	return &Service{db: database, retrieval: r, now: time.Now}
+}
+
+// WithFiles lets the service make proposals to write files and apply them.
+func (s *Service) WithFiles(store *userfiles.Store) *Service {
+	s.files = store
+	return s
+}
+
+// ProposeWrite leaves a write_file proposal: mode is WriteCreate, WriteReplace or
+// WriteAppend. It fails now, while the model can still tell the user, when the name or
+// the text cannot be used, when a new file's name is taken (userfiles.ErrExists) or when
+// the file to change is not there (userfiles.ErrNotFound).
+func (s *Service) ProposeWrite(ctx context.Context, userID uuid.UUID, sessionID, mode, name, content string, external []string) (Proposal, error) {
+	if s.files == nil {
+		return Proposal{}, &InvalidError{"files are not enabled"}
+	}
+	if mode != WriteCreate && mode != WriteReplace && mode != WriteAppend {
+		return Proposal{}, &InvalidError{"unknown way of writing a file"}
+	}
+	if err := userfiles.ValidateName(name); err != nil {
+		return Proposal{}, asInvalid(err)
+	}
+	if err := s.files.CheckContent(content); err != nil {
+		return Proposal{}, asInvalid(err)
+	}
+	_, statErr := s.files.Stat(userID, name)
+	switch {
+	case statErr != nil && !errors.Is(statErr, userfiles.ErrNotFound):
+		return Proposal{}, statErr
+	case mode == WriteCreate && statErr == nil:
+		return Proposal{}, userfiles.ErrExists
+	case mode != WriteCreate && statErr != nil:
+		return Proposal{}, userfiles.ErrNotFound
+	}
+	return s.propose(ctx, userID, sessionID, KindWriteFile, WritePayload{Mode: mode, Name: name, Content: content}, external)
+}
+
+// asInvalid turns the refusal of the file store into the one of this package, so that the
+// tools handle a bad file name like a bad rule.
+func asInvalid(err error) error {
+	var invalid *userfiles.InvalidError
+	if errors.As(err, &invalid) {
+		return &InvalidError{Reason: invalid.Reason}
+	}
+	return err
 }
 
 // ProposeRule leaves a save_global_rule proposal. external names the sources of
@@ -418,8 +521,51 @@ func (s *Service) apply(ctx context.Context, userID uuid.UUID, row db.PendingAct
 			return fmt.Errorf("failed to save the memory: %w", err)
 		}
 		return nil
+
+	case KindWriteFile:
+		var payload WritePayload
+		if err := json.Unmarshal(row.Payload, &payload); err != nil {
+			return fmt.Errorf("proposal %d has an unreadable payload: %w", row.ID, err)
+		}
+		return s.applyWrite(userID, payload)
 	}
 	return fmt.Errorf("proposal %d has an unknown kind %q", row.ID, row.Kind)
+}
+
+// applyWrite writes the file of an approved proposal. The state of the folder is checked
+// again by the store: the file may have appeared or gone since the proposal was made.
+func (s *Service) applyWrite(userID uuid.UUID, p WritePayload) error {
+	if s.files == nil {
+		return &ApplyError{Reason: "Файловете не са включени."}
+	}
+	var err error
+	switch p.Mode {
+	case WriteCreate:
+		_, err = s.files.Create(userID, p.Name, p.Content)
+	case WriteReplace:
+		_, err = s.files.Replace(userID, p.Name, p.Content)
+	case WriteAppend:
+		_, err = s.files.Append(userID, p.Name, p.Content)
+	default:
+		return fmt.Errorf("unknown way of writing a file: %q", p.Mode)
+	}
+
+	var invalid *userfiles.InvalidError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, userfiles.ErrExists):
+		return &ApplyError{Reason: fmt.Sprintf("Файлът „%s“ вече съществува. Отхвърли предложението и поискай замяна.", p.Name)}
+	case errors.Is(err, userfiles.ErrNotFound):
+		return &ApplyError{Reason: fmt.Sprintf("Файлът „%s“ вече го няма. Отхвърли предложението.", p.Name)}
+	case errors.Is(err, userfiles.ErrTooManyFiles):
+		return &ApplyError{Reason: "Има твърде много файлове — първо изтрий някой."}
+	case errors.Is(err, userfiles.ErrQuotaExceeded):
+		return &ApplyError{Reason: "Няма място за още файлове — първо изтрий някой."}
+	case errors.As(err, &invalid):
+		return &ApplyError{Reason: "Не мога да запиша файла: " + invalid.Reason}
+	}
+	return fmt.Errorf("failed to write the file: %w", err)
 }
 
 // checkRuleRoom fails when saving key as a row of kind (RuleKindRule or

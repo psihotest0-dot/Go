@@ -423,11 +423,14 @@ func (o *Orchestrator) generateResponse(
 	// but it keeps "required" - and with one tool on offer that is the same thing.
 	forced := forcedFirstTool(tools, lastUserContent(messages))
 
-	toolRounds := 0
+	// active are the tools on offer in this round; a group of tools joins them when the
+	// model asks for it (see toolGroup).
+	active := tools
+	toolRounds, unlocks := 0, 0
 	for {
-		req := o.chatRequest(messages, tools)
+		req := o.chatRequest(messages, active)
 		if forced != "" && toolRounds == 0 {
-			req.Tools = onlyTool(tools, forced)
+			req.Tools = onlyTool(active, forced)
 			req.ToolChoice = "required"
 		}
 		result, err := o.streamWithRescue(ctx, req, onDelta)
@@ -441,14 +444,27 @@ func (o *Orchestrator) generateResponse(
 			return assistantContent.String(), reasoningContent.String(), executed, nil
 		}
 
-		if toolRounds >= maxToolRounds {
+		// A round that only unlocks a group does nothing for the user; it does not use up
+		// one of the rounds for tools that do.
+		unlock := o.onlyUnlocks(active, result.toolCalls)
+		if unlock {
+			// A group unlocks once, so there are never more such rounds than groups. The
+			// count is what keeps a stub that did not go away from making the turn endless.
+			unlocks++
+			if unlocks > len(o.groups) {
+				unlock = false
+			}
+		}
+		if toolRounds >= maxToolRounds && !unlock {
 			slog.WarnContext(ctx, "tool round limit reached, answering without further tools",
 				"rounds", toolRounds,
 				"pending_tool_calls", len(result.toolCalls))
 			break
 		}
 
-		toolRounds++
+		if !unlock {
+			toolRounds++
+		}
 		executed = append(executed, result.toolCalls...)
 		messages = append(messages, openai.ChatCompletionMessage{
 			Role:      openai.ChatMessageRoleAssistant,
@@ -458,8 +474,9 @@ func (o *Orchestrator) generateResponse(
 		// The room left for the results is measured on the conversation as it
 		// stands now, including the tool calls just appended and the results of
 		// an earlier round.
-		toolBudget := o.limits().toolBudget(messages, tools)
+		toolBudget := o.limits().toolBudget(messages, active)
 		messages = append(messages, o.executeToolCalls(ctx, result.toolCalls, toolBudget)...)
+		active = o.nextTools(active, result.toolCalls, turnFrom(ctx))
 	}
 
 	// The model asked for tools but never produced prose. Ask again with tools

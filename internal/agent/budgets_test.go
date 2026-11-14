@@ -330,3 +330,19 @@ func TestDerivedBudgetsAlwaysLeaveRoomForToolResults(t *testing.T) {
 		assert.GreaterOrEqual(t, got, toolFloorTokens-messageOverheadTokens, "thinking=%v", thinking)
 	}
 }
+
+// The stub of a group of tools is in every request, so the room for it comes out of the
+// history and the passages of the prompt - the worst case does not grow.
+func TestTheFileToolsReserveRoomForTheirStub(t *testing.T) {
+	cfg := &config.Config{LLMContextTokens: 16384}
+	without := newBudgets(cfg)
+	cfg.FilesEnabled = true
+	with := newBudgets(cfg)
+
+	assert.Zero(t, without.extraFixedTokens)
+	assert.Equal(t, filesStubTokens, with.extraFixedTokens)
+	room := func(b budgets) int { return b.promptContextTokens + b.historyTokens }
+	assert.Equal(t, room(without)-filesStubTokens, room(with), "the room for the history and the passages is smaller by the stub")
+	assert.Equal(t, without.worstCaseTokens(), with.worstCaseTokens(), "and the whole request is no bigger than the window allowed")
+	assert.LessOrEqual(t, with.worstCaseTokens(), 16384)
+}

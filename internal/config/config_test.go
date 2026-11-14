@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -381,4 +382,39 @@ func TestFileCategories(t *testing.T) {
 	if !IsFileCategory(DefaultFileCategory) {
 		t.Errorf("the default category %q must be one of FileCategories", DefaultFileCategory)
 	}
+}
+
+func TestLoadFilesSettings(t *testing.T) {
+	t.Run("off by default", func(t *testing.T) {
+		t.Setenv("FILES_ENABLED", "")
+		if Load().FilesEnabled {
+			t.Error("the file tools must be off unless asked for")
+		}
+	})
+	t.Run("on when asked for", func(t *testing.T) {
+		t.Setenv("FILES_ENABLED", "true")
+		if !Load().FilesEnabled {
+			t.Error("FILES_ENABLED=true must turn them on")
+		}
+	})
+	t.Run("junk leaves them off", func(t *testing.T) {
+		t.Setenv("FILES_ENABLED", "maybe")
+		if Load().FilesEnabled {
+			t.Error("an unparsable value must not turn them on")
+		}
+	})
+	t.Run("the folder defaults to Lili-files at home", func(t *testing.T) {
+		t.Setenv("FILES_DIR", "")
+		dir := Load().FilesDir
+		if filepath.Base(dir) != "Lili-files" || !filepath.IsAbs(dir) {
+			t.Errorf("the default folder is %q", dir)
+		}
+	})
+	t.Run("the folder can be set", func(t *testing.T) {
+		want := filepath.Join(t.TempDir(), "mine")
+		t.Setenv("FILES_DIR", "  "+want+"  ")
+		if got := Load().FilesDir; got != want {
+			t.Errorf("FilesDir = %q, want %q", got, want)
+		}
+	})
 }

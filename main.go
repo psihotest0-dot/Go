@@ -33,6 +33,7 @@ import (
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
 	"go-monolith/internal/telegram"
+	"go-monolith/internal/userfiles"
 )
 
 type LevelFilterHandler struct {
@@ -210,6 +211,21 @@ func run() error {
 	attachmentService := attachments.NewService(database)
 	toolRegistry := agent.NewDefaultToolRegistry(retrievalService, database, proposalService).WithAttachments(attachmentService)
 	orchestrator := agent.NewOrchestrator(database, retrievalService, llmClient, toolRegistry).WithAttachments(attachmentService)
+
+	// The user's own text files (plan item P44): off unless FILES_ENABLED. If the folder
+	// cannot be opened the server runs without them.
+	if cfg.FilesEnabled {
+		store, err := userfiles.Open(cfg.FilesDir, userfiles.Limits{})
+		if err != nil {
+			logger.Error("the file tools are off: the folder of the user's files cannot be opened", slog.String("dir", cfg.FilesDir), slog.Any("error", err))
+		} else {
+			defer store.Close()
+			proposalService.WithFiles(store)
+			toolRegistry.WithFiles(store)
+			orchestrator.WithFileTools()
+			logger.Info("the file tools are on", slog.String("dir", cfg.FilesDir))
+		}
+	}
 
 	if cfg.TelegramBotToken != "" {
 		go func() {

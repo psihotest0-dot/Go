@@ -50,6 +50,17 @@ type Orchestrator struct {
 	adaptiveSkip bool
 	// attachments holds the files attached to a conversation; nil means none can be.
 	attachments *attachments.Service
+	// groups are the tools that are not on offer until the model asks for them (see
+	// toolGroup).
+	groups []toolGroup
+}
+
+// WithFileTools offers the tools for the user's own files (plan item P44) as a group:
+// their stub is on offer in every turn, the tools themselves after the model called it.
+// The registry must have the folder (DefaultToolRegistry.WithFiles).
+func (o *Orchestrator) WithFileTools() *Orchestrator {
+	o.groups = append(o.groups, filesGroup())
+	return o
 }
 
 // WithAttachments lets the chat show the files attached to a conversation.

@@ -41,6 +41,9 @@ const (
 	sourceRetrievedDocuments = "retrieved_documents"
 	// sourceAttachments: the text of a file the user attached to the conversation.
 	sourceAttachments = "attachments"
+	// sourceUserFiles: the text of a file in the user's folder of notes (read_file). It may
+	// have been saved from a web page or a book, so it is not the user's own words.
+	sourceUserFiles = "user_files"
 )
 
 // turnKey stores the turnState of the current chat turn.
@@ -87,6 +90,16 @@ func (t *turnState) markExternal(source string) {
 	if !slices.Contains(t.external, source) {
 		t.external = append(t.external, source)
 	}
+}
+
+// has reports whether the turn has read text from this source.
+func (t *turnState) has(source string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return slices.Contains(t.external, source)
 }
 
 // externalSources lists the untrusted sources the turn has read so far.

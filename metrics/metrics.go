@@ -60,6 +60,22 @@ var (
 		Help: "Files attached to a conversation, by outcome.",
 	}, []string{"outcome"}) // outcome: added, replaced, unchanged, read, rejected
 
+	// ToolGroupUnlocks counts the times the model asked for a group of tools that is not on
+	// offer from the start (plan item P44): "files" is the one there is.
+	ToolGroupUnlocks = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "agent_tool_group_unlocks_total",
+		Help: "Groups of tools unlocked by the model during a chat turn, by group.",
+	}, []string{"group"})
+
+	// UserFileOps counts what the model's file tools do to the user's files: list, read, write
+	// (a new file), append and propose (a write that waits for the user), each ended "ok",
+	// "saved", "appended", "created", "not_found", "exists", "refused" (a call the tool
+	// would not do: bad name, too big, over a limit) or "failed" (the server).
+	UserFileOps = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "user_files_operations_total",
+		Help: "Operations of the file tools on the user's files, by operation and result.",
+	}, []string{"op", "result"})
+
 	// OracleRequests counts the calls of the trading bot to POST /oracle/evaluate by how they
 	// ended. "answered" is a verdict from the model, "cached" one repeated from memory,
 	// "failed" a call the model could not answer (the bot treats it as a HOLD),

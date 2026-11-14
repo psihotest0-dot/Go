@@ -52,3 +52,20 @@ func TestFixedPromptStaysWithinItsReserve(t *testing.T) {
 			"(see the comment at fixedPromptTokens), then update fixedPromptTokens and maxFixedPromptEstimate together",
 		template, tools, total, maxFixedPromptEstimate, fixedPromptTokens)
 }
+
+// With the file tools on, the stub is in the request too: it must fit in the same reserve
+// together with the extra that budgets set aside for it.
+func TestFixedPromptWithTheFileStubStaysWithinItsReserve(t *testing.T) {
+	previous := prompts.GlobalManager
+	prompts.Init("")
+	t.Cleanup(func() { prompts.GlobalManager = previous })
+
+	system, err := buildSystemPrompt(chatContext{})
+	require.NoError(t, err)
+	stub := estimatePromptTokens(nil, []openai.Tool{filesStubDefinition()}) - toolsTemplateOverheadTokens
+	total := estimatePromptTokens([]openai.ChatCompletionMessage{system}, append(toolDefinitions(), filesStubDefinition()))
+
+	assert.LessOrEqual(t, total, maxFixedPromptEstimate+filesStubTokens,
+		"the template, the tools and the stub (%d estimated for the stub alone) are %d; the reserve is %d and %d for the stub",
+		stub, total, maxFixedPromptEstimate, filesStubTokens)
+}

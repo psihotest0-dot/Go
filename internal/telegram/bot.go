@@ -474,6 +474,7 @@ func (b *Bot) handleProposalCommand(ctx context.Context, chatID int64, userID uu
 		decide = b.desk.Reject
 	}
 	p, err := decide(ctx, userID, id)
+	var applyErr *proposals.ApplyError
 	switch {
 	case err == nil:
 		if command == "approve" {
@@ -489,6 +490,8 @@ func (b *Bot) handleProposalCommand(ctx context.Context, chatID int64, userID uu
 		b.sendReply(chatID, fmt.Sprintf("Вече има %d глобални правила — първо изтрий някое от приложението.", proposals.MaxActiveRules))
 	case errors.Is(err, proposals.ErrTooManyStyleNotes):
 		b.sendReply(chatID, fmt.Sprintf("Вече има %d бележки „как говорим“ — първо изтрий някоя от приложението.", proposals.MaxStyleNotes))
+	case errors.As(err, &applyErr):
+		b.sendReply(chatID, applyErr.Reason)
 	default:
 		slog.Error("Failed to decide a proposal", slog.Any("error", err), slog.Int64("chat_id", chatID), slog.Int64("proposal_id", id))
 		b.sendReply(chatID, "Възникна грешка. Опитай отново.")

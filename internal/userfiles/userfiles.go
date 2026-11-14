@@ -660,3 +660,27 @@ func statInfo(root *os.Root, name string) (Info, error) {
 	}
 	return Info{Name: name, Size: info.Size(), Modified: info.ModTime()}, nil
 }
+
+// Stat describes a file that exists. ErrNotFound if there is none (a folder or a link is
+// not a file).
+func (s *Store) Stat(userID uuid.UUID, name string) (Info, error) {
+	if err := ValidateName(name); err != nil {
+		return Info{}, err
+	}
+	root, err := s.userRoot(userID)
+	if err != nil {
+		return Info{}, err
+	}
+	defer root.Close()
+	info, err := root.Lstat(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return Info{}, ErrNotFound
+		}
+		return Info{}, fmt.Errorf("userfiles: failed to read %s: %w", name, err)
+	}
+	if !info.Mode().IsRegular() {
+		return Info{}, ErrNotFound
+	}
+	return Info{Name: name, Size: info.Size(), Modified: info.ModTime()}, nil
+}

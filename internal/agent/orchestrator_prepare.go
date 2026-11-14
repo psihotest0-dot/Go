@@ -81,5 +81,5 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		"pruned_to":      len(messages),
 	})
 
-	return preparedTurn{ctx: ctx, turn: turn, messages: messages, tools: toolDefinitions(), sources: chatCtx.Sources}, nil
+	return preparedTurn{ctx: ctx, turn: turn, messages: messages, tools: o.turnTools(), sources: chatCtx.Sources}, nil
 }

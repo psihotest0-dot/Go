@@ -21,6 +21,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
+	"go-monolith/internal/userfiles"
 	"go-monolith/metrics"
 )
 
@@ -36,6 +37,8 @@ type DefaultToolRegistry struct {
 	webBaseURL string
 	// attachments holds the files attached to a conversation; nil means none can be.
 	attachments *attachments.Service
+	// files is the folder of the user's own files; nil means the file tools are off.
+	files *userfiles.Store
 }
 
 // WithAttachments lets the read_attachment tool read the files attached to a
@@ -81,6 +84,22 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeWebSearch(ctx, args)
 	case "web_fetch":
 		return r.executeWebFetch(ctx, args)
+	case filesStubTool, listFilesTool, readFileTool, writeFileTool, appendFileTool:
+		if r.files == nil {
+			return nil, fmt.Errorf("unknown tool: %s", name)
+		}
+		switch name {
+		case filesStubTool:
+			return r.executeFilesUnlock()
+		case listFilesTool:
+			return r.executeListFiles(userID)
+		case readFileTool:
+			return r.executeReadFile(ctx, userID, args)
+		case writeFileTool:
+			return r.executeWriteFile(ctx, userID, args)
+		default:
+			return r.executeAppendFile(ctx, userID, args)
+		}
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -187,7 +206,22 @@ func searchQueryArg(ctx context.Context, tool string, args map[string]interface{
 	return "", missingArgError(tool, "query", `{"query": "<what to search for>"}`)
 }
 
+// webAfterFilesError refuses a web tool in a turn that read a file of the user's folder:
+// text from a page or a book could ask the model to send what it read out through the
+// query or the address (plan item P44).
+func webAfterFilesError(ctx context.Context, tool string) error {
+	if !turnFrom(ctx).has(sourceUserFiles) {
+		return nil
+	}
+	metrics.WebToolRequests.WithLabelValues(tool, "rejected").Inc()
+	return &toolArgumentError{tool: tool, reason: "the web cannot be used in a message where the user's files were read; " +
+		"tell the user to ask for the web search in a separate message"}
+}
+
 func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := webAfterFilesError(ctx, "web_search"); err != nil {
+		return nil, err
+	}
 	query, ok := stringArg(args, "query")
 	if !ok {
 		return nil, missingArgError("web_search", "query", `{"query": "<what to search for>"}`)
@@ -206,6 +240,9 @@ func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[str
 }
 
 func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[string]interface{}) (interface{}, error) {
+	if err := webAfterFilesError(ctx, "web_fetch"); err != nil {
+		return nil, err
+	}
 	rawURL, ok := stringArg(args, "url")
 	if !ok {
 		return nil, missingArgError("web_fetch", "url", `{"url": "<page url>"}`)

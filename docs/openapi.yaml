@@ -755,9 +755,11 @@ paths:
                 type: string
         '422':
           description: >-
-            The user has 20 global rules (or 8 notes on how to talk) already.
-            The proposal stays open; delete one (`DELETE /rules/{id}`) and
-            approve again.
+            The user has 20 global rules (or 8 notes on how to talk) already, or
+            a file write cannot be done as it stands (the new file's name is
+            taken, the file to change is gone, there is no room). The proposal
+            stays open; the body says what is wrong. Delete one rule
+            (`DELETE /rules/{id}`) and approve again, or reject the proposal.
           content:
             text/plain:
               schema:
@@ -1496,14 +1498,18 @@ components:
         (`save_style_note`) have `key` and `value`. The `create_memory` kind,
         with `content` and `importance`, is what proposals made before the owner
         decided that memories are saved at once look like; none is created now,
-        but a stored one can still be approved or rejected.
+        but a stored one can still be approved or rejected. A write to one of
+        the user's own text files (`write_file`, only when the file tools are
+        turned on) has `file_name`, `file_mode` and the text in `content`: the
+        model asks for it when it would replace a file that exists, or when the
+        turn had read text from outside (see `external_sources`).
       properties:
         id:
           type: integer
           format: int64
         kind:
           type: string
-          enum: [save_global_rule, save_style_note, create_memory]
+          enum: [save_global_rule, save_style_note, create_memory, write_file]
         status:
           type: string
           enum: [pending, approved, rejected]
@@ -1520,12 +1526,24 @@ components:
           description: Rules and notes only (at most 400 characters).
         content:
           type: string
-          description: Memories only (at most 1000 characters).
+          description: >-
+            Memories (at most 1000 characters) and file writes (the text to
+            write or to add, at most 65 536 bytes).
         importance:
           type: integer
           minimum: 1
           maximum: 10
           description: Memories only.
+        file_name:
+          type: string
+          description: File writes only - a plain name in the user's folder, such as `list.txt`.
+        file_mode:
+          type: string
+          enum: [create, replace, append]
+          description: >-
+            File writes only. `create` makes a new file, `replace` puts the text
+            in place of a file that exists (the old text is kept as the previous
+            version), `append` adds it to the end.
         external_sources:
           type: array
           description: >-
