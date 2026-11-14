@@ -35,12 +35,19 @@ of the same files fast, so keep at least one full dump. Such dumps are named
 run can never delete your last full dump (and the other way round).
 
 .PARAMETER SkipStorage
-Do not copy the storage directory.
+Do not copy the storage directory, nor the assistant's own files (see FilesDir).
 
 .PARAMETER StorageDir
 The uploaded files. Defaults to <repo>\storage (the backend stores uploads in
 ./storage relative to its working directory). They are copied additively to
 <BackupDir>\storage with robocopy /E: nothing is ever deleted from the copy.
+
+.PARAMETER FilesDir
+The text files the assistant keeps for the user (notes, lists, drafts; FILES_DIR in
+.env, by default %USERPROFILE%\Lili-files). Nothing else holds them, so they travel
+with the dump: copied additively to <BackupDir>\lili-files like the uploads, which
+means a file the user deleted stays in the backup. A missing folder is not an error
+(the file tools may be off).
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File scripts\backup.ps1 -BackupDir D:\backups\go-monolith -Keep 30
@@ -55,7 +62,8 @@ param(
     [string]$Service = "db",
     [switch]$ExcludeCache,
     [switch]$SkipStorage,
-    [string]$StorageDir = ""
+    [string]$StorageDir = "",
+    [string]$FilesDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -198,6 +206,27 @@ if (-not $SkipStorage) {
         Write-Host ("Storage copy complete: {0} files, {1} bytes in {2}" -f $copied.Count, [int64]$copied.Sum, $storageCopy)
     } else {
         Write-Warning "Storage directory $StorageDir does not exist; the uploaded files were not copied."
+    }
+}
+
+# The assistant's own text files (plan item P44). Small, and nothing else holds them.
+if (-not $SkipStorage) {
+    if (-not $FilesDir) {
+        $FilesDir = $env:FILES_DIR
+    }
+    if (-not $FilesDir) {
+        $FilesDir = Join-Path $env:USERPROFILE "Lili-files"
+    }
+    if (Test-Path -LiteralPath $FilesDir -PathType Container) {
+        $filesCopy = Join-Path $BackupDir "lili-files"
+        Write-Host "Copying the assistant's files $FilesDir -> $filesCopy ..."
+        & robocopy $FilesDir $filesCopy /E /COPY:DAT /DCOPY:T /R:2 /W:2 /NFL /NDL /NJH /NJS /NP | Out-Null
+        if ($LASTEXITCODE -ge 8) {
+            throw "robocopy failed with exit code $LASTEXITCODE while copying $FilesDir."
+        }
+        $copied = Get-ChildItem -LiteralPath $filesCopy -Recurse -File -ErrorAction SilentlyContinue |
+            Measure-Object -Property Length -Sum
+        Write-Host ("Files copy complete: {0} files, {1} bytes in {2}" -f $copied.Count, [int64]$copied.Sum, $filesCopy)
     }
 }
 
