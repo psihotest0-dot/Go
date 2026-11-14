@@ -130,3 +130,79 @@ func TestStreamResponseSendsAnEmptyListOfSourcesNotNull(t *testing.T) {
 	first := strings.SplitN(rec.Body.String(), "\n\n", 2)[0]
 	require.Equal(t, "event: sources\ndata: []", first)
 }
+
+// hookLLM answers like its inner model, but runs before (once) when the generation
+// starts: something that happens to the session while a regeneration is under way.
+type hookLLM struct {
+	llm.LLMClient
+	before func()
+}
+
+func (h *hookLLM) ChatStream(ctx context.Context, req openai.ChatCompletionRequest) (llm.Stream, error) {
+	if h.before != nil {
+		h.before()
+		h.before = nil
+	}
+	return h.LLMClient.ChatStream(ctx, req)
+}
+
+func (f *sanitizeFixture) deleteAnswers(t *testing.T, sessionID string) {
+	t.Helper()
+	_, err := f.database.SqlDB.ExecContext(context.Background(),
+		`DELETE FROM messages WHERE user_id = $1 AND session_id = $2 AND role = 'assistant'`, f.userID, sessionID)
+	require.NoError(t, err)
+}
+
+// A turn that failed has a question and no answer. Regenerating it adds the answer;
+// "the newest answer of the session" was the answer to the question before, and it
+// was deleted (plan item P26).
+func TestRegenerateAfterAFailedTurnKeepsTheAnswerBefore(t *testing.T) {
+	f := newSanitizeFixture(t, "Нов отговор")
+	f.seedTurn(t, "s-regen-failed", "Първи въпрос", "Първи отговор")
+	_, err := f.database.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
+		UserID: f.userID, SessionID: "s-regen-failed", Role: "user", Content: "Втори въпрос",
+	})
+	require.NoError(t, err)
+	rec, req := f.request(t, "/chat/regenerate", RegenerateRequest{SessionID: "s-regen-failed"})
+
+	f.orchestrator.HandleRegenerate(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []string{"Нов отговор", "Първи отговор"}, f.storedContents(t, "s-regen-failed", "assistant"))
+}
+
+// A turn sent while a regeneration is under way keeps its answer: the regeneration
+// replaces the answer it read when it started, by id.
+func TestRegenerateKeepsTheAnswerOfATurnSentMeanwhile(t *testing.T) {
+	f := newSanitizeFixture(t, "Нов отговор")
+	f.seedTurn(t, "s-regen-meanwhile", "Въпрос", "Стар отговор")
+	f.orchestrator.llmClient = &hookLLM{LLMClient: f.orchestrator.llmClient, before: func() {
+		f.seedTurn(t, "s-regen-meanwhile", "Друг въпрос", "Отговор на другия въпрос")
+	}}
+	rec, req := f.request(t, "/chat/regenerate", RegenerateRequest{SessionID: "s-regen-meanwhile"})
+
+	f.orchestrator.HandleRegenerate(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.ElementsMatch(t, []string{"Нов отговор", "Отговор на другия въпрос"}, f.storedContents(t, "s-regen-meanwhile", "assistant"))
+}
+
+// Two regenerations of the same turn: the one that ends second finds its answer gone
+// and writes nothing, so the turn has one answer, not two.
+func TestRegenerateWritesNothingWhenTheAnswerWasAlreadyReplaced(t *testing.T) {
+	f := newSanitizeFixture(t, "Нов отговор")
+	f.seedTurn(t, "s-regen-twice", "Въпрос", "Стар отговор")
+	f.orchestrator.llmClient = &hookLLM{LLMClient: f.orchestrator.llmClient, before: func() {
+		f.deleteAnswers(t, "s-regen-twice")
+		_, err := f.database.Queries.CreateMessage(context.Background(), db.CreateMessageParams{
+			UserID: f.userID, SessionID: "s-regen-twice", Role: "assistant", Content: "Отговор на другото регенериране",
+		})
+		require.NoError(t, err)
+	}}
+	rec, req := f.request(t, "/chat/regenerate", RegenerateRequest{SessionID: "s-regen-twice"})
+
+	f.orchestrator.HandleRegenerate(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []string{"Отговор на другото регенериране"}, f.storedContents(t, "s-regen-twice", "assistant"))
+}

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -85,10 +86,18 @@ func (o *Orchestrator) storeAnswer(ctx context.Context, userID uuid.UUID, sessio
 	}
 }
 
-// replaceAnswer swaps the last stored answer of the session for a new one in one
-// transaction. Done as two separate writes, a reader in between saw the question
-// without an answer, and a failed insert after the delete lost both answers.
-func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) error {
+// errAnswerAlreadyReplaced means that an answer a regeneration was to replace is no
+// longer stored: another regeneration of the same turn got there first.
+var errAnswerAlreadyReplaced = errors.New("the answer was already replaced")
+
+// replaceAnswer swaps the answers in replaced (their ids, read when the regeneration
+// started) for a new one in one transaction. Done as two separate writes, a reader in
+// between saw the question without an answer, and a failed insert after the delete lost
+// both answers. By id, a turn sent meanwhile keeps its answer: "the newest answer of the
+// session" deleted that one. With no replaced answer (the turn had failed) the new one is
+// only added. When one of them is gone already, nothing is written, so the turn does not
+// end up with two answers.
+func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sessionID string, replaced []uuid.UUID, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo) error {
 	tx, err := o.db.SqlDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -97,11 +106,18 @@ func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sess
 	defer func() { _ = tx.Rollback() }()
 
 	q := o.db.Queries.WithTx(tx)
-	if err := q.DeleteLastAssistantMessage(ctx, db.DeleteLastAssistantMessageParams{
-		SessionID: sessionID,
-		UserID:    userID,
-	}); err != nil {
-		return fmt.Errorf("delete the previous answer: %w", err)
+	if len(replaced) > 0 {
+		deleted, err := q.DeleteAssistantMessages(ctx, db.DeleteAssistantMessagesParams{
+			UserID:    userID,
+			SessionID: sessionID,
+			Ids:       replaced,
+		})
+		if err != nil {
+			return fmt.Errorf("delete the previous answer: %w", err)
+		}
+		if deleted != int64(len(replaced)) {
+			return errAnswerAlreadyReplaced
+		}
 	}
 	if err := o.persistAssistantMessage(ctx, q, userID, sessionID, content, toolCalls, sources); err != nil {
 		return fmt.Errorf("store the new answer: %w", err)

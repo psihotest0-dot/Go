@@ -550,9 +550,13 @@ paths:
       summary: Regenerate the last answer of a session
       description: >-
         Answers the last user message of the session again, with the same
-        stream as `/chat/stream` (see there for the frames). The previous
-        answer is left out of the prompt, and replaced only when the new one is
-        complete; if the generation fails the old answer stays.
+        stream as `/chat/stream` (see there for the frames). The answer stored
+        after that message, read when the request starts, is left out of the
+        prompt, and replaced only when the new one is complete; if the
+        generation fails the old answer stays. A question without an answer (a
+        failed turn) only gets one; the answers of earlier questions, and of a
+        turn sent meanwhile, are never touched. When another regeneration has
+        replaced the same answer first, this one is streamed but not stored.
       parameters:
       - $ref: '#/components/parameters/UserId'
       requestBody:

@@ -219,11 +219,19 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The newest messages come first. The answers after the last question are the ones
+	// the regeneration replaces (and leaves out of the prompt, see prepareTurn); none when
+	// the turn had failed. They are taken by id now, so that a turn sent meanwhile does
+	// not lose its answer at the end.
 	var lastUserContent string
+	var replaced []uuid.UUID
 	for _, m := range dbMsgs {
 		if m.Role == "user" {
 			lastUserContent = m.Content
 			break
+		}
+		if m.Role == "assistant" {
+			replaced = append(replaced, m.ID)
 		}
 	}
 
@@ -266,7 +274,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		}
 		// The old answer goes only now that a complete new one exists, and in the
 		// same transaction as the new one is written.
-		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources)); err != nil {
+		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, replaced, content, toolCalls, answerSources(prep.turn, prep.sources)); err != nil {
 			slog.ErrorContext(ctx, "failed to replace the previous answer; it is kept", "err", err, "session_id", req.SessionID)
 		}
 	}

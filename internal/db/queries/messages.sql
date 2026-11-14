@@ -22,14 +22,12 @@ WHERE is_analyzed = FALSE;
 -- name: MarkMessageAnalyzed :exec
 UPDATE messages SET is_analyzed = TRUE WHERE id = $1 AND user_id = $2;
 
--- name: DeleteLastAssistantMessage :exec
+-- The answers a regeneration replaces, by id: the ones read when it started, not
+-- whatever is newest when it ends (a turn sent meanwhile would lose its answer).
+-- name: DeleteAssistantMessages :execrows
 DELETE FROM messages
-WHERE id = (
-    SELECT m.id FROM messages m
-    WHERE m.session_id = $1 AND m.user_id = $2 AND m.role = 'assistant'
-    ORDER BY m.created_at DESC
-    LIMIT 1
-);
+WHERE user_id = sqlc.arg('user_id') AND session_id = sqlc.arg('session_id')
+  AND role = 'assistant' AND id = ANY(sqlc.arg('ids')::uuid[]);
 
 -- name: IncrementAnalysisAttempts :exec
 UPDATE messages

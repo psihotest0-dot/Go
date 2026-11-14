@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/sqlc-dev/pqtype"
 )
 
@@ -47,24 +48,26 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 	return i, err
 }
 
-const deleteLastAssistantMessage = `-- name: DeleteLastAssistantMessage :exec
+const deleteAssistantMessages = `-- name: DeleteAssistantMessages :execrows
 DELETE FROM messages
-WHERE id = (
-    SELECT m.id FROM messages m
-    WHERE m.session_id = $1 AND m.user_id = $2 AND m.role = 'assistant'
-    ORDER BY m.created_at DESC
-    LIMIT 1
-)
+WHERE user_id = $1 AND session_id = $2
+  AND role = 'assistant' AND id = ANY($3::uuid[])
 `
 
-type DeleteLastAssistantMessageParams struct {
-	SessionID string    `json:"session_id"`
-	UserID    uuid.UUID `json:"user_id"`
+type DeleteAssistantMessagesParams struct {
+	UserID    uuid.UUID   `json:"user_id"`
+	SessionID string      `json:"session_id"`
+	Ids       []uuid.UUID `json:"ids"`
 }
 
-func (q *Queries) DeleteLastAssistantMessage(ctx context.Context, arg DeleteLastAssistantMessageParams) error {
-	_, err := q.db.ExecContext(ctx, deleteLastAssistantMessage, arg.SessionID, arg.UserID)
-	return err
+// The answers a regeneration replaces, by id: the ones read when it started, not
+// whatever is newest when it ends (a turn sent meanwhile would lose its answer).
+func (q *Queries) DeleteAssistantMessages(ctx context.Context, arg DeleteAssistantMessagesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteAssistantMessages, arg.UserID, arg.SessionID, pq.Array(arg.Ids))
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
