@@ -53,7 +53,13 @@ func filesStubDefinition() openai.Tool {
 
 func fileToolDefinitions() []openai.Tool {
 	object := func(props map[string]any, required ...string) map[string]any {
-		return map[string]any{"type": "object", "properties": props, "required": required}
+		schema := map[string]any{"type": "object", "properties": props}
+		// A tool with no required argument has no "required" at all: a nil list would be sent
+		// as null, which DeepSeek rejects (400, found 2026-11-14) and llama-server tolerates.
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return schema
 	}
 	text := func(description string) map[string]any {
 		return map[string]any{"type": "string", "description": description}
