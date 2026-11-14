@@ -95,6 +95,31 @@ func TestAnAnswerThatIsOnlyAToolCallWrittenAsTextIsReplacedByAnHonestOne(t *test
 	assert.Contains(t, streamed.String(), stuckAnswer)
 }
 
+// The last request has no tools; DeepSeek still wrote a call in its own format (the comparison of
+// 2026-11-14). The user gets the honest answer, not the markup, and that request carries the note.
+func TestADeepSeekCallAsTheLastAnswerIsReplacedByAnHonestOne(t *testing.T) {
+	dsml := "\n\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"echo\">\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{toolCallChunk(0, "call_1", "echo", `{}`)},
+		{toolCallChunk(0, "call_2", "echo", `{}`)},
+		{toolCallChunk(0, "call_3", "echo", `{}`)},
+		{textChunk(dsml)},
+	}}
+	o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: "ok"})
+	var streamed strings.Builder
+
+	content, _, _, err := o.generateResponse(t.Context(),
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, []openai.Tool{{Type: openai.ToolTypeFunction}},
+		func(delta, _ string) error { streamed.WriteString(delta); return nil })
+
+	require.NoError(t, err)
+	assert.Equal(t, stuckAnswer, sanitizeAssistantText(content), "this is all the user sees")
+	assert.Contains(t, streamed.String(), stuckAnswer, "the stream carries the honest answer (the markup itself is dropped by the filter of the HTTP stream)")
+	last := mock.Requests[len(mock.Requests)-1]
+	assert.Empty(t, last.Tools)
+	assert.Equal(t, roundsOverNote, last.Messages[len(last.Messages)-1].Content)
+}
+
 func TestAnAnswerWithWordsIsLeftAloneAfterTools(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
 		{toolCallChunk(0, "call_1", "echo", `{}`)},

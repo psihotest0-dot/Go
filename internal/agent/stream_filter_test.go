@@ -113,11 +113,61 @@ func TestStreamFilterDropsAToolCallWrittenAsText(t *testing.T) {
 	}
 }
 
+// DeepSeek writes its own call as text when no tool is on offer: <｜｜DSML｜｜ calls> ... </｜｜DSML｜｜ calls>
+// with full-width bars. 5 of 79 turns of the comparison of 2026-11-14 ended with it as the answer.
+func TestStreamFilterDropsDeepSeeksToolCallWrittenAsText(t *testing.T) {
+	call := "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"search_documents\">\n" +
+		"<｜｜DSML｜｜ parameter name=\"query\" string=\"true\">отрицателни страни</｜｜DSML｜｜ parameter>\n" +
+		"</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>"
+	tests := []struct {
+		name   string
+		chunks []string
+		want   string
+	}{
+		{"the whole answer", []string{"\n\n" + call}, "\n\n"},
+		{"after words", []string{"Търся ги. " + call + " Готово."}, "Търся ги.  Готово."},
+		{"one byte at a time", strings.Split(call+"край", ""), "край"},
+		{"split inside a full-width bar", []string{"<\xef\xbd", "\x9c｜DSML｜｜ calls>x</｜｜DSML｜｜ calls>ok"}, "ok"},
+		{"never closed", []string{"Текст <｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"a\">"}, "Текст "},
+		{"the other spelling", []string{"<｜DSML｜tool_calls>x</｜DSML｜tool_calls>Готово"}, "Готово"},
+		{"a less-than sign that is not a call", []string{"ако a < b и b > c"}, "ако a < b и b > c"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := &streamFilter{}
+			var out strings.Builder
+			for _, chunk := range tt.chunks {
+				out.WriteString(filter.Process(chunk))
+			}
+			out.WriteString(filter.Flush())
+			if out.String() != tt.want {
+				t.Errorf("got %q, want %q", out.String(), tt.want)
+			}
+		})
+	}
+	if got := sanitizeAssistantText("\n\n" + call); got != "" {
+		t.Errorf("sanitizeAssistantText of only a call = %q, want nothing", got)
+	}
+}
+
 func TestStreamFilterResetForgetsAnOpenToolCall(t *testing.T) {
 	filter := &streamFilter{}
 	filter.Process(`<|tool_call>call:a{`)
 	filter.Reset()
 	if got := filter.Process("Привет") + filter.Flush(); got != "Привет" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestFirstMarkerIsTheEarliestOfTheClosers(t *testing.T) {
+	text := "a</｜DSML｜tool_calls>b</｜｜DSML｜｜ calls>c"
+
+	start, end := firstMarker(text, streamFilterDSMLClose)
+
+	if text[start:end] != "</｜DSML｜tool_calls>" {
+		t.Errorf("got %q, want the closer that comes first", text[start:end])
+	}
+	if s, e := firstMarker("nothing here", streamFilterDSMLClose); s != -1 || e != 0 {
+		t.Errorf("no marker: got %d, %d", s, e)
 	}
 }

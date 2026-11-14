@@ -31,16 +31,48 @@ const (
 	// ran out) the model writes it into the answer, and the user got the call itself.
 	streamFilterCallOpen  = "<|tool_call>"
 	streamFilterCallClose = "<tool_call|>"
-	// streamFilterCallTail is how many bytes are kept while inside such a block so that a
-	// split closing marker is still detected.
-	streamFilterCallTail = len(streamFilterCallClose) - 1
+	// streamFilterDSMLOpen starts the same thing in DeepSeek's own format, <｜｜DSML｜｜ calls>
+	// <｜｜DSML｜｜ invoke name="search_documents">...: found 2026-11-14, when the last request
+	// after the rounds for tools (no tool on offer) was answered with such a call in 5 of 79
+	// turns. The bars are full-width (U+FF5C); no ordinary text has "<" right before one. The
+	// open tag can be longer than the buffer for tags, so the start alone is enough.
+	streamFilterDSMLOpen = "<｜"
 )
+
+// streamFilterDSMLClose are the ends of a call in DeepSeek's format (the two spellings seen).
+var streamFilterDSMLClose = []string{"</｜｜DSML｜｜ calls>", "</｜DSML｜tool_calls>"}
+
+// streamFilterCallTail is how many bytes are kept while inside such a block so that a
+// split closing marker is still detected.
+var streamFilterCallTail = longestMarker(append([]string{streamFilterCallClose}, streamFilterDSMLClose...)) - 1
+
+func longestMarker(markers []string) int {
+	longest := 0
+	for _, m := range markers {
+		longest = max(longest, len(m))
+	}
+	return longest
+}
+
+// firstMarker returns the earliest of the markers in text: where it starts and where it ends,
+// or -1.
+func firstMarker(text string, markers []string) (start, end int) {
+	start = -1
+	for _, m := range markers {
+		if i := strings.Index(text, m); i != -1 && (start == -1 || i < start) {
+			start, end = i, i+len(m)
+		}
+	}
+	return start, end
+}
 
 type streamFilter struct {
 	inThink bool
-	// inCall: inside a tool call written as text; everything up to its closing marker is dropped.
-	inCall bool
-	buffer string
+	// inCall: inside a tool call written as text; everything up to one of its closing markers
+	// (callClose) is dropped.
+	inCall    bool
+	callClose []string
+	buffer    string
 }
 
 // Process appends chunk to the internal buffer and returns the content that is
@@ -52,10 +84,9 @@ func (f *streamFilter) Process(chunk string) string {
 
 	for len(f.buffer) > 0 {
 		if f.inCall {
-			idx := strings.Index(f.buffer, streamFilterCallClose)
-			if idx != -1 {
+			if _, end := firstMarker(f.buffer, f.callClose); end != 0 {
 				f.inCall = false
-				f.buffer = f.buffer[idx+len(streamFilterCallClose):]
+				f.buffer = f.buffer[end:]
 				continue
 			}
 
@@ -91,6 +122,12 @@ func (f *streamFilter) Process(chunk string) string {
 			f.buffer = f.buffer[idx:]
 		}
 
+		if strings.HasPrefix(f.buffer, streamFilterDSMLOpen) {
+			f.inCall, f.callClose = true, streamFilterDSMLClose
+			f.buffer = f.buffer[len(streamFilterDSMLOpen):]
+			continue
+		}
+
 		endIdx := strings.IndexByte(f.buffer, '>')
 		if endIdx == -1 {
 			// No closing '>' anywhere in the buffer, so this cannot become a
@@ -113,7 +150,7 @@ func (f *streamFilter) Process(chunk string) string {
 		}
 
 		if tag == streamFilterCallOpen {
-			f.inCall = true
+			f.inCall, f.callClose = true, []string{streamFilterCallClose}
 			f.buffer = f.buffer[endIdx+1:]
 			continue
 		}

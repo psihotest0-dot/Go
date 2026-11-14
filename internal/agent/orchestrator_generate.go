@@ -30,6 +30,12 @@ const (
 	// first real chat, 2026-11-14).
 	groupExtraRounds = 2
 
+	// roundsOverNote is added, for the model only, to the last request of a turn, the one
+	// without tools: DeepSeek, which saw no tool on offer, wrote one more call as text in 5 of
+	// 79 turns (2026-11-14) instead of answering with what the tools had returned.
+	roundsOverNote = "[Note for the assistant, not written by the user: the tool calls for this message are over and no tool is available now. " +
+		"Answer the user in plain text, in their language, from what the tools have returned so far; if that is not enough, say so. Do not write a tool call.]"
+
 	// stuckAnswer is what the user is told when tools were used and the model still
 	// ended without a word of its own.
 	stuckAnswer = "Не успях да довърша това в позволените стъпки и нищо повече не е направено. Кажи ми пак, по-просто."
@@ -513,7 +519,8 @@ func (o *Orchestrator) generateRounds(
 	// the conversation, so nothing is repeated here: an earlier version appended
 	// them a second time, which doubled the prompt of the final call.
 	if strings.TrimSpace(assistantContent.String()) == "" {
-		result, err := o.streamWithRescue(ctx, o.chatRequest(messages, nil), onDelta)
+		last := append(slices.Clone(messages), openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: roundsOverNote})
+		result, err := o.streamWithRescue(ctx, o.chatRequest(last, nil), onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
 		if err != nil {

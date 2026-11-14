@@ -257,10 +257,19 @@ func TestGenerateResponseStopsAfterToolRoundLimit(t *testing.T) {
 	lastReq := mock.Requests[len(mock.Requests)-1]
 	assert.Empty(t, lastReq.Tools, "the final attempt must not offer tools again")
 
-	// The fallback must not repeat the tool output as a synthetic user message.
-	for _, msg := range lastReq.Messages {
-		if msg.Role == openai.ChatMessageRoleUser {
+	// The fallback must not repeat the tool output as a synthetic user message. The only other
+	// user message is the note that the rounds are over, and it is the last one.
+	for i, msg := range lastReq.Messages {
+		if msg.Role == openai.ChatMessageRoleUser && msg.Content != roundsOverNote {
 			assert.Equal(t, "hi", msg.Content)
+		}
+		if msg.Content == roundsOverNote {
+			assert.Equal(t, len(lastReq.Messages)-1, i, "the note is the last message")
+		}
+	}
+	for _, req := range mock.Requests[:len(mock.Requests)-1] {
+		for _, msg := range req.Messages {
+			assert.NotEqual(t, roundsOverNote, msg.Content, "the earlier requests, which have tools, do not carry the note")
 		}
 	}
 }
