@@ -23,7 +23,9 @@ import (
 // tokenizer counts 3 810 (see fixedPromptTokens), 23 % below it. fixedPromptTokens
 // keeps about 140 tokens (3.7 %) of slack over that count, so the limit sits 3 %
 // above today's estimate: past it the real count may already be over the reserve.
-const maxFixedPromptEstimate = 4810
+// Recalibrated on 2026-11-14 for save_style_note (plan item P42): the tokenizer counts
+// 4 079 against a reserve of 4 220.
+const maxFixedPromptEstimate = 5020
 
 // fixedPromptTokens is measured by hand with the tokenizer of the model, and it
 // once fell behind unnoticed (task 62: the V4 prompt had grown past the old

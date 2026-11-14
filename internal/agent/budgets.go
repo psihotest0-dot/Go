@@ -63,8 +63,11 @@ const (
 	// template 2 911 plus tool definitions 899 = 3 810. The same method gives about 3 695 for
 	// the prompt before the rule that sends questions about the world to the web (about 115
 	// tokens), so the figure had also grown by the argument query_en of search_documents.
-	// 3 950 keeps about 140 of slack.
-	fixedPromptTokens = 3950
+	// 3 950 kept about 140 of slack.
+	// On 2026-11-14 the tool save_style_note and its lines in the prompt, with the section
+	// for the notes on how to talk (plan item P42), took it to template 3 054 plus tool
+	// definitions 1 025 = 4 079 (the same method; 3 809 before). 4 220 keeps the slack.
+	fixedPromptTokens = 4220
 
 	// toolFloorTokens is what the derived budgets leave free for tool results
 	// even when the conversation and the dynamic prompt are as large as they may

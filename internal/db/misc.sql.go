@@ -161,7 +161,7 @@ func (q *Queries) GetEmbeddingCacheByHashes(ctx context.Context, hashes []string
 }
 
 const getGlobalRules = `-- name: GetGlobalRules :many
-SELECT value FROM global_rules WHERE user_id = $1 AND enabled = true
+SELECT value FROM global_rules WHERE user_id = $1 AND kind = 'rule' AND enabled = true
 `
 
 func (q *Queries) GetGlobalRules(ctx context.Context, userID uuid.UUID) ([]string, error) {
@@ -187,21 +187,56 @@ func (q *Queries) GetGlobalRules(ctx context.Context, userID uuid.UUID) ([]strin
 	return items, nil
 }
 
+const getStyleNotes = `-- name: GetStyleNotes :many
+SELECT value FROM global_rules WHERE user_id = $1 AND kind = 'style' AND enabled = true
+ORDER BY updated_at, id
+`
+
+// The notes on how to talk with the user, in the order they were confirmed.
+func (q *Queries) GetStyleNotes(ctx context.Context, userID uuid.UUID) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, getStyleNotes, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		items = append(items, value)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const saveGlobalRule = `-- name: SaveGlobalRule :exec
-INSERT INTO global_rules (user_id, key, value, updated_at)
-VALUES ($1, $2, $3, now())
-ON CONFLICT (user_id, key) DO UPDATE
+INSERT INTO global_rules (user_id, kind, key, value, updated_at)
+VALUES ($1, $2, $3, $4, now())
+ON CONFLICT (user_id, kind, key) DO UPDATE
 SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, enabled = true
 `
 
 type SaveGlobalRuleParams struct {
 	UserID uuid.UUID `json:"user_id"`
+	Kind   string    `json:"kind"`
 	Key    string    `json:"key"`
 	Value  string    `json:"value"`
 }
 
 func (q *Queries) SaveGlobalRule(ctx context.Context, arg SaveGlobalRuleParams) error {
-	_, err := q.db.ExecContext(ctx, saveGlobalRule, arg.UserID, arg.Key, arg.Value)
+	_, err := q.db.ExecContext(ctx, saveGlobalRule,
+		arg.UserID,
+		arg.Kind,
+		arg.Key,
+		arg.Value,
+	)
 	return err
 }
 

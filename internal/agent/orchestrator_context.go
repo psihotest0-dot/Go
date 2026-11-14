@@ -282,6 +282,13 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 	} else {
 		chatCtx.Rules = rules
 	}
+	// The notes on how to talk with the user, the same way (plan item P42).
+	notes, err := o.db.Queries.GetStyleNotes(ctx, userID)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to get the notes on how to talk", "err", err, "session_id", req.SessionID)
+	} else {
+		chatCtx.StyleNotes = notes
+	}
 
 	// Fetch Message History
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
@@ -309,12 +316,13 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 		chatCtx.HistoryAt = append(chatCtx.HistoryAt, m.CreatedAt.Time)
 	}
 
-	// Bound the dynamic part of the system prompt. The rules come first because
-	// the user configured them explicitly, then the profile facts, then the
-	// retrieved memories and finally the concept chunks, which are the most
-	// voluminous and therefore the most disposable.
+	// Bound the dynamic part of the system prompt. The rules and the notes on how
+	// to talk come first because the user confirmed them explicitly, then the
+	// profile facts, then the retrieved memories and finally the concept chunks,
+	// which are the most voluminous and therefore the most disposable.
 	budget := newPromptBudget(lim.promptContextTokens)
 	chatCtx.Rules = budget.take(chatCtx.Rules, maxRuleChars)
+	chatCtx.StyleNotes = budget.take(chatCtx.StyleNotes, maxRuleChars)
 	chatCtx.TopMemories = budget.take(chatCtx.TopMemories, maxTopMemoryChars)
 	chatCtx.Memories = budget.take(chatCtx.Memories, maxRetrievedMemoryChars)
 	chatCtx.Chunks = budget.take(chatCtx.Chunks, maxConceptChunkChars)

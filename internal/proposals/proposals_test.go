@@ -358,7 +358,7 @@ func TestRuleLimitIsCheckedAgainAtApproval(t *testing.T) {
 	// The rules fill up while the proposal waits.
 	for i := 0; i < MaxActiveRules; i++ {
 		require.NoError(t, e.database.Queries.SaveGlobalRule(e.ctx, db.SaveGlobalRuleParams{
-			UserID: e.userID, Key: fmt.Sprintf("other%d", i), Value: "x",
+			UserID: e.userID, Kind: RuleKindRule, Key: fmt.Sprintf("other%d", i), Value: "x",
 		}))
 	}
 
@@ -400,4 +400,73 @@ func TestPendingIsOldestFirst(t *testing.T) {
 	for i, p := range listed {
 		assert.Equal(t, ids[i], p.ID)
 	}
+}
+
+func (e *env) styleNotes(t *testing.T, userID uuid.UUID) []string {
+	t.Helper()
+	notes, err := e.database.Queries.GetStyleNotes(e.ctx, userID)
+	require.NoError(t, err)
+	return notes
+}
+
+// A note on how to talk waits for the user like a rule, and once confirmed it is a
+// note, not a rule: the prompt shows each in its own section (plan item P42).
+func TestProposedStyleNoteBecomesANoteWhenApproved(t *testing.T) {
+	e := newEnv(t, nil)
+
+	p, err := e.svc.ProposeStyleNote(e.ctx, e.userID, "sess", "humour", "Шегува се — отговаряй с шега", nil)
+	require.NoError(t, err)
+	assert.Equal(t, KindSaveStyleNote, p.Kind)
+	assert.Equal(t, "Как говорим: Шегува се — отговаряй с шега", p.Summary)
+	assert.Empty(t, e.styleNotes(t, e.userID), "a proposal must not change the prompt")
+
+	_, err = e.svc.Approve(e.ctx, e.userID, p.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Шегува се — отговаряй с шега"}, e.styleNotes(t, e.userID))
+	assert.Empty(t, e.rules(t, e.userID), "a note is not a rule")
+}
+
+// A rule and a note may share a key: approving one does not replace the other.
+func TestRuleAndStyleNoteWithTheSameKeyBothStay(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, propose := range []func() (Proposal, error){
+		func() (Proposal, error) {
+			return e.svc.ProposeRule(e.ctx, e.userID, "s", "humour", "правило", nil)
+		},
+		func() (Proposal, error) {
+			return e.svc.ProposeStyleNote(e.ctx, e.userID, "s", "humour", "бележка", nil)
+		},
+	} {
+		p, err := propose()
+		require.NoError(t, err)
+		_, err = e.svc.Approve(e.ctx, e.userID, p.ID)
+		require.NoError(t, err)
+	}
+	assert.Equal(t, []string{"правило"}, e.rules(t, e.userID))
+	assert.Equal(t, []string{"бележка"}, e.styleNotes(t, e.userID))
+}
+
+// The notes have a limit of their own: full notes do not stop a rule, and full rules
+// do not stop a note.
+func TestStyleNoteLimitIsSeparateFromTheRules(t *testing.T) {
+	e := newEnv(t, nil)
+	for i := 0; i < MaxStyleNotes; i++ {
+		p, err := e.svc.ProposeStyleNote(e.ctx, e.userID, "s", fmt.Sprintf("note%d", i), "стойност", nil)
+		require.NoError(t, err)
+		_, err = e.svc.Approve(e.ctx, e.userID, p.ID)
+		require.NoError(t, err)
+	}
+	_, err := e.svc.ProposeStyleNote(e.ctx, e.userID, "s", "one-too-many", "стойност", nil)
+	assert.ErrorIs(t, err, ErrTooManyStyleNotes)
+
+	_, err = e.svc.ProposeRule(e.ctx, e.userID, "s", "a-rule", "стойност", nil)
+	assert.NoError(t, err, "the rules have room of their own")
+
+	// Replacing an existing note is not a new one.
+	p, err := e.svc.ProposeStyleNote(e.ctx, e.userID, "s", "note0", "нова стойност", nil)
+	require.NoError(t, err)
+	_, err = e.svc.Approve(e.ctx, e.userID, p.ID)
+	require.NoError(t, err)
+	assert.Len(t, e.styleNotes(t, e.userID), MaxStyleNotes)
+	assert.Contains(t, e.styleNotes(t, e.userID), "нова стойност")
 }

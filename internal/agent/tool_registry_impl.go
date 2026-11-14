@@ -75,6 +75,8 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeReadAttachment(ctx, userID, args)
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
+	case styleNoteTool:
+		return r.executeSaveStyleNote(ctx, userID, args)
 	case "web_search":
 		return r.executeWebSearch(ctx, args)
 	case "web_fetch":
@@ -249,6 +251,9 @@ func proposalError(tool string, err error) error {
 	case errors.Is(err, proposals.ErrTooManyRules):
 		return &toolArgumentError{tool: tool, reason: fmt.Sprintf(
 			"the user already has %d global rules; ask them to delete one before adding another", proposals.MaxActiveRules)}
+	case errors.Is(err, proposals.ErrTooManyStyleNotes):
+		return &toolArgumentError{tool: tool, reason: fmt.Sprintf(
+			"the user already has %d notes on how to talk; ask them to delete one before adding another", proposals.MaxStyleNotes)}
 	}
 	return fmt.Errorf("failed to propose: %w", err)
 }
@@ -270,6 +275,31 @@ func (r *DefaultToolRegistry) executeSaveGlobalRule(ctx context.Context, userID 
 	p, err := r.proposals.ProposeRule(ctx, userID, turn.session(), key, value, turn.externalSources())
 	if err != nil {
 		return nil, proposalError("save_global_rule", err)
+	}
+	turn.addProposal(p)
+	return pendingApprovalResult(p), nil
+}
+
+// styleNoteTool proposes a note on how to talk with the user (plan item P42).
+const styleNoteTool = "save_style_note"
+
+// executeSaveStyleNote never writes the note either: like a rule it is in every
+// prompt, so it only becomes one when the user confirms.
+func (r *DefaultToolRegistry) executeSaveStyleNote(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
+	const example = `{"key": "<short name>", "value": "<how he likes to be talked to>"}`
+	key, ok := stringArg(args, "key")
+	if !ok {
+		return nil, missingArgError(styleNoteTool, "key", example)
+	}
+	value, ok := stringArg(args, "value")
+	if !ok {
+		return nil, missingArgError(styleNoteTool, "value", example)
+	}
+
+	turn := turnFrom(ctx)
+	p, err := r.proposals.ProposeStyleNote(ctx, userID, turn.session(), key, value, turn.externalSources())
+	if err != nil {
+		return nil, proposalError(styleNoteTool, err)
 	}
 	turn.addProposal(p)
 	return pendingApprovalResult(p), nil

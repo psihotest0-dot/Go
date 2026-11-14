@@ -33,8 +33,13 @@ func serveRules(a *api.API, userID uuid.UUID, method, target string) *httptest.R
 
 func saveRule(t *testing.T, database *db.Database, userID uuid.UUID, key, value string) {
 	t.Helper()
+	saveRuleOfKind(t, database, userID, "rule", key, value)
+}
+
+func saveRuleOfKind(t *testing.T, database *db.Database, userID uuid.UUID, kind, key, value string) {
+	t.Helper()
 	require.NoError(t, database.Queries.SaveGlobalRule(context.Background(), db.SaveGlobalRuleParams{
-		UserID: userID, Key: key, Value: value,
+		UserID: userID, Kind: kind, Key: key, Value: value,
 	}))
 }
 
@@ -57,6 +62,26 @@ func TestListRules(t *testing.T) {
 	assert.Equal(t, "Бъди кратка", rules[0].Value)
 	assert.True(t, rules[0].Enabled)
 	assert.NotZero(t, rules[0].ID)
+	assert.Equal(t, "rule", rules[0].Kind)
+}
+
+// The notes on how to talk are listed with the rules, marked by their kind, so the
+// client can show them apart and delete them the same way (plan item P42). A note
+// may share its key with a rule.
+func TestListRulesShowsTheKindOfEach(t *testing.T) {
+	a, database, userID := setupAPI(t)
+	saveRule(t, database, userID, "humour", "Без шеги в работни въпроси")
+	saveRuleOfKind(t, database, userID, "style", "humour", "Шегува се — отговаряй с шега")
+
+	rec := serveRules(a, userID, http.MethodGet, "/rules")
+	require.Equal(t, http.StatusOK, rec.Code)
+	var rules []api.RuleDTO
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &rules))
+	kinds := map[string]string{}
+	for _, r := range rules {
+		kinds[r.Kind] = r.Value
+	}
+	assert.Equal(t, map[string]string{"rule": "Без шеги в работни въпроси", "style": "Шегува се — отговаряй с шега"}, kinds)
 }
 
 func TestListRulesOnlyShowsTheCallersRules(t *testing.T) {

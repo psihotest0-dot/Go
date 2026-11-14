@@ -12,9 +12,11 @@ import (
 	"go-monolith/internal/db"
 )
 
-// RuleDTO is a global rule as the clients see it.
+// RuleDTO is a global rule as the clients see it. Kind is "rule" for an instruction
+// of the user and "style" for a note on how to talk with him (plan item P42).
 type RuleDTO struct {
 	ID        int32     `json:"id"`
+	Kind      string    `json:"kind"`
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
 	Enabled   bool      `json:"enabled"`
@@ -34,7 +36,7 @@ func (a *API) RegisterRuleRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /rules/{id}", a.DeleteRuleHandler)
 }
 
-// ListRulesHandler returns every rule of the user, newest first.
+// ListRulesHandler returns every rule and style note of the user, newest first.
 func (a *API) ListRulesHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
 	if !ok {
@@ -53,6 +55,7 @@ func (a *API) ListRulesHandler(w http.ResponseWriter, r *http.Request) {
 	for _, rule := range rules {
 		dtos = append(dtos, RuleDTO{
 			ID:        rule.ID,
+			Kind:      rule.Kind,
 			Key:       rule.Key,
 			Value:     rule.Value,
 			Enabled:   rule.Enabled,

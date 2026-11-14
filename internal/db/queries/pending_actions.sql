@@ -38,10 +38,10 @@ WHERE id = $1 AND user_id = $2 AND status = $3;
 SELECT * FROM global_rules WHERE user_id = $1 ORDER BY updated_at DESC, id;
 
 -- name: CountGlobalRules :one
-SELECT count(*) FROM global_rules WHERE user_id = $1 AND enabled = true;
+SELECT count(*) FROM global_rules WHERE user_id = $1 AND kind = $2 AND enabled = true;
 
 -- name: GlobalRuleExists :one
-SELECT EXISTS (SELECT 1 FROM global_rules WHERE user_id = $1 AND key = $2);
+SELECT EXISTS (SELECT 1 FROM global_rules WHERE user_id = $1 AND kind = $2 AND key = $3);
 
 -- name: DeleteGlobalRule :execrows
 DELETE FROM global_rules WHERE id = $1 AND user_id = $2;

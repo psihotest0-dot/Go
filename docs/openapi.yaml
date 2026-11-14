@@ -755,8 +755,9 @@ paths:
                 type: string
         '422':
           description: >-
-            The user has 20 global rules already. The proposal stays open;
-            delete a rule (`DELETE /rules/{id}`) and approve again.
+            The user has 20 global rules (or 8 notes on how to talk) already.
+            The proposal stays open; delete one (`DELETE /rules/{id}`) and
+            approve again.
           content:
             text/plain:
               schema:
@@ -794,8 +795,9 @@ paths:
     get:
       summary: Global rules of the user
       description: >-
-        Rules are placed first in the system prompt of every session. They are
-        created only by approving a proposal, never directly.
+        Rules and notes on how to talk (`kind`) are in the system prompt of
+        every session. They are created only by approving a proposal, never
+        directly, and deleted the same way (`DELETE /rules/{id}`).
       parameters:
       - $ref: '#/components/parameters/UserId'
       responses:
@@ -1490,7 +1492,8 @@ components:
       type: object
       description: >-
         Something the model asked to save, waiting for the user. A rule
-        (`save_global_rule`) has `key` and `value`. The `create_memory` kind,
+        (`save_global_rule`) and a note on how to talk with the user
+        (`save_style_note`) have `key` and `value`. The `create_memory` kind,
         with `content` and `importance`, is what proposals made before the owner
         decided that memories are saved at once look like; none is created now,
         but a stored one can still be approved or rejected.
@@ -1500,7 +1503,7 @@ components:
           format: int64
         kind:
           type: string
-          enum: [save_global_rule, create_memory]
+          enum: [save_global_rule, save_style_note, create_memory]
         status:
           type: string
           enum: [pending, approved, rejected]
@@ -1511,10 +1514,10 @@ components:
           description: One line, ready to show to the user (in Bulgarian).
         key:
           type: string
-          description: Rules only (at most 64 characters).
+          description: Rules and notes only (at most 64 characters).
         value:
           type: string
-          description: Rules only (at most 400 characters).
+          description: Rules and notes only (at most 400 characters).
         content:
           type: string
           description: Memories only (at most 1000 characters).
@@ -1539,6 +1542,13 @@ components:
       properties:
         id:
           type: integer
+        kind:
+          type: string
+          enum: [rule, style]
+          description: >-
+            `rule` is an instruction of the user (at most 20), `style` a note on
+            how he likes to be talked to (at most 8); the prompt shows each in
+            its own section. A rule and a note may share a key.
         key:
           type: string
         value:

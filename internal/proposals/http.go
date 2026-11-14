@@ -62,7 +62,7 @@ func (s *Service) decideHandler(decide func(ctx context.Context, userID uuid.UUI
 			http.Error(w, "proposal not found", http.StatusNotFound)
 		case errors.Is(err, ErrNotPending):
 			http.Error(w, "proposal already decided", http.StatusConflict)
-		case errors.Is(err, ErrTooManyRules):
+		case errors.Is(err, ErrTooManyRules), errors.Is(err, ErrTooManyStyleNotes):
 			// Not "already decided": the proposal stays open, and deleting a rule
 			// lets the user approve it again.
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)

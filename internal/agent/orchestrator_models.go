@@ -28,10 +28,12 @@ type ChatRequest struct {
 }
 
 type chatContext struct {
-	Memories    []string
-	Chunks      []string
-	Sources     []api.SourceInfo
-	Rules       []string
+	Memories []string
+	Chunks   []string
+	Sources  []api.SourceInfo
+	Rules    []string
+	// StyleNotes are the confirmed notes on how the user likes to be talked to.
+	StyleNotes  []string
 	TopMemories []string
 	History     []openai.ChatCompletionMessage
 	// HistoryAt holds the creation time of each History message, index for

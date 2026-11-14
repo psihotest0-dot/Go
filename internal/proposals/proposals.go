@@ -1,5 +1,5 @@
 // Package proposals holds the writes the model asks for that outlive the
-// conversation: a global rule or a memory.
+// conversation: a global rule, a note on how to talk with the user, or a memory.
 //
 // A global rule is the first thing in the system prompt of every session, and
 // text from a web page or a book can talk the model into saving one. So the
@@ -31,8 +31,17 @@ import (
 
 // The kinds of proposal; they are the names of the tools that make them.
 const (
-	KindSaveRule     = "save_global_rule"
-	KindCreateMemory = "create_memory"
+	KindSaveRule      = "save_global_rule"
+	KindSaveStyleNote = "save_style_note"
+	KindCreateMemory  = "create_memory"
+)
+
+// The kinds of row in global_rules: a rule is an instruction the user gave, a style
+// note an observation of how he likes to be talked to (plan item P42). Both are in
+// every prompt, each in its own section.
+const (
+	RuleKindRule  = "rule"
+	RuleKindStyle = "style"
 )
 
 // Statuses of a proposal.
@@ -52,6 +61,10 @@ const (
 	// MaxActiveRules bounds the rules one user can have. Rules are always in the
 	// prompt, so each one costs context on every turn.
 	MaxActiveRules = 20
+
+	// MaxStyleNotes bounds the notes on how to talk with the user. A handful of
+	// observations shape the tone; a long list would be read as noise.
+	MaxStyleNotes = 8
 
 	// MaxMemoryRunes bounds a memory written by a tool. The prompt shows at most
 	// 800 characters of a memory, and the tool is for short facts.
@@ -80,6 +93,8 @@ var (
 	ErrTooManyPending = errors.New("too many proposals are waiting for an answer")
 	// ErrTooManyRules: the user has MaxActiveRules rules.
 	ErrTooManyRules = errors.New("too many global rules")
+	// ErrTooManyStyleNotes: the user has MaxStyleNotes notes.
+	ErrTooManyStyleNotes = errors.New("too many notes on how to talk")
 )
 
 // InvalidError is a proposal the model got wrong; its message says how to fix the
@@ -88,7 +103,7 @@ type InvalidError struct{ Reason string }
 
 func (e *InvalidError) Error() string { return e.Reason }
 
-// RulePayload is the stored form of a save_global_rule proposal.
+// RulePayload is the stored form of a save_global_rule or save_style_note proposal.
 type RulePayload struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
@@ -174,6 +189,13 @@ func toProposal(row db.PendingAction) (Proposal, error) {
 		}
 		p.Key, p.Value = payload.Key, payload.Value
 		p.Summary = fmt.Sprintf("Правило „%s“: %s", payload.Key, payload.Value)
+	case KindSaveStyleNote:
+		var payload RulePayload
+		if err := json.Unmarshal(row.Payload, &payload); err != nil {
+			return Proposal{}, fmt.Errorf("proposal %d has an unreadable payload: %w", row.ID, err)
+		}
+		p.Key, p.Value = payload.Key, payload.Value
+		p.Summary = "Как говорим: " + payload.Value
 	case KindCreateMemory:
 		var payload MemoryPayload
 		if err := json.Unmarshal(row.Payload, &payload); err != nil {
@@ -207,10 +229,24 @@ func (s *Service) ProposeRule(ctx context.Context, userID uuid.UUID, sessionID, 
 		return Proposal{}, err
 	}
 	// Fail now, while the model can still tell the user, instead of at approval.
-	if err := s.checkRuleRoom(ctx, userID, payload.Key); err != nil {
+	if err := s.checkRuleRoom(ctx, userID, RuleKindRule, payload.Key); err != nil {
 		return Proposal{}, err
 	}
 	return s.propose(ctx, userID, sessionID, KindSaveRule, payload, external)
+}
+
+// ProposeStyleNote leaves a save_style_note proposal: an observation of how the user
+// likes to be talked to. Like a rule it is in every prompt, so it waits for the
+// user's confirmation; a wrong generalisation would bend every conversation.
+func (s *Service) ProposeStyleNote(ctx context.Context, userID uuid.UUID, sessionID, key, value string, external []string) (Proposal, error) {
+	payload, err := NormalizeRule(key, value)
+	if err != nil {
+		return Proposal{}, err
+	}
+	if err := s.checkRuleRoom(ctx, userID, RuleKindStyle, payload.Key); err != nil {
+		return Proposal{}, err
+	}
+	return s.propose(ctx, userID, sessionID, KindSaveStyleNote, payload, external)
 }
 
 // ProposeMemory leaves a create_memory proposal.
@@ -299,7 +335,7 @@ func (s *Service) Reject(ctx context.Context, userID uuid.UUID, id int64) (Propo
 	return toProposal(row)
 }
 
-// Approve applies a proposal: the rule is saved, the memory is created. The
+// Approve applies a proposal: the rule or the note is saved, the memory is created. The
 // proposal is claimed first, so two taps cannot apply it twice; if applying
 // fails it is reopened and the user can try again.
 func (s *Service) Approve(ctx context.Context, userID uuid.UUID, id int64) (Proposal, error) {
@@ -347,18 +383,22 @@ func (s *Service) claim(ctx context.Context, userID uuid.UUID, id int64, status 
 
 func (s *Service) apply(ctx context.Context, userID uuid.UUID, row db.PendingAction) error {
 	switch row.Kind {
-	case KindSaveRule:
+	case KindSaveRule, KindSaveStyleNote:
 		var payload RulePayload
 		if err := json.Unmarshal(row.Payload, &payload); err != nil {
 			return fmt.Errorf("proposal %d has an unreadable payload: %w", row.ID, err)
 		}
-		if err := s.checkRuleRoom(ctx, userID, payload.Key); err != nil {
+		kind := RuleKindRule
+		if row.Kind == KindSaveStyleNote {
+			kind = RuleKindStyle
+		}
+		if err := s.checkRuleRoom(ctx, userID, kind, payload.Key); err != nil {
 			return err
 		}
 		if err := s.db.Queries.SaveGlobalRule(ctx, db.SaveGlobalRuleParams{
-			UserID: userID, Key: payload.Key, Value: payload.Value,
+			UserID: userID, Kind: kind, Key: payload.Key, Value: payload.Value,
 		}); err != nil {
-			return fmt.Errorf("failed to save the rule: %w", err)
+			return fmt.Errorf("failed to save the %s: %w", kind, err)
 		}
 		return nil
 
@@ -382,19 +422,26 @@ func (s *Service) apply(ctx context.Context, userID uuid.UUID, row db.PendingAct
 	return fmt.Errorf("proposal %d has an unknown kind %q", row.ID, row.Kind)
 }
 
-// checkRuleRoom fails when saving key would exceed MaxActiveRules. Replacing an
-// existing rule always has room.
-func (s *Service) checkRuleRoom(ctx context.Context, userID uuid.UUID, key string) error {
-	exists, err := s.db.Queries.GlobalRuleExists(ctx, db.GlobalRuleExistsParams{UserID: userID, Key: key})
+// checkRuleRoom fails when saving key as a row of kind (RuleKindRule or
+// RuleKindStyle) would exceed the limit of that kind (MaxActiveRules, MaxStyleNotes).
+// Replacing an existing one always has room.
+func (s *Service) checkRuleRoom(ctx context.Context, userID uuid.UUID, kind, key string) error {
+	exists, err := s.db.Queries.GlobalRuleExists(ctx, db.GlobalRuleExistsParams{UserID: userID, Kind: kind, Key: key})
 	if err != nil {
-		return fmt.Errorf("failed to look up the rule: %w", err)
+		return fmt.Errorf("failed to look up the %s: %w", kind, err)
 	}
 	if exists {
 		return nil
 	}
-	count, err := s.db.Queries.CountGlobalRules(ctx, userID)
+	count, err := s.db.Queries.CountGlobalRules(ctx, db.CountGlobalRulesParams{UserID: userID, Kind: kind})
 	if err != nil {
-		return fmt.Errorf("failed to count the rules: %w", err)
+		return fmt.Errorf("failed to count the %ss: %w", kind, err)
+	}
+	if kind == RuleKindStyle {
+		if count >= MaxStyleNotes {
+			return ErrTooManyStyleNotes
+		}
+		return nil
 	}
 	if count >= MaxActiveRules {
 		return ErrTooManyRules

@@ -65,6 +65,7 @@ type GlobalRule struct {
 	Value     string    `json:"value"`
 	Enabled   bool      `json:"enabled"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Kind      string    `json:"kind"`
 }
 
 type IngestedFile struct {

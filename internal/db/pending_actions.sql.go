@@ -15,11 +15,16 @@ import (
 )
 
 const countGlobalRules = `-- name: CountGlobalRules :one
-SELECT count(*) FROM global_rules WHERE user_id = $1 AND enabled = true
+SELECT count(*) FROM global_rules WHERE user_id = $1 AND kind = $2 AND enabled = true
 `
 
-func (q *Queries) CountGlobalRules(ctx context.Context, userID uuid.UUID) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countGlobalRules, userID)
+type CountGlobalRulesParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Kind   string    `json:"kind"`
+}
+
+func (q *Queries) CountGlobalRules(ctx context.Context, arg CountGlobalRulesParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countGlobalRules, arg.UserID, arg.Kind)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -175,23 +180,24 @@ func (q *Queries) GetPendingAction(ctx context.Context, arg GetPendingActionPara
 }
 
 const globalRuleExists = `-- name: GlobalRuleExists :one
-SELECT EXISTS (SELECT 1 FROM global_rules WHERE user_id = $1 AND key = $2)
+SELECT EXISTS (SELECT 1 FROM global_rules WHERE user_id = $1 AND kind = $2 AND key = $3)
 `
 
 type GlobalRuleExistsParams struct {
 	UserID uuid.UUID `json:"user_id"`
+	Kind   string    `json:"kind"`
 	Key    string    `json:"key"`
 }
 
 func (q *Queries) GlobalRuleExists(ctx context.Context, arg GlobalRuleExistsParams) (bool, error) {
-	row := q.db.QueryRowContext(ctx, globalRuleExists, arg.UserID, arg.Key)
+	row := q.db.QueryRowContext(ctx, globalRuleExists, arg.UserID, arg.Kind, arg.Key)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
 }
 
 const listGlobalRules = `-- name: ListGlobalRules :many
-SELECT id, user_id, key, value, enabled, updated_at FROM global_rules WHERE user_id = $1 ORDER BY updated_at DESC, id
+SELECT id, user_id, key, value, enabled, updated_at, kind FROM global_rules WHERE user_id = $1 ORDER BY updated_at DESC, id
 `
 
 func (q *Queries) ListGlobalRules(ctx context.Context, userID uuid.UUID) ([]GlobalRule, error) {
@@ -210,6 +216,7 @@ func (q *Queries) ListGlobalRules(ctx context.Context, userID uuid.UUID) ([]Glob
 			&i.Value,
 			&i.Enabled,
 			&i.UpdatedAt,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}

@@ -38,9 +38,11 @@ func TestNewBudgetsDerivesFromTheWindow(t *testing.T) {
 	}{
 		// The floors went down by 100 on 2026-11-11, when fixedPromptTokens went from 3 750 to 3 950
 		// (the real count of the fixed prompt had grown to 3 810): the 16 384 window gives 3 669 and
-		// 2 446 tokens (thinking off), 2 469 and 1 646 (thinking on).
-		{name: "thinking off", thinking: false, wantAnswer: defaultAnswerTokens, minHistory: 3600, minPrompt: 2400, wantMessages: 25},
-		{name: "thinking on reserves more for the answer", thinking: true, wantAnswer: defaultThinkingAnswerTokens, minHistory: 2400, minPrompt: 1600, wantMessages: 25},
+		// 2 446 tokens (thinking off), 2 469 and 1 646 (thinking on). Down by 100 again on
+		// 2026-11-14, when fixedPromptTokens went to 4 220 (save_style_note, plan item P42):
+		// 3 507 and 2 338, 2 307 and 1 538.
+		{name: "thinking off", thinking: false, wantAnswer: defaultAnswerTokens, minHistory: 3400, minPrompt: 2200, wantMessages: 25},
+		{name: "thinking on reserves more for the answer", thinking: true, wantAnswer: defaultThinkingAnswerTokens, minHistory: 2200, minPrompt: 1450, wantMessages: 25},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -257,12 +259,13 @@ func TestToolRoundsStayInsideTheWindow(t *testing.T) {
 	o := newGenerateOrchestrator(mock, tools)
 	o.budgets = newBudgets(&config.Config{LLMContextTokens: window, LLMEnableThinking: true})
 
-	// A heavy prompt (the fixed part plus a user turn of 2900 tokens), so the
+	// A heavy prompt (the fixed part plus a user turn of 2700 tokens), so the
 	// window - not the per-round cap - decides how much the tools may add. (It was
 	// 3500 until the fixed part grew by 850 tokens on 2026-11-07: with thinking on, the
-	// 5 000-token answer reserve and 3500 of user text no longer fit beside it.)
+	// 5 000-token answer reserve and 3500 of user text no longer fit beside it; 2900
+	// until it grew by 200 more on 2026-11-14.)
 	system := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: strings.Repeat("s", 4*fixedPromptTokens)}
-	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*2900)}
+	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*2700)}
 
 	content, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{system, user}, toolDefinitions(), nil)
 

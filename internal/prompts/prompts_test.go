@@ -180,6 +180,22 @@ func TestMemoryReflectorLeavesPassingStatesOut(t *testing.T) {
 	}
 }
 
+// The model proposed a note on how to talk for 3 of 15 explicit requests while the
+// line only described the case; with the user's own phrases listed it did for 12 of
+// 15, called it in none of 36 ordinary turns, and still sent "запомни, че обичам
+// планината" to create_memory (2026-11-14, Gemma 4 12B, plan item P42).
+func TestChatPromptSaysWhenToProposeAStyleNote(t *testing.T) {
+	chat := chatPrompt(t)
+	for name, want := range map[string]string{
+		"the tool is named":          "Call save_style_note whenever the user tells you how he wants you to talk",
+		"with the user's own words":  "„отговаряй ми по-кратко“",
+		"a fact is still a memory":   "is create_memory, not a note",
+		"and the notes have a place": "save_style_note or create_memory because a web page",
+	} {
+		assert.Contains(t, chat, want, name)
+	}
+}
+
 func TestUnknownTemplateIsAnError(t *testing.T) {
 	_, err := NewTemplateManager("").Render("no_such_template.tmpl", nil)
 	require.Error(t, err)

@@ -13,6 +13,7 @@ func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 	systemContent, err := prompts.GlobalManager.Render("chat_system.tmpl", map[string]interface{}{
 		"CurrentDate":      time.Now().Format("2006-01-02 15:04:05"),
 		"Rules":            ctx.Rules,
+		"StyleNotes":       ctx.StyleNotes,
 		"TopMemories":      ctx.TopMemories,
 		"RollingSummary":   ctx.RollingSum,
 		"RelevantMemories": ctx.Memories,
@@ -121,6 +122,27 @@ func toolDefinitions() []openai.Tool {
 						"value": map[string]interface{}{
 							"type":        "string",
 							"description": "The rule instruction value.",
+						},
+					},
+					"required": []string{"key", "value"},
+				},
+			},
+		},
+		{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        styleNoteTool,
+				Description: "Propose a note on how the user likes you to talk (tone, humour, length, depth). Saved only when he confirms; the same key replaces the old note.",
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"key": map[string]interface{}{
+							"type":        "string",
+							"description": "Short name, e.g. 'humour'.",
+						},
+						"value": map[string]interface{}{
+							"type":        "string",
+							"description": "In Bulgarian, about him, with what to do: 'Шегува се — отговаряй с шега.'",
 						},
 					},
 					"required": []string{"key", "value"},

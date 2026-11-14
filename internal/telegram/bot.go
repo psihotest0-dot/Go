@@ -487,6 +487,8 @@ func (b *Bot) handleProposalCommand(ctx context.Context, chatID int64, userID uu
 		b.sendReply(chatID, "Това предложение вече е решено.")
 	case errors.Is(err, proposals.ErrTooManyRules):
 		b.sendReply(chatID, fmt.Sprintf("Вече има %d глобални правила — първо изтрий някое от приложението.", proposals.MaxActiveRules))
+	case errors.Is(err, proposals.ErrTooManyStyleNotes):
+		b.sendReply(chatID, fmt.Sprintf("Вече има %d бележки „как говорим“ — първо изтрий някоя от приложението.", proposals.MaxStyleNotes))
 	default:
 		slog.Error("Failed to decide a proposal", slog.Any("error", err), slog.Int64("chat_id", chatID), slog.Int64("proposal_id", id))
 		b.sendReply(chatID, "Възникна грешка. Опитай отново.")

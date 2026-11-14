@@ -384,7 +384,7 @@ func TestAttachedFilesTakeRoomFromTheHistory(t *testing.T) {
 		}
 		_, err := e.db.Queries.CreateMessage(ctx, db.CreateMessageParams{
 			UserID: e.userID, SessionID: "long-chat", Role: role,
-			Content:        fmt.Sprintf("съобщение %d: ", i) + strings.Repeat("дума ", 400), // about 500 tokens
+			Content:        fmt.Sprintf("съобщение %d: ", i) + strings.Repeat("дума ", 380), // about 480 tokens (400 until the fixed prompt grew on 2026-11-14)
 			SourceChunkIds: pqtype.NullRawMessage{RawMessage: []byte("[]"), Valid: true},
 		})
 		require.NoError(t, err)

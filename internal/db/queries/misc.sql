@@ -44,10 +44,15 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: GetGlobalRules :many
-SELECT value FROM global_rules WHERE user_id = $1 AND enabled = true;
+SELECT value FROM global_rules WHERE user_id = $1 AND kind = 'rule' AND enabled = true;
+
+-- The notes on how to talk with the user, in the order they were confirmed.
+-- name: GetStyleNotes :many
+SELECT value FROM global_rules WHERE user_id = $1 AND kind = 'style' AND enabled = true
+ORDER BY updated_at, id;
 
 -- name: SaveGlobalRule :exec
-INSERT INTO global_rules (user_id, key, value, updated_at)
-VALUES ($1, $2, $3, now())
-ON CONFLICT (user_id, key) DO UPDATE
+INSERT INTO global_rules (user_id, kind, key, value, updated_at)
+VALUES (sqlc.arg('user_id'), sqlc.arg('kind'), sqlc.arg('key'), sqlc.arg('value'), now())
+ON CONFLICT (user_id, kind, key) DO UPDATE
 SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, enabled = true;
