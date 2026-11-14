@@ -28,6 +28,10 @@ func TestAsksAboutLibrary(t *testing.T) {
 		"Do you have the book Principles of Psychology?",
 		"Which books do you have on cooking?",
 		"имате ли документ за лични финанси",
+		// a folder is named, and so is the library
+		"Има ли в папката с книги книга за готвене?",
+		"Какви книги имаш в тази папка?",
+		"Имаш ли записана книга за Rust?",
 	}
 	for _, m := range asks {
 		assert.True(t, asksAboutLibrary(m), m)
@@ -41,6 +45,15 @@ func TestAsksAboutLibrary(t *testing.T) {
 		"имаш ли време за мен",                           // asks, but not about a book
 		"Колко атома има във водата?",                    // "том" inside a word
 		"Имаш ли томати за салатата?",                    // "том" at the start of a word
+		// the folder of the assistant's own files, not the library (live acceptance: the
+		// list of the library answered "няма файлове")
+		"Какви файлове имаш в папката?",
+		"Какви файлове имаш в папката си?",
+		"Имаш ли файла бележки.md в папката?",
+		"Which files do you have in the folder?",
+		"Какво имаш записано във файлове за мен?",
+		"Имаш ли някакви бележки за мен във файл?",
+		"Which files have you saved for me?",
 	}
 	for _, m := range doesNotAsk {
 		assert.False(t, asksAboutLibrary(m), m)

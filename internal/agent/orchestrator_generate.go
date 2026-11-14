@@ -427,12 +427,23 @@ func (o *Orchestrator) generateResponse(
 	// model asks for it (see toolGroup).
 	active := tools
 	toolRounds, unlocks := 0, 0
+	// asked are the tools the model has just unlocked. The round after the unlock must
+	// use one: left free, the model sometimes answered at once, "Записах плана във
+	// файла", having written nothing - or took the message that the tools are available
+	// for the text of the file (4 of about 30 turns in the live acceptance, 2026-11-14).
+	// As with the forced first round, only these tools are offered and a call is required.
+	var asked []openai.Tool
 	for {
 		req := o.chatRequest(messages, active)
-		if forced != "" && toolRounds == 0 {
+		switch {
+		case forced != "" && toolRounds == 0:
 			req.Tools = onlyTool(active, forced)
 			req.ToolChoice = "required"
+		case len(asked) > 0:
+			req.Tools = asked
+			req.ToolChoice = "required"
 		}
+		asked = nil
 		result, err := o.streamWithRescue(ctx, req, onDelta)
 		assistantContent.WriteString(result.content)
 		reasoningContent.WriteString(result.reasoning)
@@ -476,7 +487,11 @@ func (o *Orchestrator) generateResponse(
 		// an earlier round.
 		toolBudget := o.limits().toolBudget(messages, active)
 		messages = append(messages, o.executeToolCalls(ctx, result.toolCalls, toolBudget)...)
+		before := active
 		active = o.nextTools(active, result.toolCalls, turnFrom(ctx))
+		if unlock {
+			asked = addedTools(before, active)
+		}
 	}
 
 	// The model asked for tools but never produced prose. Ask again with tools

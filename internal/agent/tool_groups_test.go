@@ -42,7 +42,7 @@ func TestTheStubAndTheToolsAreWhatWasMeasured(t *testing.T) {
 	g := filesGroup()
 	assert.Equal(t, filesStubTool, g.stubName())
 	desc := g.stub.Function.Description
-	for _, example := range []string{"save this", "put it in notes.txt", "read data.csv", "what is in the folder?", "even if they do not say 'file'"} {
+	for _, example := range []string{"save this", "put it in notes.txt", "read data.csv", "what is in your folder?", "what files did you save?", "even if they do not say 'file'"} {
 		assert.Contains(t, desc, example)
 	}
 	assert.Equal(t, fileToolNames, toolNames(g.tools))
@@ -74,14 +74,18 @@ func TestGenerateResponseUnlocksTheFileToolsWhenTheModelAsks(t *testing.T) {
 	for _, tool := range fileToolNames {
 		assert.NotContains(t, first, tool, "round 1: only the stub")
 	}
-	for i := 1; i <= 2; i++ {
-		later := toolNames(mock.Requests[i].Tools)
-		assert.NotContains(t, later, filesStubTool, "round %d: the stub is gone", i+1)
-		for _, tool := range fileToolNames {
-			assert.Contains(t, later, tool, "round %d: the tools came", i+1)
-		}
-		assert.Contains(t, later, "search_documents", "the other tools stay")
+	// The round after the unlock offers only the tools that came, and requires a call.
+	asked := toolNames(mock.Requests[1].Tools)
+	assert.Equal(t, fileToolNames, asked)
+	assert.Equal(t, "required", mock.Requests[1].ToolChoice)
+	// Then the model has everything again and its own choice.
+	later := toolNames(mock.Requests[2].Tools)
+	assert.NotContains(t, later, filesStubTool, "the stub is gone")
+	for _, tool := range fileToolNames {
+		assert.Contains(t, later, tool, "the tools stay")
 	}
+	assert.Contains(t, later, "search_documents", "and so do the others")
+	assert.Nil(t, mock.Requests[2].ToolChoice)
 
 	assert.Equal(t, "мляко и хляб", e.fileText(t, store, "бележки.md"))
 	assert.InDelta(t, before+1, counterValue(t, metrics.ToolGroupUnlocks.WithLabelValues("files")), 0.001)
@@ -163,9 +167,8 @@ func TestAfterReadingAFileTheWebIsNotOffered(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, mock.Requests, 3)
-	before := toolNames(mock.Requests[1].Tools)
-	assert.Contains(t, before, "web_search")
-	assert.Contains(t, before, "web_fetch")
+	assert.Contains(t, toolNames(mock.Requests[0].Tools), "web_search", "before the file the web is on offer")
+	assert.Contains(t, toolNames(mock.Requests[0].Tools), "web_fetch")
 	after := toolNames(mock.Requests[2].Tools)
 	assert.NotContains(t, after, "web_search", "a turn that read a file sends nothing out")
 	assert.NotContains(t, after, "web_fetch")
@@ -192,7 +195,56 @@ func TestAfterTheWebReadFileIsNotOffered(t *testing.T) {
 	unlocked := toolNames(mock.Requests[2].Tools)
 	assert.Contains(t, unlocked, writeFileTool, "the group unlocks")
 	assert.NotContains(t, unlocked, readFileTool, "but a turn that used the web cannot read a file")
-	assert.Contains(t, unlocked, "web_search")
+}
+
+// A model that unlocks the file tools and then answers at once says "Записах плана във
+// файла" having written nothing - or takes the message that the tools came for the text
+// of the file (4 of about 30 turns in the live acceptance). So the round after an unlock
+// offers only the tools that came and requires a call; the round after that is free.
+func TestTheRoundAfterAnUnlockMustCallOneOfTheNewTools(t *testing.T) {
+	e, store := newFilesToolEnv(t)
+	ctx, _ := e.turn("s", false)
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{toolCallChunk(0, "call_1", filesStubTool, `{}`)},
+		{toolCallChunk(0, "call_2", writeFileTool, `{"name":"a.txt","content":"text"}`)},
+		{textChunk("Записах го")},
+	}}
+	o := newGroupOrchestrator(mock, e.reg)
+
+	content, _, _, err := o.generateResponse(ctx,
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Записах го", content)
+	require.Len(t, mock.Requests, 3)
+	assert.Empty(t, mock.Requests[0].ToolChoice, "the first round is the model's own choice")
+	assert.Equal(t, "required", mock.Requests[1].ToolChoice)
+	assert.Equal(t, fileToolNames, toolNames(mock.Requests[1].Tools), "only the tools that came")
+	assert.Empty(t, mock.Requests[2].ToolChoice, "the answer is free again")
+	assert.Greater(t, len(mock.Requests[2].Tools), len(fileToolNames))
+	assert.Equal(t, "text", e.fileText(t, store, "a.txt"))
+}
+
+// What the unlock took away stays away from the forced round: after the web there is no
+// read_file to be required.
+func TestTheForcedRoundOffersOnlyWhatMayBeUsed(t *testing.T) {
+	e, _ := newFilesToolEnv(t)
+	ctx, _ := e.turn("s", false)
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{toolCallChunk(0, "call_1", "web_search", `{"query":"weather"}`)},
+		{toolCallChunk(0, "call_2", filesStubTool, `{}`)},
+		{toolCallChunk(0, "call_3", writeFileTool, `{"name":"a.txt","content":"x"}`)},
+		{textChunk("Ето")},
+	}}
+	o := newGroupOrchestrator(mock, e.reg)
+
+	_, _, _, err := o.generateResponse(ctx,
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Времето и го запиши"}}, o.turnTools(), nil)
+
+	require.NoError(t, err)
+	require.Len(t, mock.Requests, 4)
+	assert.Equal(t, []string{listFilesTool, writeFileTool, appendFileTool}, toolNames(mock.Requests[2].Tools))
+	assert.Equal(t, "required", mock.Requests[2].ToolChoice)
 }
 
 // A question about the library still opens with its one tool, with or without the stub.

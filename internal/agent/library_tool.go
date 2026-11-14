@@ -34,8 +34,9 @@ func libraryToolDefinition() openai.Tool {
 	return openai.Tool{
 		Type: openai.ToolTypeFunction,
 		Function: &openai.FunctionDefinition{
-			Name:        listDocumentsTool,
-			Description: "List the names of the books and files in the user's library, with their category. Use it to check whether a book or file exists, or to say what the library contains.",
+			Name: listDocumentsTool,
+			Description: "List the names of the books and files in the user's library, with their category. Use it to check whether a book or file exists, or to say what the library contains. " +
+				"It does not list the notes and files you saved for the user in their own folder: for those use the files tool.",
 			Parameters: map[string]interface{}{
 				"type":       "object",
 				"properties": map[string]interface{}{},
@@ -60,6 +61,15 @@ var (
 	libraryObject = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:` +
 		`книг|книж|том(?:а|ове|овете|ът)?(?:[^\p{L}]|$)|файл|документ|библиотек|epub|pdf|book|file|document|librar` +
 		`)`)
+
+	// libraryFolder: a folder, notes and what was saved are the assistant's own files for
+	// the user (plan item P44), not the library of books. "Какви файлове имаш в папката?"
+	// and "Какво имаш записано във файлове за мен?" are about those, and the list of the
+	// library would answer "няма файлове" to them (found in the live acceptance). A book
+	// or the library named in the same message keeps it a question about the library:
+	// "има ли в папката с книги книга за готвене".
+	libraryFolder = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:папк|folder|записал|записан|запазил|запазен|бележк|notes?(?:[^\p{L}]|$)|saved)`)
+	libraryBooks  = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:книг|книж|библиотек|book|librar)`)
 )
 
 // asksAboutLibrary tells whether a message asks if the library has a book or a
@@ -72,6 +82,9 @@ var (
 func asksAboutLibrary(message string) bool {
 	message = strings.TrimSpace(message)
 	if message == "" || utf8.RuneCountInString(message) > maxLibraryQuestionRunes {
+		return false
+	}
+	if libraryFolder.MatchString(message) && !libraryBooks.MatchString(message) {
 		return false
 	}
 	return libraryAsking.MatchString(message) && libraryObject.MatchString(message)

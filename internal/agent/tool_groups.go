@@ -119,3 +119,14 @@ func withoutTools(tools []openai.Tool, names ...string) []openai.Tool {
 	}
 	return out
 }
+
+// addedTools are the tools in after that were not in before.
+func addedTools(before, after []openai.Tool) []openai.Tool {
+	var added []openai.Tool
+	for _, t := range after {
+		if t.Function != nil && !hasTool(before, t.Function.Name) {
+			added = append(added, t)
+		}
+	}
+	return added
+}

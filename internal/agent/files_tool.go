@@ -37,13 +37,15 @@ func filesGroup() toolGroup {
 
 // filesStubDefinition: the wording is the one measured (91 % of the requests that need
 // files, 0 of 36 that do not): the examples are what makes it get the plain reads and
-// listings. Change it only with a new measurement.
+// listings. The last two examples were added after the live acceptance, where "Покажи ми
+// какво има в папката ти" got "аз съм изкуствен интелект, нямам папка" and no call (3 of 4).
+// Change it only with a new measurement.
 func filesStubDefinition() openai.Tool {
 	return openai.Tool{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name: filesStubTool,
 		Description: "Save text to a file on the user's computer, open or read a file, or list files and folders. " +
 			"Call it whenever the user wants something written down, saved, kept, exported or opened as a file or document, " +
-			"even if they do not say 'file'. Examples: 'save this', 'put it in notes.txt', 'read data.csv', 'what is in the folder?'. " +
+			"even if they do not say 'file'. Examples: 'save this', 'put it in notes.txt', 'read data.csv', 'what is in your folder?', 'what files did you save?'. " +
 			"It gives you the file tools.",
 		Parameters: map[string]any{"type": "object", "properties": map[string]any{}},
 	}}
@@ -142,7 +144,7 @@ func (r *DefaultToolRegistry) executeFilesUnlock() (interface{}, error) {
 	return map[string]interface{}{
 		"status": "ok",
 		"message": "The file tools are now available: " + listFilesTool + ", " + readFileTool + ", " + writeFileTool + ", " + appendFileTool +
-			". Use them now to do what the user asked.",
+			". Nothing is done for the user yet: call one of them now.",
 	}, nil
 }
 
