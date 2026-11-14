@@ -7,14 +7,12 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	pgvector "github.com/pgvector/pgvector-go"
 	"github.com/riverqueue/river"
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
 	"go-monolith/internal/prompts"
@@ -77,14 +75,6 @@ func TestDecideFact(t *testing.T) {
 		got := decideFact(Fact{FactKey: "location", Value: " варна "}, nil, []db.Memory{sofia, varnaCandidate})
 		assert.Equal(t, "active", got.status)
 		assert.ElementsMatch(t, ids(sofia, varnaCandidate), got.supersede)
-	})
-	t.Run("a replaced statement said again comes back", func(t *testing.T) {
-		old := memoryWithValue("superseded", "София")
-		varna := memoryWithValue("active", "Варна")
-		got := decideFact(Fact{FactKey: "location", Value: "София", IsExplicitChange: true}, &old, []db.Memory{varna})
-		assert.True(t, got.store)
-		assert.Equal(t, "active", got.status)
-		assert.Equal(t, ids(varna), got.supersede)
 	})
 	t.Run("a fact without a key never conflicts", func(t *testing.T) {
 		got := decideFact(Fact{Value: "пица"}, nil, nil)
@@ -213,23 +203,6 @@ func TestConsolidationReplacedFactCanComeBack(t *testing.T) {
 	e.say("Живея в София")
 	e.say("Преместих се във Варна")
 	assert.Equal(t, map[string]string{inVarna: "active"}, e.statuses())
-
-	e.say("Върнах се в София")
-	assert.Equal(t, map[string]string{inSofia: "active"}, e.statuses())
-}
-
-// A row an older version left as "superseded" still has its hash in the unique
-// index: said again, the fact must bring that row back, not fail on a new insert.
-func TestConsolidationRevivesARowLeftAsSuperseded(t *testing.T) {
-	e := newConsolidationEnv(t,
-		factJSON("location", "Варна", inVarna, false),
-		factJSON("location", "София", inSofia, true),
-	)
-	e.say("Живея във Варна")
-	_, err := e.database.SqlDB.ExecContext(e.ctx, `INSERT INTO memories (user_id, content, status, embedding, embedding_model, importance, metadata, content_hash)
-		VALUES ($1, $2, 'superseded', $3, 'x', 1, '{"fact_key": "location", "value": "София"}', $4)`,
-		e.user.ID, inSofia, pgvector.NewVector(make([]float32, config.VectorDimension)), db.GenerateHash(inSofia))
-	require.NoError(t, err)
 
 	e.say("Върнах се в София")
 	assert.Equal(t, map[string]string{inSofia: "active"}, e.statuses())

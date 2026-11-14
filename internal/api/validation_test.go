@@ -75,7 +75,7 @@ func TestValidateMemoryInput(t *testing.T) {
 	}{
 		{name: "valid candidate", content: "Живея в София", status: "candidate", importance: 5},
 		{name: "valid active", content: "Живея в София", status: "active", importance: 1},
-		{name: "valid superseded", content: "Живея в София", status: "superseded", importance: 10},
+		{name: "superseded is gone", content: "Живея в София", status: "superseded", importance: 10, wantErr: "status must be one of"},
 		{name: "empty content", content: "  ", status: "candidate", importance: 5, wantErr: "content is required"},
 		{name: "unknown status", content: "x", status: "archived", importance: 5, wantErr: "status must be one of"},
 		{name: "empty status", content: "x", status: "", importance: 5, wantErr: "status must be one of"},

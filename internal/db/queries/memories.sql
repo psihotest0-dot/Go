@@ -66,7 +66,7 @@ FROM memories m
 LEFT JOIN vector_search vs ON m.id = vs.id
 LEFT JOIN text_search ts ON m.id = ts.id
 WHERE (vs.id IS NOT NULL OR ts.id IS NOT NULL)
-  AND m.user_id = sqlc.arg('user_id') AND m.status != 'superseded'
+  AND m.user_id = sqlc.arg('user_id') AND m.status IN ('active', 'candidate')
 ORDER BY (COALESCE(1.0 / (60 + vs.rank), 0.0) + COALESCE(1.0 / (60 + ts.rank), 0.0)) DESC
 LIMIT sqlc.arg('match_count');
 

@@ -29,7 +29,7 @@ const (
 	maxImportance = 10
 
 	allowedRolesDescription    = "user, assistant, system"
-	allowedStatusesDescription = "candidate, active, superseded"
+	allowedStatusesDescription = "candidate, active"
 )
 
 // allowedRoles holds the values messages.role accepts. The prompt builder and
@@ -44,7 +44,6 @@ var allowedRoles = map[string]struct{}{
 var allowedMemoryStatuses = map[string]struct{}{
 	"candidate":  {},
 	"active":     {},
-	"superseded": {},
 }
 
 // decodeJSON decodes a size-limited JSON body into dst. It writes the response
