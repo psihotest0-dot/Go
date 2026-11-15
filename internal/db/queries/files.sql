@@ -278,3 +278,54 @@ WHERE c.user_id = sqlc.arg('user_id')
   AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF(sqlc.arg('ts_query')::text, ''))
 ORDER BY score DESC
 LIMIT sqlc.arg('match_count');
+
+-- The search inside ONE file, for a question that names the file ("what does CLBSV2.pdf say").
+-- SearchHybridChunks cannot serve it: it keeps at most max_per_file chunks of a file (so that
+-- one long book does not fill the answer), cuts the chunks beyond max_distance and fills the
+-- rest with the nearest chunks of other books - on 2026-11-15 a question about CLBSV2.pdf
+-- showed 2 passages of it and 6 of Freud, a cookbook and a book about vitamin B12. Here the
+-- file is the scope, so nothing is capped or cut: the vector half ranks the chunks of the
+-- file by distance, the text half by the words of the question, and the two ranks are
+-- fused as in SearchHybridChunks. The file is a few hundred chunks, so the vector half is
+-- an exact scan through the file_id index (no HNSW: its predicates are not in this WHERE).
+-- name: SearchFileChunks :many
+WITH vector_search AS (
+    SELECT c.id,
+           (c.embedding <=> sqlc.arg('embedding')) AS distance,
+           ROW_NUMBER() OVER (ORDER BY c.embedding <=> sqlc.arg('embedding')) AS rank
+    FROM document_chunks c
+    WHERE c.file_id = sqlc.arg('file_id')
+      AND c.user_id = sqlc.arg('user_id')
+      AND c.chunk_type = 'raw_text'
+    ORDER BY c.embedding <=> sqlc.arg('embedding')
+    LIMIT 100
+),
+text_matches AS (
+    SELECT c.id,
+           ts_rank_cd(to_tsvector('simple', c.text), to_tsquery('simple', NULLIF(sqlc.arg('ts_query')::text, '')), 32) AS ts_score
+    FROM document_chunks c
+    WHERE c.file_id = sqlc.arg('file_id')
+      AND c.user_id = sqlc.arg('user_id')
+      AND c.chunk_type = 'raw_text'
+      AND to_tsvector('simple', c.text) @@ to_tsquery('simple', NULLIF(sqlc.arg('ts_query')::text, ''))
+),
+text_search AS (
+    SELECT id, 0.5 + 0.5 * ts_score AS sim_score,
+           ROW_NUMBER() OVER (ORDER BY ts_score DESC) AS rank
+    FROM text_matches
+    ORDER BY ts_score DESC
+    LIMIT 100
+)
+SELECT c.id,
+       c.text AS content,
+       f.file_name,
+       CAST(GREATEST(COALESCE(1.0 - v.distance, 0.0), COALESCE(t.sim_score, 0.0)) AS FLOAT8) AS score
+FROM vector_search v
+FULL OUTER JOIN text_search t ON v.id = t.id
+JOIN document_chunks c ON c.id = COALESCE(v.id, t.id)
+JOIN ingested_files f ON f.id = c.file_id
+WHERE f.user_id = sqlc.arg('user_id')
+  AND f.status = 'completed'
+  AND f.deleted_at IS NULL
+ORDER BY (COALESCE(1.0 / (60 + v.rank), 0.0) + COALESCE(1.0 / (60 + t.rank), 0.0)) DESC
+LIMIT sqlc.arg('match_count');

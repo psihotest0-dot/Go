@@ -514,7 +514,17 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		return nil, err
 	}
 
-	if shouldSkipRetrieval(query) {
+	// A question that names one file of the library ("какво пише във файла CLBSV2") is
+	// about that file: the search stays inside it. The search of the whole library
+	// keeps at most two passages of a file and fills the answer with the nearest ones of
+	// other books, which then also showed up as sources (2026-11-15: 2 passages of the
+	// file, 6 of Freud, a cookbook and a book about vitamin B12).
+	scope, scoped := r.retrieval.FileNamedIn(ctx, userID, currentQuery(ctx), query)
+
+	// A short query is taken for filler ("да", "hi"), and so was "CLBSV2" - the name of the
+	// file itself, which the model sends when it is asked what is in the file (measured on
+	// 2026-11-15). When the question names a file, the query is the file and is searched.
+	if !scoped && shouldSkipRetrieval(query) {
 		return map[string]interface{}{
 			"status":  "skipped",
 			"reason":  "query is conversational filler",
@@ -524,7 +534,14 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 
 	limit := searchLimitArg(args, maxDocumentSearchResults)
 
-	results, err := r.retrieval.SearchRawChunks(ctx, userID, query, limit)
+	search := func(q string) ([]retrieval.SearchResult, error) {
+		if scoped {
+			return r.retrieval.SearchFileChunks(ctx, userID, scope.ID, q, limit)
+		}
+		return r.retrieval.SearchRawChunks(ctx, userID, q, limit)
+	}
+
+	results, err := search(query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search documents: %w", err)
 	}
@@ -532,7 +549,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	// English and a Bulgarian query often misses them (task 32, 2026-11-08). The
 	// first search stands on its own, so a failure of the second one costs nothing.
 	if queryEN, ok := stringArg(args, queryENArg); ok && !strings.EqualFold(queryEN, query) {
-		second, err := r.retrieval.SearchRawChunks(ctx, userID, truncateRunes(queryEN, maxQueryENRunes), limit)
+		second, err := search(truncateRunes(queryEN, maxQueryENRunes))
 		if err != nil {
 			slog.WarnContext(ctx, "the English search of search_documents failed, using the first one", "error", err)
 		} else {
@@ -561,8 +578,14 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		})
 	}
 
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"status":  "success",
 		"results": formattedResults,
-	}, nil
+	}
+	if scoped {
+		// The model should know that these are the passages of that file only, not the
+		// best ones of the library.
+		out["searched_only_in_file"] = scope.Name
+	}
+	return out, nil
 }
