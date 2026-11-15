@@ -67,7 +67,11 @@ const (
 	// On 2026-11-14 the tool save_style_note and its lines in the prompt, with the section
 	// for the notes on how to talk (plan item P42), took it to template 3 054 plus tool
 	// definitions 1 025 = 4 079 (the same method; 3 809 before). 4 220 keeps the slack.
-	fixedPromptTokens = 4220
+	// On 2026-11-15 the reply rule about where the knowledge comes from (about 120 tokens, with
+	// its sample sentence) took it to template 3 177 plus tool definitions 1 050 = 4 227 (the
+	// same method; 4 105 before, the tool definitions having grown by 25 since 2026-11-14).
+	// 4 370 keeps about 140 of slack.
+	fixedPromptTokens = 4370
 
 	// toolFloorTokens is what the derived budgets leave free for tool results
 	// even when the conversation and the dynamic prompt are as large as they may

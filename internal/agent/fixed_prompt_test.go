@@ -25,7 +25,10 @@ import (
 // above today's estimate: past it the real count may already be over the reserve.
 // Recalibrated on 2026-11-14 for save_style_note (plan item P42): the tokenizer counts
 // 4 079 against a reserve of 4 220.
-const maxFixedPromptEstimate = 5020
+// Recalibrated on 2026-11-15 for the reply rule about where the knowledge comes from: the
+// estimate is 5 127 (template 3 745, tool definitions 1 376) and the tokenizer counts 4 227
+// against a reserve of 4 370; the limit sits 3 % above the estimate.
+const maxFixedPromptEstimate = 5280
 
 // fixedPromptTokens is measured by hand with the tokenizer of the model, and it
 // once fell behind unnoticed (task 62: the V4 prompt had grown past the old

@@ -122,6 +122,32 @@ func TestChatPromptKeepsTheCloseRegisterAndTheRulesThatLimitIt(t *testing.T) {
 	}
 }
 
+// "От къде знаеш" gets an honest answer (2026-11-15, Gemma 4 12B, the real Telegram history,
+// the real prompt; 15 answers to three wordings of the question per variant): the model said
+// that its memory is a library it keeps reading ("Моята памет е като библиотека, която
+// постоянно преглеждам") or that it has access to books in 8 of 15 answers without a rule, in
+// 7 of 15 with the rule as one line among the tools, and in 0 of 15 with the rule as the last
+// reply rule, with a sample sentence; the sample matters: without it the answer offered to
+// check the books in 9 of 15 instead of 14 of 15 and 2 of 15 still claimed a library. The
+// sample is copied word for word in most answers; the question is rare and the sentence is true.
+func TestChatPromptTellsHonestlyWhereItsKnowledgeCameFrom(t *testing.T) {
+	chat := chatPrompt(t)
+
+	for name, want := range map[string]string{
+		"asked where it knows from, with no lookup in the turn":     "asked where you know something from and you made no lookup in this very turn",
+		"says it came from the training of the language model":      "the language model's own knowledge, learned in training",
+		"never calls its memory a library it searches or reads":     "never describe your memory as a library that you search or read",
+		"offers to check the books or the web":                      "Offer to check the books or the web now",
+		"a sample sentence, which the measurement showed to matter": "Не съм търсила нищо сега — знам го от обучението си като езиков модел",
+	} {
+		assert.Contains(t, chat, want, name)
+	}
+
+	// The rule is the last reply rule: put among the tool lines it changed nothing.
+	reply := chat[strings.Index(chat, "REPLY RULES"):]
+	assert.Contains(t, reply, "where you know something from", "it is a reply rule, not a tool line")
+}
+
 // Facts of the world that the library does not answer go to the web, not to the
 // memory of the model (2026-11-11, Gemma 4 12B, tool calls and answers measured on
 // 28 questions): without the rule the model named "Кутев, 2994 м" as the highest peak

@@ -259,13 +259,13 @@ func TestToolRoundsStayInsideTheWindow(t *testing.T) {
 	o := newGenerateOrchestrator(mock, tools)
 	o.budgets = newBudgets(&config.Config{LLMContextTokens: window, LLMEnableThinking: true})
 
-	// A heavy prompt (the fixed part plus a user turn of 2700 tokens), so the
+	// A heavy prompt (the fixed part plus a user turn of 2550 tokens), so the
 	// window - not the per-round cap - decides how much the tools may add. (It was
 	// 3500 until the fixed part grew by 850 tokens on 2026-11-07: with thinking on, the
 	// 5 000-token answer reserve and 3500 of user text no longer fit beside it; 2900
-	// until it grew by 200 more on 2026-11-14.)
+	// until it grew by 200 more on 2026-11-14, 2700 until it grew by 150 more on 2026-11-15.)
 	system := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: strings.Repeat("s", 4*fixedPromptTokens)}
-	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*2700)}
+	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*2550)}
 
 	content, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{system, user}, toolDefinitions(), nil)
 
