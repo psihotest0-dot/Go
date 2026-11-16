@@ -121,6 +121,10 @@ func TestPrepareTurnPutsTheNoteNextToTheLastMessageOnly(t *testing.T) {
 func TestPrepareTurnCountsTheWholeConversationNotTheWindow(t *testing.T) {
 	e := newAttachmentEnv(t)
 	o := orchestratorWith(t, e, answeringModel())
+	// A history longer than the window starts the rolling summary in the background; it reads
+	// the prompt templates, which the cleanup of orchestratorWith puts back: wait for it first
+	// (the race detector found it in CI on 2026-11-16).
+	t.Cleanup(o.summaryWG.Wait)
 	// The test budgets keep 10 messages: 5 answers at most are in the window. 11 answers
 	// before the question is the 12th reply: the question turn (11 % 4 == 3); the window alone
 	// would count 5 (a statement).
