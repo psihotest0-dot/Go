@@ -52,6 +52,11 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		}
 	}
 
+	// The dose of questions (P49): a note next to the message, in the copy the model reads.
+	// It goes in before the history is pruned, so that its tokens come out of the history
+	// budget, not out of the room of the answer.
+	chatCtx = o.withClosingNote(ctx, userID, req.SessionID, chatCtx, len(plan.files) > 0)
+
 	// The tools of this turn share its state: what untrusted text it has read and
 	// which proposals it made (see turnState).
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)

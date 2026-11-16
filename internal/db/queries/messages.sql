@@ -33,3 +33,13 @@ WHERE user_id = sqlc.arg('user_id') AND session_id = sqlc.arg('session_id')
 UPDATE messages
 SET analysis_attempts = analysis_attempts + 1
 WHERE id = $1;
+
+-- How many answers Lili had given in the conversation before the moment: the count that
+-- decides which turns end with a question (plan item P49). Empty answers are not counted,
+-- the same as in the history the prompt is built from.
+-- name: CountAssistantRepliesBefore :one
+SELECT count(*)::bigint
+FROM messages
+WHERE user_id = sqlc.arg('user_id') AND session_id = sqlc.arg('session_id')
+  AND role = 'assistant' AND content <> ''
+  AND created_at < sqlc.arg('before');

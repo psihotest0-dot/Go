@@ -90,10 +90,14 @@ func asksAboutLibrary(message string) bool {
 	return libraryAsking.MatchString(message) && libraryObject.MatchString(message)
 }
 
-// lastUserContent is the text of the message the model is about to answer.
+// lastUserContent is the text of the message the model is about to answer, as the person
+// wrote it: the closing note of the turn (closing_note.go) is for the model and is cut off,
+// because the filters that read this text (a question to the library, a request to delete
+// a file) are made for the person's own words - they have a limit on the length of the
+// message, and the note has words they look for ("notes").
 func lastUserContent(messages []openai.ChatCompletionMessage) string {
 	if n := len(messages); n > 0 && messages[n-1].Role == openai.ChatMessageRoleUser {
-		return messages[n-1].Content
+		return withoutClosingNote(messages[n-1].Content)
 	}
 	return ""
 }

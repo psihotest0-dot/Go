@@ -7,11 +7,36 @@ package db
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/sqlc-dev/pqtype"
 )
+
+const countAssistantRepliesBefore = `-- name: CountAssistantRepliesBefore :one
+SELECT count(*)::bigint
+FROM messages
+WHERE user_id = $1 AND session_id = $2
+  AND role = 'assistant' AND content <> ''
+  AND created_at < $3
+`
+
+type CountAssistantRepliesBeforeParams struct {
+	UserID    uuid.UUID    `json:"user_id"`
+	SessionID string       `json:"session_id"`
+	Before    sql.NullTime `json:"before"`
+}
+
+// How many answers Lili had given in the conversation before the moment: the count that
+// decides which turns end with a question (plan item P49). Empty answers are not counted,
+// the same as in the history the prompt is built from.
+func (q *Queries) CountAssistantRepliesBefore(ctx context.Context, arg CountAssistantRepliesBeforeParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countAssistantRepliesBefore, arg.UserID, arg.SessionID, arg.Before)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
 
 const createMessage = `-- name: CreateMessage :one
 INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts

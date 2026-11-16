@@ -174,7 +174,15 @@ type Config struct {
 	// DeepSeekAPIKey (DEEPSEEK_API_KEY) is the key of the paid API; the web tools use it too.
 	// It is never logged.
 	DeepSeekAPIKey string
+	// ChatQuestionEvery (CHAT_QUESTION_EVERY) is the distance between the replies of Lili that
+	// end with a question: every 4th by default, 0 puts the dose off (the rule of the prompt,
+	// "end with a statement", then stands alone). See internal/agent/closing_note.go.
+	ChatQuestionEvery int
 }
+
+// DefaultChatQuestionEvery is the dose of questions when CHAT_QUESTION_EVERY is not set: a
+// reply of four (plan item P49).
+const DefaultChatQuestionEvery = 4
 
 // DefaultPaidLLMDailyUSD is the daily limit of the paid model when PAID_LLM_DAILY_USD is
 // not set: the cost measured for the Oracle on a day of 40 signals (about $0.02, 2026-11-14)
@@ -210,6 +218,22 @@ func positiveIntEnv(name string, def int) int {
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 {
+		slog.Warn("ignoring invalid "+name, slog.String("value", raw), slog.Int("using", def))
+		return def
+	}
+	return n
+}
+
+// nonNegativeIntEnv reads a whole number from 0 up from the environment, where 0 is a
+// meaningful value (a switch put off). An unset variable gives def silently; an unparsable
+// or negative one gives def with a warning.
+func nonNegativeIntEnv(name string, def int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
 		slog.Warn("ignoring invalid "+name, slog.String("value", raw), slog.Int("using", def))
 		return def
 	}
@@ -333,5 +357,6 @@ func Load() *Config {
 		PaidLLMModel:           strings.TrimSpace(os.Getenv("PAID_LLM_MODEL")),
 		LibraryLLM:             strings.ToLower(strings.TrimSpace(os.Getenv("LIBRARY_LLM"))),
 		PaidLLMDailyUSD:        float64(floatEnv("PAID_LLM_DAILY_USD", DefaultPaidLLMDailyUSD, 0.01, 1000)),
+		ChatQuestionEvery:      nonNegativeIntEnv("CHAT_QUESTION_EVERY", DefaultChatQuestionEvery),
 	}
 }

@@ -58,6 +58,10 @@ type Orchestrator struct {
 	paid        llm.LLMClient
 	paidName    string
 	libraryPaid bool
+	// questionEvery is CHAT_QUESTION_EVERY: every this-many-th reply of a conversation ends
+	// with a question; 0, the value of an Orchestrator built without NewOrchestrator, puts
+	// the dose off. See closing_note.go.
+	questionEvery int
 }
 
 // WithFileTools offers the tools for the user's own files (plan item P44) as a group:
@@ -87,6 +91,8 @@ func NewOrchestrator(database *db.Database, r *retrieval.RetrievalService, l llm
 		tools:        t,
 		budgets:      b,
 		adaptiveSkip: cfg.EnableAdaptiveSkip,
+
+		questionEvery: cfg.ChatQuestionEvery,
 	}
 }
 

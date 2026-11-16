@@ -91,7 +91,9 @@ func TestPrepareTurnForRegenerationLeavesTheOldAnswerOut(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"user: въпрос", "assistant: стар отговор"}, contents(fresh.messages[1:]))
-	assert.Equal(t, []string{"user: въпрос"}, contents(regenerated.messages[1:]), "only the old answer is dropped")
+	// The only reply of the conversation is the one being replaced: the new one is the first
+	// and ends with a statement (see closing_note.go), which is the one change in the message.
+	assert.Equal(t, []string{"user: въпрос" + closingNoteStatement}, contents(regenerated.messages[1:]), "only the old answer is dropped")
 }
 
 func TestPrepareTurnReportsAFailureWithoutAModelCall(t *testing.T) {

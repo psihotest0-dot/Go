@@ -93,6 +93,28 @@ func TestLoadListenAddr(t *testing.T) {
 	}
 }
 
+func TestLoadChatQuestionEvery(t *testing.T) {
+	tests := []struct {
+		name, value string
+		want        int
+	}{
+		{name: "not set: every 4th reply", value: "", want: 4},
+		{name: "explicit", value: "3", want: 3},
+		{name: "space is trimmed", value: " 2 ", want: 2},
+		{name: "0 puts the dose off and is not the default", value: "0", want: 0},
+		{name: "not a number falls back", value: "often", want: 4},
+		{name: "negative falls back", value: "-1", want: 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CHAT_QUESTION_EVERY", tt.value)
+			if got := Load().ChatQuestionEvery; got != tt.want {
+				t.Fatalf("ChatQuestionEvery = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadLLMSlots(t *testing.T) {
 	tests := []struct {
 		name           string
