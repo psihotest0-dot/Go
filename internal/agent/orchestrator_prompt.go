@@ -9,9 +9,21 @@ import (
 	"go-monolith/internal/prompts"
 )
 
+// promptClock is the clock of the system prompt (a test sets it).
+var promptClock = time.Now
+
+// promptDate is the date of the system prompt: the hour, not the minute and the second. The
+// system prompt is the start of every request and the servers reuse the part of a request
+// that is the same as the one before it, so a date that changes every second makes every
+// turn start with a different prefix; the hour changes it once an hour, and the date stands
+// after the blocks that do not change between turns (see prompt_cache_test.go, plan item P50).
+func promptDate(t time.Time) string {
+	return t.Format("2006-01-02 15") + ":00"
+}
+
 func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 	systemContent, err := prompts.GlobalManager.Render("chat_system.tmpl", map[string]interface{}{
-		"CurrentDate":      time.Now().Format("2006-01-02 15:04:05"),
+		"CurrentDate":      promptDate(promptClock()),
 		"Rules":            ctx.Rules,
 		"StyleNotes":       ctx.StyleNotes,
 		"TopMemories":      ctx.TopMemories,
