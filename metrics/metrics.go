@@ -73,7 +73,9 @@ var (
 	// would not do: bad name, too big, over a limit) or "failed" (the server). Two more
 	// count the checks of what the assistant says: "removal"/"note" (the request asked to
 	// delete or rename a file and the model was told it cannot) and "claim"/"corrected" (an
-	// answer claimed a change of the files that did not happen and got a correction).
+	// answer claimed a change of the files that did not happen and got a correction), and
+	// "claim"/"retried" (an answer claimed a write and no file tool was called: the turn was
+	// asked again with the file tools, plan item P52).
 	UserFileOps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "user_files_operations_total",
 		Help: "Operations of the file tools on the user's files, by operation and result.",

@@ -425,6 +425,20 @@ func (o *Orchestrator) generateRounds(
 	tools []openai.Tool,
 	onDelta deltaFunc,
 ) (string, string, []openai.ToolCall, error) {
+	return o.runRounds(ctx, finalMessages, tools, onDelta, nil)
+}
+
+// runRounds is generateRounds with the tools the first round must use: when require is
+// not empty, the first round offers only them and requires a call, as the round after an
+// unlock does, and the turn has the extra rounds of an unlocked group. The retry of an
+// answer that claimed a write it did not make starts this way (see files_guard.go).
+func (o *Orchestrator) runRounds(
+	ctx context.Context,
+	finalMessages []openai.ChatCompletionMessage,
+	tools []openai.Tool,
+	onDelta deltaFunc,
+	require []openai.Tool,
+) (string, string, []openai.ToolCall, error) {
 	// The caller's slice is copied because tool rounds append to it and the
 	// caller may still use its own view (e.g. for tracing).
 	messages := slices.Clone(finalMessages)
@@ -439,18 +453,24 @@ func (o *Orchestrator) generateRounds(
 	// look (0 of 4 with the real chat's history). The first round offers the one tool
 	// and requires a call: llama-server ignores a tool_choice that names a function,
 	// but it keeps "required" - and with one tool on offer that is the same thing.
-	forced := forcedFirstTool(tools, lastUserContent(messages))
+	forced := ""
+	if len(require) == 0 {
+		forced = forcedFirstTool(tools, lastUserContent(messages))
+	}
 
 	// active are the tools on offer in this round; a group of tools joins them when the
 	// model asks for it (see toolGroup).
 	active := tools
 	toolRounds, unlocks := 0, 0
+	if len(require) > 0 {
+		unlocks = 1
+	}
 	// asked are the tools the model has just unlocked. The round after the unlock must
 	// use one: left free, the model sometimes answered at once, "Записах плана във
 	// файла", having written nothing - or took the message that the tools are available
 	// for the text of the file (4 of about 30 turns in the live acceptance, 2026-11-14).
 	// As with the forced first round, only these tools are offered and a call is required.
-	var asked []openai.Tool
+	asked := require
 	for {
 		req := o.chatRequest(messages, active)
 		switch {

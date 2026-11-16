@@ -24,8 +24,9 @@ import (
 //
 // The first is told to the model, when the message asks for it (a note on that one request,
 // not in every prompt). The second cannot be prevented by a prompt, so it is checked in
-// code and shown: an answer that claims a write or a removal that did not happen gets a
-// correction under it.
+// code: an answer that claims a write no file tool made is asked again once, with the file
+// tools open (retryUnbackedWrite), and an answer that still claims a write or a removal
+// that did not happen gets a correction under it.
 
 const (
 	// removalNote is added to the message of the user, for the model only, when the message
@@ -38,6 +39,15 @@ const (
 		"Можеш да го направиш сам от таба „Файлове на Лили“ (кошчето)."
 	writeCorrection = "⚠️ Поправка: в това съобщение нищо не е записано и не е добавено във файл — не е извикан инструмент за файлове. " +
 		"Кажи ми пак какво да направя."
+
+	// retryNote is added to the message of the user, for the model only, when its answer
+	// claimed a write that no tool made and the turn is asked again (retryUnbackedWrite).
+	retryNote = "[Note for the assistant, not written by the user: your first answer to this message said that a file was written, " +
+		"but no file tool was called and nothing was written. Do what the user asked now with the file tools " +
+		"(append_file adds to a file that exists, write_file makes a new one; list_files shows what is there), " +
+		"then say in one or two sentences what the tools did.]"
+	// retryNotice is streamed under the first answer before the second one.
+	retryNotice = "\n\n⚠️ Това не беше записано — правя го сега.\n\n"
 
 	maxRemovalQuestionRunes = 400
 )
@@ -71,8 +81,13 @@ func asksToRemoveFile(message string) bool {
 // written, added to or removed when it was not, or "" when there is nothing to correct.
 // wrote tells that a file tool wrote or added something in this turn. A removal is never
 // backed: no tool does it.
-func unbackedFileClaim(answer string, wrote bool) string {
-	if !fileMention.MatchString(answer) {
+//
+// The answer is about a file when it names one, or when askedAboutFile: the message named
+// a file and the turn called no tool at all. "Записах го веднага." to "добави във същия
+// файл …" names nothing (1 of 4 in the acceptance run of P52, 2026-11-16), and without a
+// tool call it cannot be a memory the model saved either.
+func unbackedFileClaim(answer string, wrote, askedAboutFile bool) string {
+	if !askedAboutFile && !fileMention.MatchString(answer) {
 		return ""
 	}
 	switch {
@@ -126,7 +141,23 @@ func (o *Orchestrator) generateGuarded(
 	if err != nil {
 		return content, reasoning, executed, err
 	}
-	if note := unbackedFileClaim(content, turnFrom(ctx).filesWritten() > 0); note != "" {
+	turn := turnFrom(ctx)
+	userNamedFile := fileMention.MatchString(lastUserContent(finalMessages))
+	claim := func() string {
+		return unbackedFileClaim(content, turn.filesWritten() > 0, userNamedFile && len(executed) == 0)
+	}
+	if claim() == writeCorrection && !usedFileTools(executed) {
+		if open, required := o.retryFileTools(tools, turn); len(required) > 0 {
+			retried, retriedReasoning, retriedCalls, err := o.retryUnbackedWrite(ctx, messages, open, required, onDelta)
+			reasoning += retriedReasoning
+			executed = append(executed, retriedCalls...)
+			if err != nil {
+				return retried, reasoning, executed, err
+			}
+			content = retried
+		}
+	}
+	if note := claim(); note != "" {
 		slog.WarnContext(ctx, "the answer claims a change of the files that did not happen; a correction is added",
 			"answer_runes", utf8.RuneCountInString(content))
 		metrics.UserFileOps.WithLabelValues("claim", "corrected").Inc()
@@ -138,4 +169,62 @@ func (o *Orchestrator) generateGuarded(
 		}
 	}
 	return content, reasoning, executed, nil
+}
+
+// usedFileTools tells whether the turn called any tool of the file group, the stub
+// included. Such a turn may have made a proposal or read a file; its claim is only
+// corrected, not retried.
+func usedFileTools(calls []openai.ToolCall) bool {
+	return slices.ContainsFunc(calls, func(c openai.ToolCall) bool {
+		switch c.Function.Name {
+		case filesStubTool, listFilesTool, readFileTool, writeFileTool, appendFileTool:
+			return true
+		}
+		return false
+	})
+}
+
+// retryFileTools are the tools of the retry: open is the offer of the turn with the file
+// group unlocked, required are the file tools the first round must use. The rule of
+// nextTools holds here too: after the web, read_file is not offered. Nothing is returned
+// when the stub is not on offer.
+func (o *Orchestrator) retryFileTools(tools []openai.Tool, turn *turnState) (open, required []openai.Tool) {
+	if !hasTool(tools, filesStubTool) {
+		return nil, nil
+	}
+	open = replaceTool(tools, filesStubTool, fileToolDefinitions())
+	if turn.has(sourceWebSearch) || turn.has(sourceWebFetch) {
+		open = withoutTools(open, readFileTool)
+	}
+	return open, addedTools(tools, open)
+}
+
+// retryUnbackedWrite asks the model again, when its answer claimed a file was written and
+// no file tool was called: the file group is open and the first round must call one of
+// its tools (plan item P52).
+//
+// Why: in a conversation where a file was made, the history keeps only the answer's
+// words ("Създадох файла test_file.txt…"), not the tool call, and the group is locked
+// again in the next turn. The model copied its own words: "допиши във същия файл" got
+// "Добавих…" with no call in 12 of 12 replays of the real Telegram context (2026-11-16);
+// a correction under the answer told the user, but every false "Добавих" made the next
+// turn worse.
+//
+// The client has already seen the first answer as it streamed: a line under it says it
+// was not written and the second answer follows. What is returned, and stored, is the
+// second answer alone, so that the history does not keep the false claim.
+func (o *Orchestrator) retryUnbackedWrite(
+	ctx context.Context,
+	messages []openai.ChatCompletionMessage,
+	open, required []openai.Tool,
+	onDelta deltaFunc,
+) (string, string, []openai.ToolCall, error) {
+	slog.WarnContext(ctx, "the answer claims a file write that no tool made; the turn is asked again with the file tools")
+	metrics.UserFileOps.WithLabelValues("claim", "retried").Inc()
+	if onDelta != nil {
+		if err := onDelta(retryNotice, ""); err != nil {
+			return "", "", nil, err
+		}
+	}
+	return o.runRounds(ctx, withNoteOnLastUser(messages, retryNote), open, onDelta, required)
 }
