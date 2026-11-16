@@ -46,7 +46,7 @@ func TestThePromptDateIsTheHourAndStandsBetweenTheStableAndTheChangingBlocks(t *
 	}
 	out := promptAt(t, time.Date(2026, 11, 16, 16, 47, 33, 0, time.Local), c)
 
-	assert.Contains(t, out, "2026-11-16 16:00", "the hour, not the minute and the second")
+	assert.Contains(t, out, "Current date and approximate time: 2026-11-16, about 16:00", "the hour, not the minute and the second")
 	assert.NotContains(t, out, "16:47", "no minutes")
 	assert.NotContains(t, out, "16:47:33")
 	date := strings.Index(out, "Current date")

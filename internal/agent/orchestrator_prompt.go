@@ -12,13 +12,15 @@ import (
 // promptClock is the clock of the system prompt (a test sets it).
 var promptClock = time.Now
 
-// promptDate is the date of the system prompt: the hour, not the minute and the second. The
+// promptDate is the date of the system prompt: the day and the hour ("2026-11-16, about
+// 16:00"), not the minute and the second - the model says "около 16:00" when asked the time,
+// where "16:00" alone it gave as the exact time (measured 2026-11-16, 3 of 3). The
 // system prompt is the start of every request and the servers reuse the part of a request
 // that is the same as the one before it, so a date that changes every second makes every
 // turn start with a different prefix; the hour changes it once an hour, and the date stands
 // after the blocks that do not change between turns (see prompt_cache_test.go, plan item P50).
 func promptDate(t time.Time) string {
-	return t.Format("2006-01-02 15") + ":00"
+	return t.Format("2006-01-02") + ", about " + t.Format("15") + ":00"
 }
 
 func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
