@@ -693,6 +693,20 @@ tests:
       exp_annotations:
         summary: The paid model has reached its daily limit
         description: 'PAID_LLM_DAILY_USD is spent (estimated at the peak prices): the Oracle answers HOLD, and no request is sent, until midnight. Look at paid_llm_tokens_total{kind} to see what used it up: a loop would show as thousands of requests. The alert clears with the first request after midnight.'
+- name: the paid model switched off is quiet
+  # With PAID_LLM_ENABLED=false both gauges still exist and read 0 (they are registered at
+  # start), and 0 >= 0 sent "the paid model has reached its daily limit" on 2026-11-14,
+  # from 23:37 to 02:02, while the paid model was off.
+  interval: 1m
+  input_series:
+  - series: paid_llm_spend_limit_usd
+    values: 0 0 0 0
+  - series: paid_llm_spend_today_usd
+    values: 0 0 0 0
+  alert_rule_test:
+  - eval_time: 3m
+    alertname: PaidLLMLimitReached
+    exp_alerts: []
 - name: the paid model under its limit is quiet
   interval: 1m
   input_series:

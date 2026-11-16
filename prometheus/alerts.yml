@@ -109,10 +109,12 @@ groups:
           summary: "More than 500 paid web searches/fetches in the last day"
           description: "About $0.75 per 1000 requests; a loop in the model's tool calls would show up here first."
 
-      # The paid model (PAID_LLM_ENABLED=true; the Oracle on DeepSeek). The gauges exist only
-      # when it is on, so nothing fires while it is off.
+      # The paid model (PAID_LLM_ENABLED=true; the Oracle or the chat on DeepSeek). The two
+      # gauges exist always (they are registered at start) and both read 0 while the paid
+      # model is off: 0 >= 0 sent this alert for 2.5 hours on 2026-11-14/15, so a limit of 0
+      # is "no limit set", not a limit that is reached.
       - alert: PaidLLMLimitReached
-        expr: paid_llm_spend_today_usd >= paid_llm_spend_limit_usd
+        expr: paid_llm_spend_limit_usd > 0 and paid_llm_spend_today_usd >= paid_llm_spend_limit_usd
         labels:
           severity: warning
         annotations:
