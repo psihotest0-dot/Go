@@ -90,6 +90,35 @@ func TestContextHandlerIgnoresTheRawUserHeader(t *testing.T) {
 	assert.NotContains(t, findLine(t, logLines(t, buf), "odd header"), "user_id")
 }
 
+// The access log is written before the user middleware has parsed the header, so
+// a 5000-character X-User-ID must be cut on the "incoming request" and the
+// "request finished" lines too, and a normal uuid must pass through whole. (A
+// finished line is written only for an error status or a slow request: the
+// handler answers 500.)
+func TestAccessLogCutsALongUserHeader(t *testing.T) {
+	buf := &bytes.Buffer{}
+	handler := Middleware(slog.New(slog.NewJSONHandler(buf, nil)))(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) }))
+	normal := uuid.New().String()
+
+	for header, wantWhole := range map[string]bool{strings.Repeat("я", 5000): false, normal: true} {
+		buf.Reset()
+		req := httptest.NewRequest(http.MethodGet, "/memories", nil)
+		req.Header.Set("X-User-ID", header)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+
+		for _, msg := range []string{"incoming request", "request finished"} {
+			logged, _ := findLine(t, logLines(t, buf), msg)["user_id"].(string)
+			if wantWhole {
+				assert.Equal(t, header, logged, msg)
+			} else {
+				assert.LessOrEqual(t, len([]rune(logged)), maxLoggedHeaderRunes+3, msg)
+				assert.NotEmpty(t, logged, msg)
+			}
+		}
+	}
+}
+
 func TestContextHandlerSurvivesWithAttrsAndWithGroup(t *testing.T) {
 	buf := captureDefaultLogger(t)
 	ctx := context.WithValue(context.Background(), RequestIDKey, "req-2")

@@ -167,7 +167,10 @@ func Middleware(logger *slog.Logger, opts ...MiddlewareOption) func(http.Handler
 				reqID = uuid.NewString()
 			}
 			w.Header().Set("X-Request-ID", reqID)
-			userID := r.Header.Get("X-User-ID")
+			// This runs before UserMiddleware has parsed the header, so what is
+			// logged on every line of the request is client text of any length:
+			// cut it like UserMiddleware does for its own warning.
+			userID := truncateRunes(r.Header.Get("X-User-ID"), maxLoggedHeaderRunes)
 
 			route := &routeRecorder{}
 			ctx := context.WithValue(r.Context(), RequestIDKey, reqID)
