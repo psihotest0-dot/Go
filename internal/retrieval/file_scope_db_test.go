@@ -19,12 +19,11 @@ import (
 // distances from the question, and "other.pdf" with six chunks that are nearer to the
 // question than any of them. The question is the first axis (see questionEmbedder).
 type scopeEnv struct {
-	svc     *retrieval.RetrievalService
-	d       *db.Database
-	user    uuid.UUID
-	named   uuid.UUID
-	other   uuid.UUID
-	namedID map[string]uuid.UUID // text -> chunk id, for the chunks of named.pdf
+	svc   *retrieval.RetrievalService
+	d     *db.Database
+	user  uuid.UUID
+	named uuid.UUID
+	other uuid.UUID
 }
 
 func (e *scopeEnv) addFile(t *testing.T, name, status string) uuid.UUID {

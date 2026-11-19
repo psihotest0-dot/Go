@@ -41,8 +41,8 @@ func TestJoinHyphenated(t *testing.T) {
 		{"the break itself is not evidence", "зат-\nворници", "затворници"},
 
 		// An invisible hyphen is never a real one.
-		{"soft hyphen at the end of a line", "зат­\nворници", "затворници"},
-		{"soft hyphen inside a word", "ин­формация", "информация"},
+		{"soft hyphen at the end of a line", "зат\u00ad\nворници", "затворници"},
+		{"soft hyphen inside a word", "ин\u00adформация", "информация"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
