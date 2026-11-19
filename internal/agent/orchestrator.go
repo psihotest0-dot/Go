@@ -42,6 +42,9 @@ type Orchestrator struct {
 	// a future graceful shutdown) can wait for them.
 	summaryRuns summaryRuns
 	summaryWG   sync.WaitGroup
+	// windows remembers where each session's history window began, so that it
+	// is cut in steps and not slid on every turn (see historyWindows).
+	windows historyWindows
 	// budgets are the token limits requests are built with; the zero value
 	// means the built-in ones (see limits).
 	budgets budgets

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -94,6 +95,40 @@ func TestPrepareTurnForRegenerationLeavesTheOldAnswerOut(t *testing.T) {
 	// The only reply of the conversation is the one being replaced: the new one is the first
 	// and ends with a statement (see closing_note.go), which is the one change in the message.
 	assert.Equal(t, []string{"user: въпрос" + closingNoteStatement}, contents(regenerated.messages[1:]), "only the old answer is dropped")
+}
+
+// P51 through the real preparation of a turn: in a chat longer than the history window the
+// first history message of the prompt must stay the same for several turns in a row, not
+// move on every turn - otherwise the model server reads the whole history again each time.
+func TestPrepareTurnKeepsTheStartOfTheHistoryBetweenTurns(t *testing.T) {
+	e := newAttachmentEnv(t)
+	o := orchestratorWith(t, e, answeringModel())
+	const session = "long-chat"
+	// 24 stored messages: more than the window of 10.
+	for i := 0; i < 12; i++ {
+		storeTurnMessages(t, e, session, [2]string{"user", fmt.Sprintf("въпрос %d", i)}, [2]string{"assistant", fmt.Sprintf("отговор %d", i)})
+	}
+
+	var firsts []string
+	const turns = 12
+	for i := 12; i < 12+turns; i++ {
+		storeTurnMessages(t, e, session, [2]string{"user", fmt.Sprintf("въпрос %d", i)})
+		prep, err := o.prepareTurn(context.Background(), e.userID, ChatRequest{SessionID: session, Content: fmt.Sprintf("въпрос %d", i)}, false)
+		require.NoError(t, err)
+		history := prep.messages[1:]
+		require.LessOrEqual(t, len(history), 10, "turn %d keeps to the limit", i)
+		require.Contains(t, history[len(history)-1].Content, fmt.Sprintf("въпрос %d", i), "the question being answered is last")
+		firsts = append(firsts, history[0].Content)
+		storeTurnMessages(t, e, session, [2]string{"assistant", fmt.Sprintf("отговор %d", i)})
+	}
+
+	changes := 0
+	for i := 1; i < len(firsts); i++ {
+		if firsts[i] != firsts[i-1] {
+			changes++
+		}
+	}
+	assert.LessOrEqual(t, changes, turns/2, "the window is cut in steps; a sliding one changes at every turn (%d of %d): %v", changes, turns-1, firsts)
 }
 
 func TestPrepareTurnReportsAFailureWithoutAModelCall(t *testing.T) {

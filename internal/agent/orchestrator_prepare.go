@@ -69,7 +69,15 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		"memory_ids": memoryIDs,
 	})
 
-	history := pruneHistory(chatCtx.History, plan.limits.historyTokens, plan.limits.historyMessages)
+	// The window keeps its start from turn to turn and is cut in steps (P51), so that the
+	// prompt only grows in between and the model server can reuse its start.
+	windowKey := summaryKey(userID, req.SessionID)
+	prevStart, hasPrev := o.windows.get(windowKey)
+	history, start := pruneHistorySteady(chatCtx.History, chatCtx.HistoryAt, prevStart, hasPrev,
+		plan.limits.historyTokens, plan.limits.historyMessages)
+	if !start.IsZero() {
+		o.windows.put(windowKey, start)
+	}
 	chatCtx.RollingSum = o.rollingSummary(ctx, userID, req.SessionID, chatCtx.windowStart(len(history)))
 
 	systemMessage, err := buildSystemPrompt(chatCtx)
