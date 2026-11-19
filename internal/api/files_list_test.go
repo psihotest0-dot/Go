@@ -15,6 +15,7 @@ import (
 	"go-monolith/internal/api"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
+	"go-monolith/internal/dbtest"
 )
 
 // createTestFile inserts an ingested_files row without going through the upload
@@ -85,6 +86,9 @@ func TestGetFilesReportsEmbeddingStatus(t *testing.T) {
 
 	otherUser, err := database.Queries.CreateUser(ctx)
 	require.NoError(t, err)
+	// The other user's file and chunk go with the user. Left behind, the chunk is counted by
+	// the tests of operations over the whole table (internal/reembed) in the next run.
+	t.Cleanup(func() { dbtest.DeleteUser(t, database.Pool, otherUser.ID) })
 
 	ready := createTestFile(t, database, userID, "ready.txt", "completed")
 	empty := createTestFile(t, database, userID, "empty.txt", "completed")
