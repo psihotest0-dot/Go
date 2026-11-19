@@ -78,11 +78,17 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     volumes:
+      # Grafana's own database (users, preferences, anything changed in the UI):
+      # without it a recreated container starts empty. The dashboards below are
+      # a bind mount inside this volume's path and stay files in the repo.
+      - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
       - ./grafana/dashboards:/var/lib/grafana/dashboards
     environment:
       # Set GRAFANA_ADMIN_PASSWORD in .env (see .env.example). Grafana only reads
-      # this when it creates its database, i.e. on a fresh container.
+      # this when it creates its database, i.e. the first time the volume is empty.
+      # Changing it later does nothing: `docker compose exec grafana grafana cli
+      # admin reset-admin-password <new>` changes the stored one.
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
 
 volumes:
@@ -93,3 +99,6 @@ volumes:
     # depend on the folder name. `docker compose down -v` deletes it, plain
     # `down` does not. Retention is the Prometheus default (15 days).
     name: go_prometheus_data
+  grafana_data:
+    # Explicit name, like the others. `docker compose down -v` deletes it.
+    name: go_grafana_data
