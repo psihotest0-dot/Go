@@ -63,6 +63,10 @@ var (
 	removalClaim = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:изтрих|премахнах|преименувах|унищожих|deleted|removed)(?:[^\p{L}]|$)`)
 	// writeClaim: it says it wrote or added something.
 	writeClaim = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:записах|запазих|съхраних|добавих|прехвърлих|saved|wrote)(?:[^\p{L}]|$)`)
+	// appendVerb: the message asks to add to something ("добави", "допиши", "append", "add");
+	// createVerb: it says it is a new file. See asksToAppend.
+	appendVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:добав|допиш|дописв|допълн|прибав|append|add(?:[^\p{L}]|$))`)
+	createVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:създа|нов\p{L}*\s+файл|new\s+file|create|make\s+a\s+file)`)
 	// fileMention: the sentence is about a file.
 	fileMention = regexp.MustCompile(`(?i)(?:файл|папк|\.(?:txt|md|csv|json|ya?ml|log)(?:[^\p{L}]|$)|(?:^|[^\p{L}])(?:file|folder)(?:[^\p{L}]|$))`)
 )
@@ -75,6 +79,12 @@ func asksToRemoveFile(message string) bool {
 		return false
 	}
 	return removalVerb.MatchString(message) && removalObject.MatchString(message)
+}
+
+// asksToAppend tells whether a message asks to add to a file and not to make one. A plain
+// filter: when the message also speaks of creating or of a new file it is not one.
+func asksToAppend(message string) bool {
+	return appendVerb.MatchString(message) && !createVerb.MatchString(message)
 }
 
 // unbackedFileClaim returns the correction to show under an answer that says a file was
@@ -148,6 +158,13 @@ func (o *Orchestrator) generateGuarded(
 	}
 	if claim() == writeCorrection && !usedFileTools(executed) {
 		if open, required := o.retryFileTools(tools, turn); len(required) > 0 {
+			// "Add to the file" after a history in which the model said it had deleted it:
+			// left a choice the model took write_file (a replacement, which waits for the
+			// user's confirmation) instead of append_file. The first round of the retry
+			// offers no write_file; the later rounds still do, for a file that is not there.
+			if asksToAppend(lastUserContent(finalMessages)) {
+				required = withoutTools(required, writeFileTool)
+			}
 			retried, retriedReasoning, retriedCalls, err := o.retryUnbackedWrite(ctx, messages, open, required, onDelta)
 			reasoning += retriedReasoning
 			executed = append(executed, retriedCalls...)

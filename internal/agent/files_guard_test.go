@@ -257,12 +257,49 @@ func TestAWriteClaimWithoutAToolIsAskedAgainWithTheFileTools(t *testing.T) {
 	require.Len(t, mock.Requests, 3)
 	retry := mock.Requests[1]
 	assert.Equal(t, "required", retry.ToolChoice)
-	assert.ElementsMatch(t, []string{listFilesTool, readFileTool, writeFileTool, appendFileTool}, toolNames(retry.Tools))
+	assert.ElementsMatch(t, []string{listFilesTool, readFileTool, appendFileTool}, toolNames(retry.Tools),
+		"\"допиши\" is an append: the first round of the retry has no write_file to choose")
 	last := retry.Messages[len(retry.Messages)-1]
 	assert.Contains(t, last.Content, "no file tool was called")
 	assert.Equal(t, "допиши във същия файл нещо", history[0].Content, "the note is not stored")
 	assert.Nil(t, mock.Requests[2].ToolChoice, "after the call the model is free again")
 	assert.NotContains(t, toolNames(mock.Requests[2].Tools), filesStubTool, "the group stays open")
+	assert.Contains(t, toolNames(mock.Requests[2].Tools), writeFileTool, "the later rounds offer the whole group again")
+}
+
+// A message that makes a file keeps write_file in the first round of the retry.
+func TestARetryForANewFileOffersWriteFile(t *testing.T) {
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{textChunk("Записах файла ideas.txt.")},
+		{textChunk("Ето.")},
+	}}
+	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
+
+	_, _, _, err := o.generateResponse(t.Context(),
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "създай файл ideas.txt и добави първата идея"}}, o.turnTools(), nil)
+
+	require.NoError(t, err)
+	require.Len(t, mock.Requests, 2)
+	assert.ElementsMatch(t, []string{listFilesTool, readFileTool, writeFileTool, appendFileTool}, toolNames(mock.Requests[1].Tools))
+}
+
+func TestAsksToAppend(t *testing.T) {
+	for message, want := range map[string]bool{
+		"допиши във същия файл":                           true,
+		"добави във същият файл - може да съм депресиран": true,
+		"Добавете ред в mood_log.txt":                     true,
+		"прибави още една идея":                           true,
+		"append a line to notes.txt":                      true,
+		"add this to the file":                            true,
+		"създай файл ideas.txt и добави първата идея":     false,
+		"запиши в нов файл plan.txt":                      false,
+		"create a file and add a line":                    false,
+		"запиши това във файл":                            false,
+		"address the letter":                              false,
+		"какво има във файла":                             false,
+	} {
+		assert.Equal(t, want, asksToAppend(message), message)
+	}
 }
 
 func TestARetryThatStillWritesNothingIsCorrected(t *testing.T) {
