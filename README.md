@@ -19,7 +19,7 @@ A high-performance Go monolith backing an AI Agent service, providing vector sim
 
 ### Orchestrator Pipeline
 The main agent orchestrator (`internal/agent`) implements a streaming pipeline using Server-Sent Events (SSE). It handles:
-1. Fetching history from PostgreSQL and fitting it into a token budget (`LLM_HISTORY_TOKENS`, `LLM_HISTORY_MESSAGES`); older turns are replaced by a rolling summary.
+1. Fetching history from PostgreSQL and fitting it into a token budget (`LLM_HISTORY_TOKENS`, `LLM_HISTORY_MESSAGES`); older turns are replaced by a rolling summary. The history window keeps its start from turn to turn and is cut back to 60% of its limits in one step when it is full (not slid by one message every turn), so a model server can reuse the cached start of the prompt.
 2. Generating real-time embeddings for the user's prompt using the embedder sidecar.
 3. Fetching semantically similar long-term memories and document chunks via Hybrid Search.
 4. Calling the LLM with the context and streaming response chunks directly to the user. The model may call tools (search, web search/fetch, saving a memory, proposing a global rule); the output is cleaned of `<think>` blocks and tool markup before it is shown or stored.
@@ -87,7 +87,7 @@ The system supports uploading external knowledge documents via the `POST /v1/fil
 The bot starts when `TELEGRAM_BOT_TOKEN` is set. **It answers nobody until `TELEGRAM_ALLOWED_CHAT_IDS` lists the chat ids it may talk to** (comma separated); the token only controls the bot, not who may write to it.
 1. Write `/id` to the bot — it answers with your chat id (the only command open to everyone).
 2. Put the id in `.env` as `TELEGRAM_ALLOWED_CHAT_IDS=<id>` and restart the backend.
-3. Commands: `/link <user-uuid>` ties the chat to an existing backend user (by default the chat gets a user of its own); `/pending` lists the proposals waiting for confirmation, `/approve <n>` and `/reject <n>` decide them. Any other text is a chat message. The bot works in private chats and understands text only (files go through the web client). The messages of one chat are answered one at a time, in the order they arrived.
+3. Commands: `/link <user-uuid>` ties the chat to an existing backend user (by default the chat gets a user of its own); `/pending` lists the proposals waiting for confirmation, `/approve <n>` and `/reject <n>` decide them. Any other text is a chat message. The bot works in private chats and understands text only (files go through the web client). The messages of one chat are answered one at a time, in the order they arrived. A chat that is not on the list gets nothing but `/id`, answered once per chat every 10 seconds (at most 8 such replies at a time); its other text is dropped at once and logged once a minute per chat.
 
 ## The Oracle (second opinion for the trading bot)
 The trading bot ([`alpaca-roundtable-trader`](https://github.com/psihotest0-dot/alpaca-roundtable-trader), a separate project, paper trading only) asks this backend for a second opinion on each signal of its strategy. It sends the signal with the numbers around it (indicators, the last bars, volume, the account and its limits) and up to five cleaned news headlines; the model answers `APPROVE`, `VETO` or `HOLD` with one short sentence of reason in Bulgarian. The bot's risk engine still decides every order. The model never proposes an order, a size or a price.

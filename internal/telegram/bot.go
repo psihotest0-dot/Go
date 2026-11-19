@@ -45,6 +45,16 @@ const (
 	// typingStopWait bounds how long the end of a turn waits for a "typing"
 	// request that is still on its way, so that it cannot arrive after the reply.
 	typingStopWait = 2 * time.Second
+
+	// The chats that are not allowed. Anybody who finds the bot can write to it, so
+	// what they cost must not grow with how much they write: /id is answered once per
+	// chat every idReplyEvery, at most maxStrangerReplies of those replies are in
+	// flight at once, other text from them gets no goroutine at all, and the log
+	// line about it is written once per chat every strangerLogEvery.
+	idReplyEvery       = 10 * time.Second
+	strangerLogEvery   = time.Minute
+	maxStrangerReplies = 8
+	maxThrottledChats  = 1024
 )
 
 // sender is the part of the Telegram API the handlers write to.
@@ -126,6 +136,12 @@ type Bot struct {
 	tailsMu   sync.Mutex
 	chatTails map[int64]<-chan struct{}
 
+	// idReplies and strangerLog throttle the chats that are not allowed;
+	// strangerSlots bounds the /id replies in flight (see dispatch).
+	idReplies     *throttle
+	strangerLog   *throttle
+	strangerSlots chan struct{}
+
 	wg sync.WaitGroup
 }
 
@@ -143,6 +159,10 @@ func newBot(s sender, processor chatProcessor, store userStore, desk proposalDes
 		slots:       make(chan struct{}, maxConcurrentChats),
 		typingEvery: typingInterval,
 		chatTails:   make(map[int64]<-chan struct{}),
+
+		idReplies:     newThrottle(idReplyEvery, maxThrottledChats),
+		strangerLog:   newThrottle(strangerLogEvery, maxThrottledChats),
+		strangerSlots: make(chan struct{}, maxStrangerReplies),
 	}
 }
 
@@ -251,6 +271,21 @@ func (b *Bot) Start(ctx context.Context) {
 // goroutine: goroutines do not reach a lock in the order they were started, so
 // two quick messages could be answered the wrong way round.
 func (b *Bot) dispatch(ctx context.Context, msg *tgbotapi.Message) {
+	if !b.isAllowed(msg.Chat.ID) {
+		release, ok := b.admitStranger(msg)
+		if !ok {
+			return
+		}
+		b.wg.Add(1)
+		go func() {
+			defer b.wg.Done()
+			defer release()
+			defer b.recoverTurn(msg.Chat.ID)
+			b.handleMessageIn(ctx, msg, nil)
+		}()
+		return
+	}
+
 	t := b.reserveTurn(msg)
 	b.wg.Add(1)
 	go func() {
@@ -258,6 +293,31 @@ func (b *Bot) dispatch(ctx context.Context, msg *tgbotapi.Message) {
 		defer b.recoverTurn(msg.Chat.ID)
 		b.handleMessageIn(ctx, msg, t)
 	}()
+}
+
+// admitStranger decides what a message from a chat that is not allowed costs. Only
+// /id is ever answered (it is how the owner finds the id to allow), and then once per
+// chat every idReplyEvery, with at most maxStrangerReplies replies in flight; the
+// release function frees the place. Anything else is dropped here, without a goroutine,
+// and logged at most once per chat every strangerLogEvery.
+func (b *Bot) admitStranger(msg *tgbotapi.Message) (release func(), ok bool) {
+	chatID := msg.Chat.ID
+	now := time.Now()
+	if command, _ := parseCommand(msg.Text); command != "id" {
+		if b.strangerLog.allow(chatID, now) {
+			slog.Warn("unauthorized chat", slog.Int64("id", chatID))
+		}
+		return nil, false
+	}
+	if !b.idReplies.allow(chatID, now) {
+		return nil, false
+	}
+	select {
+	case b.strangerSlots <- struct{}{}:
+		return func() { <-b.strangerSlots }, true
+	default:
+		return nil, false
+	}
 }
 
 // recoverTurn stops a panic in one conversation from taking the whole backend
