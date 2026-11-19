@@ -122,10 +122,24 @@ func TestAnUnknownSettingStopsTheStartEvenWhileOff(t *testing.T) {
 		for _, cfg := range []*config.Config{
 			{PaidLLMEnabled: enabled, OracleLLM: "depseek", DeepSeekAPIKey: "k"},
 			{PaidLLMEnabled: enabled, LibraryLLM: "cloud", DeepSeekAPIKey: "k"},
+			{PaidLLMEnabled: enabled, TelegramLLM: "lokal", DeepSeekAPIKey: "k"},
+			{PaidLLMEnabled: enabled, TelegramLLM: "deepseek", DeepSeekAPIKey: "k"},
 		} {
 			_, err := NewPaid(cfg, logger)
 
 			require.Error(t, err, "a typo must not pick a model (enabled=%v)", enabled)
 		}
+	}
+}
+
+// TELEGRAM_LLM takes auto (or nothing) and local; both leave the provider as it is.
+func TestTelegramSettingTakesAutoAndLocal(t *testing.T) {
+	logger, _ := capturedLogger()
+
+	for _, setting := range []string{"", "auto", "local"} {
+		paid, err := NewPaid(&config.Config{PaidLLMEnabled: true, TelegramLLM: setting, DeepSeekAPIKey: "k", PaidLLMDailyUSD: 1}, logger)
+
+		require.NoError(t, err, "TELEGRAM_LLM=%q", setting)
+		require.NotNil(t, paid)
 	}
 }

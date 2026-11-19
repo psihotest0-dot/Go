@@ -642,3 +642,27 @@ func TestRecoverTurnDoesNothingWithoutAPanic(t *testing.T) {
 
 	assert.Empty(t, f.sender.texts())
 }
+
+// TELEGRAM_LLM=local: every turn tells the model router "the local model, even for a
+// question to the library"; by default it says nothing and the router decides.
+func TestTurnsCarryTheChoiceOfTheLocalModel(t *testing.T) {
+	f := newFixture(42)
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Какво пише в книгата за стоиците?"))
+	require.Len(t, f.processor.reqs, 1)
+	assert.Nil(t, f.processor.reqs[0].UsePaid, "by default the router decides")
+
+	f = newFixture(42)
+	local := false
+	f.bot.usePaid = &local
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Какво пише в книгата за стоиците?"))
+	require.Len(t, f.processor.reqs, 1)
+	require.NotNil(t, f.processor.reqs[0].UsePaid)
+	assert.False(t, *f.processor.reqs[0].UsePaid, "TELEGRAM_LLM=local keeps the turn on the local model")
+}
+
+func TestLocalOnlyBecomesTheChoiceOfTheLocalModel(t *testing.T) {
+	assert.Nil(t, usePaidFor(false))
+	choice := usePaidFor(true)
+	require.NotNil(t, choice)
+	assert.False(t, *choice)
+}

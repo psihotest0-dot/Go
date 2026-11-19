@@ -132,6 +132,7 @@ The backend reads the environment, and a `.env` file in the working directory is
 | `EMBEDDER_TIMEOUT_SECONDS` | `30` | Limit of one call to the embedder, with its cache reads and writes. |
 | `TELEGRAM_BOT_TOKEN` | empty | Starts the Telegram bot. |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | empty | Chats the bot may talk to; empty means nobody. |
+| `TELEGRAM_LLM` | empty | `local` keeps every Telegram turn on the local model, even a question to the library (which otherwise goes to the paid model when `PAID_LLM_ENABLED=true` and `LIBRARY_LLM` allows it); empty or `auto` leaves the router to decide. Anything else stops the start. |
 | `DEEPSEEK_API_KEY` | empty | Key of the paid search service behind `web_search` / `web_fetch`. Without it the web tools report that they are unavailable. Also the key of `ORACLE_LLM=deepseek`. |
 | `PAID_LLM_ENABLED` | `false` | The master switch of the paid model. `false`: everything stays on the local model, whatever `ORACLE_LLM` says. `true`: the Oracle asks DeepSeek (needs `DEEPSEEK_API_KEY`) unless `ORACLE_LLM=local`. See "The Oracle on DeepSeek". |
 | `PAID_LLM_DAILY_USD` | `1.0` | The most the paid model may cost in a local day, in dollars, estimated at the peak prices. At it the Oracle answers HOLD until midnight. An unusable value leaves the default (the limit cannot be switched off by a typo). |

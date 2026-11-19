@@ -497,3 +497,12 @@ func TestLoadPaidLLM(t *testing.T) {
 		t.Error("an unreadable PAID_LLM_ENABLED must leave the paid model off")
 	}
 }
+
+func TestLoadTelegramLLM(t *testing.T) {
+	for env, want := range map[string]string{"": "", "local": "local", " LOCAL ": "local", "Auto": "auto"} {
+		t.Setenv("TELEGRAM_LLM", env)
+		if got := Load().TelegramLLM; got != want {
+			t.Fatalf("TELEGRAM_LLM=%q gives %q, want %q", env, got, want)
+		}
+	}
+}

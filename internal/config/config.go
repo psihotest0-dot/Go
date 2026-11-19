@@ -171,6 +171,10 @@ type Config struct {
 	// LibraryLLM (LIBRARY_LLM): "local" keeps the questions to the library on the local model
 	// even when the paid provider is on; "deepseek" or empty lets them follow it.
 	LibraryLLM string
+	// TelegramLLM (TELEGRAM_LLM): "local" keeps every Telegram turn on the local model, even
+	// a question to the library; "auto" or empty lets Telegram follow the same rules as the
+	// web chat's default (a library question goes to the paid model when LIBRARY_LLM allows).
+	TelegramLLM string
 	// DeepSeekAPIKey (DEEPSEEK_API_KEY) is the key of the paid API; the web tools use it too.
 	// It is never logged.
 	DeepSeekAPIKey string
@@ -356,6 +360,7 @@ func Load() *Config {
 		PaidLLMEnabled:         boolEnv("PAID_LLM_ENABLED", false),
 		PaidLLMModel:           strings.TrimSpace(os.Getenv("PAID_LLM_MODEL")),
 		LibraryLLM:             strings.ToLower(strings.TrimSpace(os.Getenv("LIBRARY_LLM"))),
+		TelegramLLM:            strings.ToLower(strings.TrimSpace(os.Getenv("TELEGRAM_LLM"))),
 		PaidLLMDailyUSD:        float64(floatEnv("PAID_LLM_DAILY_USD", DefaultPaidLLMDailyUSD, 0.01, 1000)),
 		ChatQuestionEvery:      nonNegativeIntEnv("CHAT_QUESTION_EVERY", DefaultChatQuestionEvery),
 	}

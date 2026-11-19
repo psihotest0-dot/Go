@@ -136,6 +136,11 @@ type Bot struct {
 	tailsMu   sync.Mutex
 	chatTails map[int64]<-chan struct{}
 
+	// usePaid is what every turn tells the model router (agent.ChatRequest.UsePaid): nil -
+	// the default, false - the local model even for a question to the library
+	// (TELEGRAM_LLM=local).
+	usePaid *bool
+
 	// idReplies and strangerLog throttle the chats that are not allowed;
 	// strangerSlots bounds the /id replies in flight (see dispatch).
 	idReplies     *throttle
@@ -166,7 +171,7 @@ func newBot(s sender, processor chatProcessor, store userStore, desk proposalDes
 	}
 }
 
-func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool, desk *proposals.Service) (*Bot, error) {
+func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool, desk *proposals.Service, localOnly bool) (*Bot, error) {
 	if token == "" {
 		return nil, fmt.Errorf("telegram token is empty")
 	}
@@ -178,7 +183,18 @@ func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool
 
 	bot := newBot(api, orch, pgUserStore{pool: pool}, desk, allowedChatIDs)
 	bot.api = api
+	bot.usePaid = usePaidFor(localOnly)
 	return bot, nil
+}
+
+// usePaidFor is the choice every turn tells the model router: nothing by default (the
+// router decides), false - the local model - when TELEGRAM_LLM=local.
+func usePaidFor(localOnly bool) *bool {
+	if !localOnly {
+		return nil
+	}
+	local := false
+	return &local
 }
 
 // newAPI connects to the Bot API. Transport errors embed the request URL, which
@@ -209,14 +225,17 @@ const (
 // Run connects to Telegram and serves updates until ctx is cancelled. A failed
 // connection (network down, connection reset, ...) is retried with exponential
 // backoff instead of leaving the bot disabled until the next restart.
-func Run(ctx context.Context, token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool, desk *proposals.Service) {
+func Run(ctx context.Context, token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool *pgxpool.Pool, desk *proposals.Service, localOnly bool) {
 	if len(allowedChatIDs) == 0 {
 		slog.Warn("TELEGRAM_ALLOWED_CHAT_IDS is empty: the bot answers nobody except /id, which prints the chat id to put there")
+	}
+	if localOnly {
+		slog.Info("Telegram answers from the local model only (TELEGRAM_LLM=local)")
 	}
 
 	backoff := initialConnectBackoff
 	for {
-		bot, err := NewBot(token, allowedChatIDs, orch, pool, desk)
+		bot, err := NewBot(token, allowedChatIDs, orch, pool, desk, localOnly)
 		if err == nil {
 			bot.Start(ctx)
 			return
@@ -456,6 +475,7 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 	turn, err := b.processor.ProcessChatTurn(turnCtx, userID, agent.ChatRequest{
 		SessionID: fmt.Sprintf("tg-%d", chatID),
 		Content:   msg.Text,
+		UsePaid:   b.usePaid,
 	})
 	// Before anything is sent: a "typing" action that arrives after the reply
 	// would show the indicator for another five seconds with nothing coming.

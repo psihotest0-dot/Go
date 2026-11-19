@@ -236,7 +236,7 @@ func run() error {
 					logger.Error("telegram bot panicked", slog.Any("error", r))
 				}
 			}()
-			telegram.Run(ctx, cfg.TelegramBotToken, cfg.TelegramAllowedChatIDs, orchestrator, database.Pool, proposalService)
+			telegram.Run(ctx, cfg.TelegramBotToken, cfg.TelegramAllowedChatIDs, orchestrator, database.Pool, proposalService, cfg.TelegramLLM == "local")
 		}()
 	}
 

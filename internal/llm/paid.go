@@ -28,6 +28,12 @@ func NewPaid(cfg *config.Config, logger *slog.Logger) (*Paid, error) {
 		}
 	}
 
+	switch cfg.TelegramLLM {
+	case "", "auto", "local":
+	default:
+		return nil, fmt.Errorf("TELEGRAM_LLM=%q is not known: use auto or local", cfg.TelegramLLM)
+	}
+
 	if !cfg.PaidLLMEnabled {
 		if cfg.OracleLLM == "deepseek" || cfg.LibraryLLM == "deepseek" {
 			logger.Warn("ORACLE_LLM / LIBRARY_LLM = deepseek is ignored: PAID_LLM_ENABLED is not true, everything stays on the local model")
