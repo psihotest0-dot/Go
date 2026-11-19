@@ -103,6 +103,9 @@ func TestPrepareTurnForRegenerationLeavesTheOldAnswerOut(t *testing.T) {
 func TestPrepareTurnKeepsTheStartOfTheHistoryBetweenTurns(t *testing.T) {
 	e := newAttachmentEnv(t)
 	o := orchestratorWith(t, e, answeringModel())
+	// A history longer than the window starts a background summary; it reads the prompt
+	// manager that the cleanup of orchestratorWith puts back (a race the CI found).
+	t.Cleanup(o.summaryWG.Wait)
 	const session = "long-chat"
 	// 24 stored messages: more than the window of 10.
 	for i := 0; i < 12; i++ {
