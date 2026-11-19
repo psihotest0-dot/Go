@@ -1,7 +1,9 @@
 package llm
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -34,9 +36,22 @@ func EstimateCost(model string, hit, miss, out float64) float64 {
 	return (hit*p.hit + miss*p.miss + out*p.out) / 1e6
 }
 
+// SpendStore keeps what the paid model has cost, per day, so that a restart does not give
+// the daily limit a fresh start. The day is "YYYY-MM-DD", the local date of the process.
+type SpendStore interface {
+	// SpentOn is what the day has cost so far (zero when there is no row).
+	SpentOn(ctx context.Context, day string) (float64, error)
+	// AddSpent adds dollars to the day.
+	AddSpent(ctx context.Context, day string, usd float64) error
+}
+
+// spendStoreTimeout bounds one write of the cost of a request.
+const spendStoreTimeout = 3 * time.Second
+
 // SpendGuard counts what the paid model has cost today and refuses requests at the limit.
-// The day is the local calendar day. The count lives in memory: a restart starts it again
-// from what the caller seeds (the Oracle's journal knows what the day has cost so far).
+// The day is the local calendar day. The count is kept in memory and, once Resume has
+// been called, also in a SpendStore (a database table): a restart goes on from what the
+// store and the Oracle's journal know.
 type SpendGuard struct {
 	limit float64
 	now   func() time.Time
@@ -44,6 +59,7 @@ type SpendGuard struct {
 	mu    sync.Mutex
 	day   string
 	spent float64
+	store SpendStore
 }
 
 // NewSpendGuard returns a guard with the limit in dollars per day.
@@ -73,12 +89,54 @@ func (g *SpendGuard) Allow() error {
 	return nil
 }
 
-// Add counts dollars spent.
+// Add counts dollars spent, and writes them to the store when there is one. A failed
+// write is logged and the request goes on: the count in memory is right, and the limit
+// is a safety net, not an account book.
 func (g *SpendGuard) Add(usd float64) {
+	g.mu.Lock()
+	g.rollLocked()
+	g.spent += usd
+	metrics.PaidLLMSpendToday.Set(g.spent)
+	store, day := g.store, g.day
+	g.mu.Unlock()
+
+	if store == nil || usd <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), spendStoreTimeout)
+	defer cancel()
+	if err := store.AddSpent(ctx, day, usd); err != nil {
+		slog.Warn("could not store what the paid model cost; a restart may forget it", slog.Any("error", err), slog.Float64("usd", usd))
+	}
+}
+
+// Resume makes the count survive restarts. It starts today from the larger of what the
+// store holds and journalUSD (an estimate from the Oracle's journal, which is all the
+// store knew before it existed), writes the difference to the store so that the two agree,
+// and from then on every Add is stored too. Call it once at start, before any request.
+func (g *SpendGuard) Resume(ctx context.Context, store SpendStore, journalUSD float64) {
+	g.mu.Lock()
+	g.rollLocked()
+	day := g.day
+	g.mu.Unlock()
+
+	saved, err := store.SpentOn(ctx, day)
+	if err != nil {
+		slog.Warn("could not read what the paid model cost today from the store; counting from the journal", slog.Any("error", err))
+		saved = 0
+	}
+	start := max(saved, journalUSD)
+	if gap := start - saved; err == nil && gap > 0 {
+		if err := store.AddSpent(ctx, day, gap); err != nil {
+			slog.Warn("could not store what the paid model cost today", slog.Any("error", err))
+		}
+	}
+
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.rollLocked()
-	g.spent += usd
+	g.spent = max(g.spent, start)
+	g.store = store
 	metrics.PaidLLMSpendToday.Set(g.spent)
 }
 

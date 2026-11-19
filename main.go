@@ -291,8 +291,9 @@ func run() error {
 	oracleStore := oracle.NewDBStore(database.Queries)
 	// The paid model (PAID_LLM_ENABLED): one account and one daily limit for everything that
 	// uses it - the Oracle, the questions to the library and the conversations the owner sends
-	// to the cloud. The limit survives a restart as far as the Oracle's journal knows (the chat
-	// keeps no journal of its cost), and the balance of the account is watched.
+	// to the cloud. The limit survives a restart: what the day has cost is kept in the table
+	// paid_llm_spend (and, before that table held it, estimated from the Oracle's journal),
+	// and the balance of the account is watched.
 	paid, err := llm.NewPaid(cfg, logger)
 	if err != nil {
 		return err
@@ -302,7 +303,7 @@ func run() error {
 		if err != nil {
 			logger.Warn("could not work out what the paid model cost today; counting from zero", slog.Any("error", err))
 		}
-		paid.Guard().Add(spent)
+		paid.Guard().Resume(ctx, db.NewPaidSpendStore(database.Queries), spent)
 		go llm.WatchBalance(ctx, paid.Key(), llm.BalanceInterval, logger)
 		if client, name, library := llm.ChatClient(cfg, paid, logger); client != nil {
 			orchestrator.WithPaidModel(client, name, library)
