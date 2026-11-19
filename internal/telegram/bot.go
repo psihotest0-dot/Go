@@ -119,10 +119,12 @@ type Bot struct {
 	// typingEvery is typingInterval; a field so that tests can shorten it.
 	typingEvery time.Duration
 
-	// chatLocks serialises the turns of one chat so replies cannot overtake
-	// each other. Only allowed chats get an entry, so the map stays small.
-	locksMu   sync.Mutex
-	chatLocks map[int64]chan struct{}
+	// chatTails serialises the turns of one chat, in the order the messages
+	// arrived, so replies cannot overtake each other. It holds the "done" channel
+	// of the last turn queued for the chat (see reserveTurn). Only allowed chats
+	// get an entry, so the map stays small.
+	tailsMu   sync.Mutex
+	chatTails map[int64]<-chan struct{}
 
 	wg sync.WaitGroup
 }
@@ -140,7 +142,7 @@ func newBot(s sender, processor chatProcessor, store userStore, desk proposalDes
 		allowed:     allowed,
 		slots:       make(chan struct{}, maxConcurrentChats),
 		typingEvery: typingInterval,
-		chatLocks:   make(map[int64]chan struct{}),
+		chatTails:   make(map[int64]<-chan struct{}),
 	}
 }
 
@@ -238,15 +240,24 @@ func (b *Bot) Start(ctx context.Context) {
 				return
 			}
 			if update.Message != nil {
-				b.wg.Add(1)
-				go func() {
-					defer b.wg.Done()
-					defer b.recoverTurn(update.Message.Chat.ID)
-					b.handleMessage(ctx, update.Message)
-				}()
+				b.dispatch(ctx, update.Message)
 			}
 		}
 	}
+}
+
+// dispatch hands a message to a goroutine of its own. The place in the chat's
+// queue is taken here, in the loop that reads the updates, and not in the
+// goroutine: goroutines do not reach a lock in the order they were started, so
+// two quick messages could be answered the wrong way round.
+func (b *Bot) dispatch(ctx context.Context, msg *tgbotapi.Message) {
+	t := b.reserveTurn(msg)
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		defer b.recoverTurn(msg.Chat.ID)
+		b.handleMessageIn(ctx, msg, t)
+	}()
 }
 
 // recoverTurn stops a panic in one conversation from taking the whole backend
@@ -297,7 +308,15 @@ func parseCommand(text string) (command, args string) {
 	return command, strings.TrimSpace(rest)
 }
 
+// handleMessage serves one message. The chat's queue place is taken here; the
+// update loop takes it earlier (dispatch) so that the order of arrival counts.
 func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
+	b.handleMessageIn(ctx, msg, b.reserveTurn(msg))
+}
+
+// handleMessageIn serves one message in the place t that reserveTurn gave it
+// (nil for a message that needs no place: /id and chats that are not allowed).
+func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *turn) {
 	chatID := msg.Chat.ID
 	command, args := parseCommand(msg.Text)
 
@@ -315,11 +334,12 @@ func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
 		return
 	}
 
-	release, ok := b.lockChat(ctx, chatID)
-	if !ok {
+	// t is never nil here: reserveTurn gives a place to every allowed chat's
+	// message that is not /id, and those are the only ones that get this far.
+	if !t.wait(ctx) {
 		return
 	}
-	defer release()
+	defer t.finish()
 
 	if !msg.Chat.IsPrivate() {
 		b.sendReply(chatID, "Мога да комуникирам само в лични чатове.")
@@ -568,23 +588,64 @@ func (b *Bot) handleLink(ctx context.Context, chatID int64, arg string) {
 	b.sendReply(chatID, "Успешно свързан с бекенда! Вече имам достъп до твоите документи и памет.")
 }
 
-// lockChat serialises the turns of one chat. It gives up when ctx is cancelled.
-func (b *Bot) lockChat(ctx context.Context, chatID int64) (release func(), ok bool) {
-	b.locksMu.Lock()
-	lock, exists := b.chatLocks[chatID]
-	if !exists {
-		lock = make(chan struct{}, 1)
-		b.chatLocks[chatID] = lock
-	}
-	b.locksMu.Unlock()
+// turn is a place in the queue of one chat. The turns of a chat run one at a
+// time, in the order their places were taken.
+type turn struct {
+	prev <-chan struct{} // closed when the turn before this one has finished
+	done chan struct{}   // closed when this turn has finished
+	once sync.Once
+}
 
+// closedChan is the "turn before" of the first turn of a chat.
+var closedChan = func() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
+}()
+
+// reserveTurn takes the next place in the queue of msg's chat. It must be called
+// in the order the messages arrived, and the place must be used: every turn after
+// it waits for it. It returns nil for a message that needs no place - /id, which
+// is answered at once, and a chat that is not allowed, which is ignored (and
+// gets no entry, so strangers cannot grow the map).
+func (b *Bot) reserveTurn(msg *tgbotapi.Message) *turn {
+	chatID := msg.Chat.ID
+	if !b.isAllowed(chatID) {
+		return nil
+	}
+	if command, _ := parseCommand(msg.Text); command == "id" {
+		return nil
+	}
+
+	t := &turn{done: make(chan struct{})}
+	b.tailsMu.Lock()
+	t.prev = b.chatTails[chatID]
+	if t.prev == nil {
+		t.prev = closedChan
+	}
+	b.chatTails[chatID] = t.done
+	b.tailsMu.Unlock()
+	return t
+}
+
+// wait blocks until the turn before this one has finished. It gives up when ctx
+// is cancelled and then returns false; the place is still handed on, but only
+// after the turn before it has finished, so the order of the others holds.
+func (t *turn) wait(ctx context.Context) bool {
 	select {
-	case lock <- struct{}{}:
-		return func() { <-lock }, true
+	case <-t.prev:
+		return true
 	case <-ctx.Done():
-		return nil, false
+		go func() {
+			<-t.prev
+			t.finish()
+		}()
+		return false
 	}
 }
+
+// finish hands the place on to the next turn. It may be called more than once.
+func (t *turn) finish() { t.once.Do(func() { close(t.done) }) }
 
 func (b *Bot) acquireSlot(ctx context.Context) bool {
 	select {

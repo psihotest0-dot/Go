@@ -454,7 +454,7 @@ func TestCancellationReleasesWaitingTurns(t *testing.T) {
 	go func() { f.bot.handleMessage(ctx, privateMessage(42, "първи")); done <- struct{}{} }()
 	<-started
 	go func() { f.bot.handleMessage(ctx, privateMessage(42, "втори")); done <- struct{}{} }()
-	time.Sleep(20 * time.Millisecond) // let the second one queue behind the chat lock
+	time.Sleep(20 * time.Millisecond) // let the second one queue behind the first turn of the chat
 
 	cancel()
 	for i := 0; i < 2; i++ {
@@ -466,6 +466,108 @@ func TestCancellationReleasesWaitingTurns(t *testing.T) {
 	}
 	assert.Empty(t, f.sender.texts(), "no error reply while shutting down")
 	assert.Equal(t, int32(1), f.processor.calls.Load(), "the queued turn must not start after cancellation")
+}
+
+func (p *fakeProcessor) contents() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]string, 0, len(p.reqs))
+	for _, r := range p.reqs {
+		out = append(out, r.Content)
+	}
+	return out
+}
+
+// Messages that arrive one after the other are answered in that order, even when
+// they come faster than the model answers. The update loop (dispatch) is the one
+// that sees the order, so the test goes through it.
+func TestMessagesOfOneChatAreAnsweredInTheOrderTheyArrived(t *testing.T) {
+	f := newFixture(42)
+	release := make(chan struct{})
+	f.processor.onCall = func(context.Context, uuid.UUID, agent.ChatRequest) { <-release }
+
+	var want []string
+	for i := 0; i < 12; i++ {
+		text := fmt.Sprintf("въпрос %d", i)
+		want = append(want, text)
+		f.bot.dispatch(context.Background(), privateMessage(42, text))
+	}
+	close(release)
+	f.bot.wg.Wait()
+
+	assert.Equal(t, want, f.processor.contents())
+}
+
+// /id and a chat that is not allowed take no place in the queue: a place that
+// nobody uses would hold up every later message of the chat.
+func TestIDAndStrangersTakeNoPlaceInTheQueue(t *testing.T) {
+	f := newFixture(42)
+
+	assert.Nil(t, f.bot.reserveTurn(privateMessage(999, "Здравей")))
+	assert.Nil(t, f.bot.reserveTurn(privateMessage(42, "/id")))
+	assert.Nil(t, f.bot.reserveTurn(privateMessage(42, "/id@Lili_Smart_bot")))
+	assert.Empty(t, f.bot.chatTails, "strangers must not grow the map")
+
+	f.bot.dispatch(context.Background(), privateMessage(42, "/id"))
+	f.bot.dispatch(context.Background(), privateMessage(42, "Здравей"))
+	done := make(chan struct{})
+	go func() { f.bot.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a message after /id is stuck in the queue")
+	}
+	assert.Equal(t, []string{"Здравей"}, f.processor.contents())
+}
+
+// A turn that gives up while it waits (its context is cancelled) must not let the
+// turns behind it overtake the one that is still running.
+func TestAGivenUpTurnKeepsTheOrderOfTheOthers(t *testing.T) {
+	f := newFixture(42)
+	firstRunning := make(chan struct{})
+	finishFirst := make(chan struct{})
+	var events []string
+	var mu sync.Mutex
+	note := func(s string) {
+		mu.Lock()
+		events = append(events, s)
+		mu.Unlock()
+	}
+	f.processor.onCall = func(_ context.Context, _ uuid.UUID, req agent.ChatRequest) {
+		note("start " + req.Content)
+		if req.Content == "първи" {
+			close(firstRunning)
+			<-finishFirst
+			note("end първи")
+		}
+	}
+
+	first, second, third := privateMessage(42, "първи"), privateMessage(42, "втори"), privateMessage(42, "трети")
+	t1, t2, t3 := f.bot.reserveTurn(first), f.bot.reserveTurn(second), f.bot.reserveTurn(third)
+	go f.bot.handleMessageIn(context.Background(), first, t1)
+	<-firstRunning
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	secondDone := make(chan struct{})
+	go func() { f.bot.handleMessageIn(secondCtx, second, t2); close(secondDone) }()
+	thirdDone := make(chan struct{})
+	go func() { f.bot.handleMessageIn(context.Background(), third, t3); close(thirdDone) }()
+
+	cancelSecond()
+	<-secondDone
+	time.Sleep(50 * time.Millisecond) // the third must still be waiting for the first
+	mu.Lock()
+	assert.Equal(t, []string{"start първи"}, events, "the third turn must not start before the first has ended")
+	mu.Unlock()
+
+	close(finishFirst)
+	select {
+	case <-thirdDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the third turn never ran")
+	}
+	mu.Lock()
+	assert.Equal(t, []string{"start първи", "end първи", "start трети"}, events)
+	mu.Unlock()
 }
 
 func TestSendReplySplitsLongTextWithoutBreakingRunes(t *testing.T) {
