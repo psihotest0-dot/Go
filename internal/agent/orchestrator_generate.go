@@ -118,6 +118,18 @@ func (o *Orchestrator) logUsage(ctx context.Context, req openai.ChatCompletionRe
 	}
 }
 
+// bringsProgress reports whether a stream chunk carries anything the model
+// produced: text, reasoning, a tool call or a refusal. A role-only chunk, a bare
+// finish reason or a usage chunk does not.
+func bringsProgress(resp openai.ChatCompletionStreamResponse) bool {
+	if len(resp.Choices) == 0 {
+		return false
+	}
+	d := resp.Choices[0].Delta
+	return d.Content != "" || d.ReasoningContent != "" || d.Refusal != "" ||
+		len(d.ToolCalls) > 0 || d.FunctionCall != nil
+}
+
 // streamOnce runs one streaming completion and collects text, reasoning and tool
 // call deltas. Provider, network and callback errors are all returned: a
 // truncated answer must never look like a finished one.
@@ -135,7 +147,8 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 	}
 	defer stream.Close()
 
-	// The watchdog starts with the first chunk and is reset by every later one.
+	// The watchdog starts with the first chunk and is reset by every later chunk
+	// that carries text, reasoning or a tool call (bringsProgress).
 	var silent atomic.Bool
 	var watchdog *time.Timer
 	defer func() {
@@ -179,7 +192,12 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 			}
 			return snapshot(), recvErr
 		}
-		resetWatchdog()
+		// The first chunk of any kind starts the clock; after that only a chunk that
+		// brings something pushes the cut-off back. A stream of chunks with an empty
+		// delta is the same silence as no chunks at all.
+		if watchdog == nil || bringsProgress(resp) {
+			resetWatchdog()
+		}
 		// The usage arrives in a final chunk that has no choices.
 		if resp.Usage != nil {
 			usage = resp.Usage

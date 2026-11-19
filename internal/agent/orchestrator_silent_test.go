@@ -19,9 +19,13 @@ import (
 // go silent until the request is cancelled, the way llama-server does while
 // Gemma 4 repeats its empty thought marker.
 type step struct {
-	wait    time.Duration
-	content string
-	block   bool
+	wait      time.Duration
+	content   string
+	reasoning string
+	block     bool
+	// drip repeats this step for ever: a stream that keeps sending chunks (every
+	// wait) that carry nothing.
+	drip bool
 }
 
 type scriptedStream struct {
@@ -34,7 +38,9 @@ func (s *scriptedStream) Recv() (openai.ChatCompletionStreamResponse, error) {
 		return openai.ChatCompletionStreamResponse{}, io.EOF
 	}
 	st := s.steps[0]
-	s.steps = s.steps[1:]
+	if !st.drip {
+		s.steps = s.steps[1:]
+	}
 	if st.block {
 		<-s.ctx.Done()
 		return openai.ChatCompletionStreamResponse{}, s.ctx.Err()
@@ -45,7 +51,7 @@ func (s *scriptedStream) Recv() (openai.ChatCompletionStreamResponse, error) {
 		return openai.ChatCompletionStreamResponse{}, s.ctx.Err()
 	}
 	return openai.ChatCompletionStreamResponse{Choices: []openai.ChatCompletionStreamChoice{
-		{Delta: openai.ChatCompletionStreamChoiceDelta{Role: "assistant", Content: st.content}},
+		{Delta: openai.ChatCompletionStreamChoiceDelta{Role: "assistant", Content: st.content, ReasoningContent: st.reasoning}},
 	}}, nil
 }
 
@@ -167,6 +173,49 @@ func TestReadingALongPromptIsNotSilence(t *testing.T) {
 	model := &scriptedLLM{scripts: [][]step{
 		{{wait: 150 * time.Millisecond, content: ""}, {wait: 10 * time.Millisecond, content: "Готово"}},
 	}}
+	o := thinkingOff(model)
+
+	answer, err := generate(t, o)
+
+	require.NoError(t, err)
+	require.Equal(t, "Готово", answer)
+	require.Len(t, model.requests, 1)
+}
+
+// Chunks that carry nothing are silence too: a stream that keeps sending empty
+// deltas must be cut off like one that sends nothing. The deadline only makes the
+// test fail fast if the watchdog keeps being pushed back.
+func TestEmptyChunksDoNotKeepTheStreamAlive(t *testing.T) {
+	shortSilence(t)
+	model := &scriptedLLM{scripts: [][]step{
+		{{content: ""}, {wait: 5 * time.Millisecond, drip: true}},
+		{{content: "Отговор"}},
+	}}
+	o := thinkingOff(model)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	answer, _, _, err := o.generateResponse(ctx,
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Здравей"}}, nil, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, "Отговор", answer)
+	require.Len(t, model.requests, 2)
+	require.True(t, model.thinkingOf(1))
+	require.Less(t, time.Since(start), time.Second)
+}
+
+// Reasoning is progress: a model that thinks for longer than the timeout, one
+// piece after another, is working, not silent.
+func TestAThinkingStreamIsNotSilence(t *testing.T) {
+	shortSilence(t)
+	var steps []step
+	for i := 0; i < 25; i++ { // 25 x 10 ms is well over the 50 ms timeout
+		steps = append(steps, step{wait: 10 * time.Millisecond, reasoning: "мисля"})
+	}
+	steps = append(steps, step{wait: 10 * time.Millisecond, content: "Готово"})
+	model := &scriptedLLM{scripts: [][]step{steps}}
 	o := thinkingOff(model)
 
 	answer, err := generate(t, o)
