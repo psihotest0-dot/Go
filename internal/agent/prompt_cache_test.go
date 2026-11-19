@@ -46,7 +46,7 @@ func TestThePromptDateIsTheHourAndStandsBetweenTheStableAndTheChangingBlocks(t *
 	}
 	out := promptAt(t, time.Date(2026, 11, 16, 16, 47, 33, 0, time.Local), c)
 
-	assert.Contains(t, out, "Current date and approximate time: 2026-11-16, about 16:00", "the hour, not the minute and the second")
+	assert.Contains(t, out, "Current date and approximate time: Monday, 2026-11-16, about 16:00", "the weekday, the hour, not the minute and the second")
 	assert.NotContains(t, out, "16:47", "no minutes")
 	assert.NotContains(t, out, "16:47:33")
 	date := strings.Index(out, "Current date")
@@ -86,4 +86,17 @@ func TestTwoTurnsOfAConversationShareTheBeginningOfThePrompt(t *testing.T) {
 	d := promptAt(t, time.Date(2026, 11, 16, 17, 0, 0, 0, time.Local), first)
 	assert.NotEqual(t, a, d)
 	assert.Greater(t, commonPrefix(a, d), strings.Index(a, "ПРОФИЛЕН-ФАКТ"), "a new hour changes nothing before the date")
+}
+
+// The weekday is spelt in English, for every day of a week, and does not change within a day.
+func TestThePromptDateNamesTheWeekday(t *testing.T) {
+	for day, want := range map[int]string{
+		16: "Monday, 2026-11-16", 17: "Tuesday, 2026-11-17", 18: "Wednesday, 2026-11-18", 19: "Thursday, 2026-11-19",
+		20: "Friday, 2026-11-20", 21: "Saturday, 2026-11-21", 22: "Sunday, 2026-11-22",
+	} {
+		morning := promptDate(time.Date(2026, 11, day, 0, 5, 0, 0, time.Local))
+		evening := promptDate(time.Date(2026, 11, day, 23, 59, 0, 0, time.Local))
+		assert.True(t, strings.HasPrefix(morning, want+", about "), "%s: %s", want, morning)
+		assert.True(t, strings.HasPrefix(evening, want+", about "), "%s: %s", want, evening)
+	}
 }
