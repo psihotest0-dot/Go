@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 
 	"go-monolith/internal/api"
@@ -67,6 +68,54 @@ type turnState struct {
 	fileWrites int
 	// by is the model that gave the answer, when the paid model is configured (see model_routing.go).
 	by answeredBy
+	// userURLs are the keys (urlKey) of the addresses the person wrote in this conversation:
+	// the only ones add_to_library may fetch.
+	userURLs map[string]bool
+	// libraryRows are the links add_to_library was asked for in this turn, with what became of
+	// each: the person is told which were not added (libraryReport).
+	libraryRows []addRow
+}
+
+// addLibraryRows remembers the outcome of the links of a call of add_to_library.
+func (t *turnState) addLibraryRows(rows []addRow) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.libraryRows = append(t.libraryRows, rows...)
+}
+
+// libraryReport is the line for the person about the links that were not added, or "".
+func (t *turnState) libraryReport() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	rows := slices.Clone(t.libraryRows)
+	t.mu.Unlock()
+	return libraryReport(rows)
+}
+
+// setUserURLs records the addresses the person wrote in the conversation.
+func (t *turnState) setUserURLs(keys map[string]bool) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.userURLs = keys
+}
+
+// wroteURL tells whether the person wrote this address in the conversation.
+func (t *turnState) wroteURL(raw string) bool {
+	if t == nil {
+		return false
+	}
+	key := urlKey(trimURLEnd(strings.TrimSpace(raw)))
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return key != "" && t.userURLs[key]
 }
 
 // withTurn starts the state of a chat turn. retrievedDocuments tells that text

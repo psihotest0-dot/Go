@@ -34,6 +34,7 @@ import (
 	"go-monolith/internal/retrieval"
 	"go-monolith/internal/telegram"
 	"go-monolith/internal/userfiles"
+	"go-monolith/internal/webfetch"
 )
 
 type LevelFilterHandler struct {
@@ -227,6 +228,14 @@ func run() error {
 			orchestrator.WithFileTools()
 			logger.Info("the file tools are on", slog.String("dir", cfg.FilesDir))
 		}
+	}
+
+	// The tool that downloads the documents behind the links the user wrote and adds them
+	// to the library (plan item P53): off unless LIBRARY_ADD_ENABLED.
+	if cfg.LibraryAddEnabled {
+		toolRegistry.WithLibraryAdd(agent.NewLibraryFetcher(min(webfetch.DefaultMaxBytes, cfg.MaxUploadBytes)), apiService.NewLibraryAdder(riverClient))
+		orchestrator.WithLibraryAdd()
+		logger.Info("the tool add_to_library is on")
 	}
 
 	if cfg.TelegramBotToken != "" {

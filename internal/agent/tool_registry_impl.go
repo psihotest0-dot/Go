@@ -39,6 +39,9 @@ type DefaultToolRegistry struct {
 	attachments *attachments.Service
 	// files is the folder of the user's own files; nil means the file tools are off.
 	files *userfiles.Store
+	// fetcher and adder are what add_to_library works with; nil means the tool is off.
+	fetcher documentFetcher
+	adder   libraryAdder
 }
 
 // WithAttachments lets the read_attachment tool read the files attached to a
@@ -76,6 +79,8 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeListDocuments(ctx, userID)
 	case readAttachmentTool:
 		return r.executeReadAttachment(ctx, userID, args)
+	case addToLibraryTool:
+		return r.executeAddToLibrary(ctx, userID, args)
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
 	case styleNoteTool:

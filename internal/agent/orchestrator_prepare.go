@@ -71,10 +71,22 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 
 	// The window keeps its start from turn to turn and is cut in steps (P51), so that the
 	// prompt only grows in between and the model server can reuse its start.
+	//
+	// A conversation with a link the person wrote offers one more tool (add_to_library, plan
+	// item P53); its definition is taken out of the room of the history, so that the prompt
+	// does not grow past its budget. A turn without a link has the budgets it always had.
+	userURLs := userURLKeys(chatCtx.History)
+	tools := o.turnTools()
+	historyTokens := plan.limits.historyTokens
+	if o.offersLibraryAdd(userURLs) {
+		tools = append(tools, addToLibraryDefinition())
+		historyTokens = max(0, historyTokens-libraryAddTokens)
+		turn.setUserURLs(userURLs)
+	}
 	windowKey := summaryKey(userID, req.SessionID)
 	prevStart, hasPrev := o.windows.get(windowKey)
 	history, start := pruneHistorySteady(chatCtx.History, chatCtx.HistoryAt, prevStart, hasPrev,
-		plan.limits.historyTokens, plan.limits.historyMessages)
+		historyTokens, plan.limits.historyMessages)
 	if !start.IsZero() {
 		o.windows.put(windowKey, start)
 	}
@@ -94,5 +106,5 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		"pruned_to":      len(messages),
 	})
 
-	return preparedTurn{ctx: ctx, turn: turn, messages: messages, tools: o.turnTools(), sources: chatCtx.Sources}, nil
+	return preparedTurn{ctx: ctx, turn: turn, messages: messages, tools: tools, sources: chatCtx.Sources}, nil
 }

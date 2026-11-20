@@ -238,10 +238,36 @@ func withNoteOnLastUser(messages []openai.ChatCompletionMessage, note string) []
 	return out
 }
 
-// generateGuarded runs the rounds (generateRounds) and checks what the answer says about
-// the files. See the comment at the top of this file. Which model runs them is decided
-// by generateResponse (model_routing.go), which calls this.
+// generateGuarded runs the rounds (generateRounds), checks what the answer says about the
+// files (generateChecked) and, when links were not added to the library in the turn, tells
+// the person which. Which model runs them is decided by generateResponse (model_routing.go),
+// which calls this.
 func (o *Orchestrator) generateGuarded(
+	ctx context.Context,
+	finalMessages []openai.ChatCompletionMessage,
+	tools []openai.Tool,
+	onDelta deltaFunc,
+) (string, string, []openai.ToolCall, error) {
+	content, reasoning, executed, err := o.generateChecked(ctx, finalMessages, tools, onDelta)
+	if err != nil {
+		return content, reasoning, executed, err
+	}
+	// The model was told which links were refused, and in the real runs it wrote that all of
+	// them were added over a link it had changed (plan item P53): the line is not left to it.
+	if report := turnFrom(ctx).libraryReport(); report != "" {
+		content += "\n\n" + report
+		if onDelta != nil {
+			if err := onDelta("\n\n"+report, ""); err != nil {
+				return content, reasoning, executed, err
+			}
+		}
+	}
+	return content, reasoning, executed, nil
+}
+
+// generateChecked is generateGuarded without the report of the library: it checks what the
+// answer says about the files. See the comment at the top of this file.
+func (o *Orchestrator) generateChecked(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,

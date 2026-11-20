@@ -167,49 +167,17 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 			}
 		}()
 
-		// Check deduplication
-		existingFile, err := a.db.Queries.GetIngestedFileByHash(r.Context(), db.GetIngestedFileByHashParams{
-			UserID:   userID,
-			FileHash: upload.hash,
-		})
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			writeInternalError(w, r, "failed to check existing file by hash", err)
+		ingestedFile, existing, err := a.registerUpload(r.Context(), riverClient, userID, upload)
+		var failed *registerError
+		if errors.As(err, &failed) {
+			writeInternalError(w, r, failed.msg, failed.err)
 			return
 		}
-		if err == nil && existingFile.ID != uuid.Nil {
+		if existing {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict) // 409
-			json.NewEncoder(w).Encode(toIngestedFileDTO(existingFile, a.fileChunkCount(r.Context(), existingFile.ID, userID)))
+			json.NewEncoder(w).Encode(toIngestedFileDTO(ingestedFile, a.fileChunkCount(r.Context(), ingestedFile.ID, userID)))
 			return
-		}
-
-		ingestedFile, err := a.db.Queries.CreateIngestedFile(r.Context(), db.CreateIngestedFileParams{
-			UserID:    userID,
-			FileName:  upload.fileName,
-			FileHash:  upload.hash,
-			MimeType:  upload.mimeType,
-			FileSize:  upload.size,
-			Status:    "pending",
-			LocalPath: upload.path,
-		})
-		if err != nil {
-			writeInternalError(w, r, "failed to record file in database", err)
-			return
-		}
-
-		if riverClient != nil {
-			_, jobErr := riverClient.Insert(r.Context(), jobs.IngestFileArgs{
-				FileID: ingestedFile.ID,
-			}, jobs.IngestInsertOpts())
-			if jobErr != nil {
-				// Without the job nothing would ever process the file, and a row
-				// left in "pending" would make the client wait forever. Roll the
-				// upload back instead of answering 201 for work that will not
-				// happen; the deferred discard removes the spooled file.
-				a.deleteIngestRow(r.Context(), ingestedFile.ID, userID)
-				writeInternalError(w, r, "failed to enqueue ingest job", jobErr)
-				return
-			}
 		}
 
 		committed = true
@@ -217,6 +185,63 @@ func (a *API) CreateFileHandler(riverClient *river.Client[pgx.Tx]) http.HandlerF
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(toIngestedFileDTO(ingestedFile, 0))
 	}
+}
+
+// registerError is a failure of registerUpload, with the text the server logs for it.
+type registerError struct {
+	msg string
+	err error
+}
+
+func (e *registerError) Error() string { return e.msg + ": " + e.err.Error() }
+func (e *registerError) Unwrap() error { return e.err }
+
+// registerUpload records a spooled upload as a file of the user and queues its ingest, or
+// returns the file the user already has with the same content (existing is true, and
+// nothing is recorded: the caller removes the spooled copy). It is the part of an upload
+// that the file endpoint and the library tool of the chat have in common.
+//
+// riverClient may be nil (tests): the row is made and no job is queued. When the job cannot
+// be queued the row is removed again, so a failure leaves neither a row nor a job.
+func (a *API) registerUpload(ctx context.Context, riverClient *river.Client[pgx.Tx], userID uuid.UUID, upload *spooledUpload) (file db.IngestedFile, existing bool, err error) {
+	existingFile, err := a.db.Queries.GetIngestedFileByHash(ctx, db.GetIngestedFileByHashParams{
+		UserID:   userID,
+		FileHash: upload.hash,
+	})
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return db.IngestedFile{}, false, &registerError{msg: "failed to check existing file by hash", err: err}
+	}
+	if err == nil && existingFile.ID != uuid.Nil {
+		return existingFile, true, nil
+	}
+
+	ingestedFile, err := a.db.Queries.CreateIngestedFile(ctx, db.CreateIngestedFileParams{
+		UserID:    userID,
+		FileName:  upload.fileName,
+		FileHash:  upload.hash,
+		MimeType:  upload.mimeType,
+		FileSize:  upload.size,
+		Status:    "pending",
+		LocalPath: upload.path,
+	})
+	if err != nil {
+		return db.IngestedFile{}, false, &registerError{msg: "failed to record file in database", err: err}
+	}
+
+	if riverClient != nil {
+		_, jobErr := riverClient.Insert(ctx, jobs.IngestFileArgs{
+			FileID: ingestedFile.ID,
+		}, jobs.IngestInsertOpts())
+		if jobErr != nil {
+			// Without the job nothing would ever process the file, and a row
+			// left in "pending" would make the client wait forever. Roll the
+			// upload back instead of answering 201 for work that will not
+			// happen; the caller removes the spooled file.
+			a.deleteIngestRow(ctx, ingestedFile.ID, userID)
+			return db.IngestedFile{}, false, &registerError{msg: "failed to enqueue ingest job", err: jobErr}
+		}
+	}
+	return ingestedFile, false, nil
 }
 
 // deleteIngestRow removes an ingest row whose job could not be enqueued. It uses

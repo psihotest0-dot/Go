@@ -56,6 +56,9 @@ type Orchestrator struct {
 	// groups are the tools that are not on offer until the model asks for them (see
 	// toolGroup).
 	groups []toolGroup
+	// addToLibrary: the tool add_to_library is offered in a turn whose conversation has a
+	// link the person wrote (see offersLibraryAdd).
+	addToLibrary bool
 	// paid is the paid model of the chat (nil: none), paidName its name; libraryPaid says that
 	// the questions to the library go to it on their own. See model_routing.go.
 	paid        llm.LLMClient
@@ -72,6 +75,14 @@ type Orchestrator struct {
 // The registry must have the folder (DefaultToolRegistry.WithFiles).
 func (o *Orchestrator) WithFileTools() *Orchestrator {
 	o.groups = append(o.groups, filesGroup())
+	return o
+}
+
+// WithLibraryAdd offers the tool add_to_library (plan item P53) in a conversation where the
+// person wrote a link. The registry must have its fetcher and adder
+// (DefaultToolRegistry.WithLibraryAdd).
+func (o *Orchestrator) WithLibraryAdd() *Orchestrator {
+	o.addToLibrary = true
 	return o
 }
 

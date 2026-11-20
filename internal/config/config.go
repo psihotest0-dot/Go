@@ -148,6 +148,10 @@ type Config struct {
 	// FilesDir (FILES_DIR) is the folder of those files, an absolute path outside any
 	// folder that is synchronised to the cloud. Default: Lili-files in the home folder.
 	FilesDir string
+	// LibraryAddEnabled (LIBRARY_ADD_ENABLED) turns on the tool with which the assistant
+	// downloads the documents behind links the user wrote and adds them to the library
+	// (plan item P53). Off by default: without it nothing changes.
+	LibraryAddEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -351,6 +355,7 @@ func Load() *Config {
 		EnableDistillation: distillation,
 		FilesEnabled:       boolEnv("FILES_ENABLED", false),
 		FilesDir:           filesDir(),
+		LibraryAddEnabled:  boolEnv("LIBRARY_ADD_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

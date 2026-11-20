@@ -75,7 +75,9 @@ var (
 	// delete or rename a file and the model was told it cannot) and "claim"/"corrected" (an
 	// answer claimed a change of the files that did not happen and got a correction), and
 	// "claim"/"retried" (an answer claimed a write and no file tool was called: the turn was
-	// asked again with the file tools, plan item P52).
+	// asked again with the file tools, plan item P52). "stall"/"retried" and "stall"/"corrected"
+	// are the same for an answer that promised the work for later, or did nothing about a
+	// request to write, after no tool was called (plan item P53).
 	UserFileOps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "user_files_operations_total",
 		Help: "Operations of the file tools on the user's files, by operation and result.",
@@ -152,6 +154,17 @@ var (
 		Name: "agent_web_tool_requests_total",
 		Help: "Requests to the paid web search / fetch API, by tool and result.",
 	}, []string{"tool", "result"}) // tool: web_search, web_fetch; result: ok, rejected, error
+
+	// LibraryAdd counts the links of the tool add_to_library (plan item P53) by how each
+	// ended: "queued" (saved, waiting for the ingest), "duplicate" (the library had the file),
+	// or why it was not added: "not_written" (the person did not write that link),
+	// "not_public", "blocked" (401/403), "rate_limited" (429), "not_found", "unreachable",
+	// "timeout", "too_large", "unsupported", "abstract_only", "bad_url", "empty", "error"
+	// (the server failed).
+	LibraryAdd = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "library_add_links_total",
+		Help: "Links of the add_to_library tool, by result.",
+	}, []string{"result"})
 
 	// IngestJobs counts file ingest attempts by how they ended. "failed" is an attempt
 	// River will repeat (or the last one); "cancelled" is input that can never be
