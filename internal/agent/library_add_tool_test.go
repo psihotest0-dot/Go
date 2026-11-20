@@ -184,10 +184,12 @@ func TestALinkIsRecognisedThroughTheSmallChangesAModelMakes(t *testing.T) {
 	out := call(t, r, ctx, "http://example.org/papers/w16601", "https://b.org/x.pdf.", "https://example.org/papers/w16601#abstract")
 
 	rows := rowsOf(t, out)
-	require.Len(t, rows, 3)
-	assert.Equal(t, addQueued, rows[0].Status, "http for https and no final slash")
+	require.Len(t, rows, 2, "the first and the third are one link, spelled twice")
+	assert.Equal(t, addQueued, rows[0].Status, "http for https, no final slash, a fragment")
+	assert.Equal(t, "https://Example.org/papers/w16601/", rows[0].URL, "shown as the user wrote it")
 	assert.Equal(t, addQueued, rows[1].Status, "a full stop after the link")
-	assert.Equal(t, addQueued, rows[2].Status, "a fragment")
+	assert.Empty(t, rows[0].Note, "the same link, not a corrected one")
+	assert.EqualValues(t, 2, f.calls.Load())
 }
 
 func TestOnlyWhatTheUserWroteCountsNotWhatTheAssistantWrote(t *testing.T) {
@@ -196,7 +198,7 @@ func TestOnlyWhatTheUserWroteCountsNotWhatTheAssistantWrote(t *testing.T) {
 		{Role: openai.ChatMessageRoleTool, Content: "https://tool.example/b.pdf"},
 		{Role: openai.ChatMessageRoleUser, Content: "https://user.example/c.pdf"},
 	})
-	assert.Equal(t, map[string]bool{"user.example/c.pdf": true}, keys)
+	assert.Equal(t, map[string]string{"user.example/c.pdf": "https://user.example/c.pdf"}, keys)
 }
 
 func TestAnAddressOnThisMachineIsNotFetchedEvenWhenTheUserWroteIt(t *testing.T) {
@@ -412,9 +414,10 @@ func TestTheReportListsOnlyWhatWasNotAdded(t *testing.T) {
 // and the model wrote that all of them were added.
 func TestTheAnswerCarriesTheLinksThatWereNotAddedWhateverTheModelSays(t *testing.T) {
 	ctx, _ := libraryAddCtx(t, "https://a.org/one.pdf https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414")
+	const invented = "https://papers.example.org/collect/q2"
 	reg := addTool(&fakeFetcher{}, &fakeAdder{})
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
-		{toolCallChunk(0, "call_1", addToLibraryTool, `{"urls":["https://a.org/one.pdf","https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:p:394-414"]}`)},
+		{toolCallChunk(0, "call_1", addToLibraryTool, `{"urls":["https://a.org/one.pdf","`+invented+`"]}`)},
 		{textChunk("Всички линкове са добавени и се обработват.")},
 	}}
 	o := newGroupOrchestrator(mock, reg)
@@ -428,7 +431,7 @@ func TestTheAnswerCarriesTheLinksThatWereNotAddedWhateverTheModelSays(t *testing
 	assert.Equal(t, []string{addToLibraryTool}, toolCallNames(executed))
 	assert.True(t, strings.HasPrefix(content, "Всички линкове са добавени и се обработват."), "the answer of the model stays")
 	assert.Contains(t, content, "⚠️ Не са добавени в библиотеката (1 от 2):")
-	assert.Contains(t, content, "i:p:394-414 — този линк не е написан от теб")
+	assert.Contains(t, content, "• "+invented+" — този линк не е написан от теб")
 	assert.Equal(t, content, streamed.String(), "what was streamed is what is stored")
 }
 
@@ -476,4 +479,107 @@ func TestWhatCountsAsALinkTheUserWrote(t *testing.T) {
 	var none *turnState
 	assert.False(t, none.wroteURL("https://a.org/one.pdf"), "outside a turn nothing is written by the user")
 	assert.False(t, (&turnState{}).wroteURL(""), "an empty address is no address, whatever the set holds")
+}
+
+// The live runs of 2026-11-20: the model copied 21 long links and dropped "i:2" from one in
+// 4 of 6 runs. The link it meant is a link the user wrote: that one is fetched.
+func TestALinkWithAFewCharactersWrongIsTheLinkTheUserWrote(t *testing.T) {
+	written := "https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:2:p:394-414"
+	ctx, _ := libraryAddCtx(t, "виж "+written+" и https://nber.org/papers/w17653")
+	f := &fakeFetcher{}
+	r := addTool(f, &fakeAdder{})
+
+	out := call(t, r, ctx, "https://econpapers.repec.org/RePEc:eee:jfinec:v:129:y:2018:i:p:394-414")
+
+	rows := rowsOf(t, out)
+	require.Len(t, rows, 1)
+	assert.Equal(t, addQueued, rows[0].Status)
+	assert.Equal(t, written, rows[0].URL, "the link of the user, not the one the model sent")
+	assert.Contains(t, rows[0].Note, "differed")
+	assert.Equal(t, []string{written}, f.asked, "and only that was fetched")
+}
+
+func TestTwoSpellingsOfOneLinkAreFetchedOnce(t *testing.T) {
+	written := "https://www.example.org/working-papers/paper-0001.pdf"
+	ctx, _ := libraryAddCtx(t, written)
+	f := &fakeFetcher{}
+	r := addTool(f, &fakeAdder{})
+
+	out := call(t, r, ctx, written, "https://www.example.org/working-papers/paper-001.pdf")
+
+	assert.Len(t, rowsOf(t, out), 1)
+	assert.EqualValues(t, 1, f.calls.Load())
+}
+
+func TestALinkThatIsNotClearlyOneOfTheUsersLinksIsRefused(t *testing.T) {
+	ctx, _ := libraryAddCtx(t, "https://www.example.org/working-papers/paper-0001.pdf https://www.example.org/working-papers/paper-0003.pdf https://a.org/x")
+	f := &fakeFetcher{}
+	r := addTool(f, &fakeAdder{})
+
+	out := call(t, r, ctx,
+		"https://www.example.org/working-papers/paper-0002.pdf",  // as near to two links as to the other
+		"https://evil.example/working-papers/paper-0001.pdf",     // another host
+		"https://www.example.org/working-papers/other-title.pdf", // too far
+		"https://a.org/y", // a short address: one character is another address
+	)
+
+	for _, row := range rowsOf(t, out) {
+		assert.Equal(t, addRefused, row.Status, row.URL)
+		assert.Contains(t, row.Reason, "did not write")
+	}
+	assert.EqualValues(t, 0, f.calls.Load())
+}
+
+func TestNearestLink(t *testing.T) {
+	written := map[string]string{
+		"example.org/working-papers/paper-0001.pdf": "https://example.org/working-papers/paper-0001.pdf",
+		"example.org/working-papers/paper-0003.pdf": "https://example.org/working-papers/paper-0003.pdf",
+		"example.org/working-papers/paper-0042.pdf": "https://example.org/working-papers/paper-0042.pdf",
+		"other.org/working-papers/paper-0001.pdf":   "https://other.org/working-papers/paper-0001.pdf",
+	}
+	link, ok := nearestLink("example.org/working-papers/paper-001.pdf", written)
+	assert.True(t, ok)
+	assert.Equal(t, "https://example.org/working-papers/paper-0001.pdf", link, "a character dropped")
+
+	link, ok = nearestLink("example.org/working-papers/paper-0011.pdf", written)
+	assert.True(t, ok, "one character off paper-0001, two off the others: the nearer one")
+	assert.Equal(t, "https://example.org/working-papers/paper-0001.pdf", link)
+
+	_, ok = nearestLink("example.org/working-papers/paper-0002.pdf", written)
+	assert.False(t, ok, "as near to paper-0001 as to paper-0003")
+
+	_, ok = nearestLink("third.org/working-papers/paper-0001.pdf", written)
+	assert.False(t, ok, "no link of the user on that host")
+
+	_, ok = nearestLink("example.org/working-papers/paper-0001.pdf?x=1", nil)
+	assert.False(t, ok, "nothing written")
+
+	// four characters are too many for a short address: a tenth of it at most
+	short := map[string]string{"example.org/abcdefghijklmnop": "https://example.org/abcdefghijklmnop"}
+	_, ok = nearestLink("example.org/abcdefghijklmnop", short)
+	assert.True(t, ok, "the same address")
+	_, ok = nearestLink("example.org/abXXefghijklXXop", short)
+	assert.False(t, ok, "four of 28 characters")
+	_, ok = nearestLink("example.org/abcdefghijklmnXX", short)
+	assert.True(t, ok, "two of 28 characters")
+}
+
+func TestTheFirstSpellingTheUserWroteIsKept(t *testing.T) {
+	keys := userURLKeys([]openai.ChatCompletionMessage{
+		{Role: openai.ChatMessageRoleUser, Content: "https://Example.org/a.pdf"},
+		{Role: openai.ChatMessageRoleUser, Content: "https://example.org/a.pdf/"},
+	})
+	assert.Equal(t, map[string]string{"example.org/a.pdf": "https://Example.org/a.pdf"}, keys)
+}
+
+func TestEditDistance(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0}, {"abc", "abc", 0}, {"abc", "", 3}, {"", "ab", 2},
+		{"kitten", "sitting", 3}, {"i:2:p", "i:p", 2}, {"абв", "абг", 1},
+	} {
+		assert.Equal(t, c.want, editDistance(c.a, c.b), "%q %q", c.a, c.b)
+	}
 }

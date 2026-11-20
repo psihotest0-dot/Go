@@ -72,9 +72,41 @@ func TestAsksForKnowledge(t *testing.T) {
 		"днес ми е добър ден, на работа всичко беше спокойно",
 		"What do you think about me?",
 		"How are you today?",
+		// found on 2026-11-20 (task 3): the real messages of the owner that were taken for
+		// questions to the books, and the same kind of question from the set of task 32
+		"как се казвам и от къде съм",
+		"Какво ново по света",
+		"Защо падна цената но новото IPO Anthropic",
+		"какъв е твоят любим цвят?",
+		"Каква е твоята любима книга?",
+		"колко е 17 по 23?",
+		"Колко е 2+2?",
+		"Какви са последните новини за Украйна?",
+		"Защо скочиха цените на петрола?",
+		"What are the latest news about the markets?",
+		"How much is 17 times 23?",
+		"Какво ново има в града тези дни?",
+		"Как се получава 17 по 23?",
 	}
 	for _, m := range doesNotAsk {
 		assert.False(t, asksForKnowledge(m), m)
+	}
+
+	// The narrowing is by the words of the news and of the two who talk, not by the words of
+	// money: an investing book answers these.
+	stillAsks := []string{
+		"Какво казва Греъм за акциите?",
+		"Каква е цената на дълга според Далио?",
+		"Какво е IPO?",
+		"Какво е борса и как работи тя?",
+		"Какво казва Далио за кризите на дълга?",
+		"Разкажи ми нещо интересно за анатомията на човешкото тяло", // the library holds an anatomy text
+		"Какво казва Фройд за новото в сънищата?",
+		"Какво е ново в теорията на Джеймс за навика?",
+		"Как да бъда спокоен според стоиците?",
+	}
+	for _, m := range stillAsks {
+		assert.True(t, asksForKnowledge(m), m)
 	}
 
 	// A story or a task, however it opens.

@@ -63,6 +63,8 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}
+	// For a question about how far some work is: since when a change of a file counts (P54).
+	turn.setRequestSince(requestSince(chatCtx.History, chatCtx.HistoryAt))
 
 	o.trace(ctx, userID, req.SessionID, "search", map[string]interface{}{
 		"query":      req.Content,

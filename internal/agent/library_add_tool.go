@@ -108,7 +108,7 @@ func (r *DefaultToolRegistry) WithLibraryAdd(f documentFetcher, a libraryAdder) 
 
 // offersLibraryAdd tells whether a turn offers add_to_library: the tool is on, and the
 // person wrote a link in the conversation.
-func (o *Orchestrator) offersLibraryAdd(urls map[string]bool) bool {
+func (o *Orchestrator) offersLibraryAdd(urls map[string]string) bool {
 	return o.addToLibrary && len(urls) > 0
 }
 
@@ -121,6 +121,8 @@ type addRow struct {
 	// Code is why the link was not added, in a word (libraryRefusals): the model gets the
 	// Reason, the person gets the line made from the Code (libraryReport).
 	Code string `json:"-"`
+	// Note says that the link was not the one the model sent but the one the user wrote.
+	Note string `json:"note,omitempty"`
 }
 
 func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
@@ -136,14 +138,41 @@ func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uu
 	ctx, cancel := context.WithTimeout(ctx, addDeadline)
 	defer cancel()
 
-	rows := make([]addRow, len(links))
+	// The person must have written the link: an address the model made up, or took from a
+	// page, is a way to send out what it has read. A link that differs from one the person
+	// wrote by a few characters is that link, copied wrongly (resolveURL); two spellings of
+	// one link are fetched once.
+	type target struct {
+		link      string
+		corrected bool
+		known     bool
+	}
+	targets := make([]target, 0, len(links))
+	seen := map[string]bool{}
+	for _, sent := range links {
+		link, corrected, ok := turn.resolveURL(sent)
+		if !ok {
+			targets = append(targets, target{link: sent})
+			continue
+		}
+		if seen[link] {
+			continue
+		}
+		seen[link] = true
+		targets = append(targets, target{link: link, corrected: corrected, known: true})
+	}
+
+	rows := make([]addRow, len(targets))
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, addConcurrency)
-	for i, link := range links {
+	for i, tg := range targets {
+		link := tg.link
 		rows[i] = addRow{URL: shortURL(link)}
-		// The person must have written the link: an address the model made up, or took from
-		// a page, is a way to send out what it has read.
-		if !turn.wroteURL(link) {
+		if tg.corrected {
+			rows[i].Note = "the link differed from the one the user wrote in a few characters; the link of the user was used"
+			metrics.LibraryAdd.WithLabelValues("corrected").Inc()
+		}
+		if !tg.known {
 			rows[i].Status, rows[i].Code, rows[i].Reason = addRefused, "not_written", "the user did not write this link in this conversation"
 			metrics.LibraryAdd.WithLabelValues("not_written").Inc()
 			continue

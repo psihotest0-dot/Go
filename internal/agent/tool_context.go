@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/proposals"
@@ -68,12 +69,35 @@ type turnState struct {
 	fileWrites int
 	// by is the model that gave the answer, when the paid model is configured (see model_routing.go).
 	by answeredBy
-	// userURLs are the keys (urlKey) of the addresses the person wrote in this conversation:
-	// the only ones add_to_library may fetch.
-	userURLs map[string]bool
+	// userURLs are the addresses the person wrote in this conversation, by their key
+	// (urlKey): the only ones add_to_library may fetch.
+	userURLs map[string]string
 	// libraryRows are the links add_to_library was asked for in this turn, with what became of
 	// each: the person is told which were not added (libraryReport).
 	libraryRows []addRow
+	// since is the time from which a change of a file counts as work done for a question about
+	// how far the work is (requestSince); the zero time: not known.
+	since time.Time
+}
+
+// setRequestSince records the time for statusClaimUnbacked.
+func (t *turnState) setRequestSince(at time.Time) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.since = at
+}
+
+// requestSinceTime is the time recorded by setRequestSince.
+func (t *turnState) requestSinceTime() time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.since
 }
 
 // addLibraryRows remembers the outcome of the links of a call of add_to_library.
@@ -98,7 +122,7 @@ func (t *turnState) libraryReport() string {
 }
 
 // setUserURLs records the addresses the person wrote in the conversation.
-func (t *turnState) setUserURLs(keys map[string]bool) {
+func (t *turnState) setUserURLs(keys map[string]string) {
 	if t == nil {
 		return
 	}
@@ -115,7 +139,31 @@ func (t *turnState) wroteURL(raw string) bool {
 	key := urlKey(trimURLEnd(strings.TrimSpace(raw)))
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return key != "" && t.userURLs[key]
+	_, ok := t.userURLs[key]
+	return key != "" && ok
+}
+
+// resolveURL maps a link the model sent to the link the person wrote: the same address (as
+// wroteURL says), or the one link of the person that it differs from by a few characters.
+// A model that copies 21 long links by hand drops a character now and then (in the live runs
+// of 2026-11-20 it dropped "i:2" from one in 4 of 6 runs); the link it meant is a link the
+// person wrote, so fetching that one gives away nothing. corrected tells that it was not the
+// same. ok is false when the person wrote no such link, or two of them are as near.
+func (t *turnState) resolveURL(raw string) (link string, corrected, ok bool) {
+	if t == nil {
+		return "", false, false
+	}
+	key := urlKey(trimURLEnd(strings.TrimSpace(raw)))
+	if key == "" {
+		return "", false, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if written, same := t.userURLs[key]; same {
+		return written, false, true
+	}
+	link, ok = nearestLink(key, t.userURLs)
+	return link, ok, ok
 }
 
 // withTurn starts the state of a chat turn. retrievedDocuments tells that text

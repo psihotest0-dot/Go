@@ -345,6 +345,12 @@ func (o *Orchestrator) generateChecked(
 			"answer_runes", utf8.RuneCountInString(content))
 		metrics.UserFileOps.WithLabelValues("stall", "corrected").Inc()
 		correction = writeCorrection
+	case o.statusClaimUnbacked(ctx, turn, userMessage, content, len(executed) > 0):
+		// "Успя ли?" - "Да, успях": no file was changed since the user's earlier messages.
+		slog.WarnContext(ctx, "the answer to a question about the work says it is done and no file was changed; a correction is added",
+			"answer_runes", utf8.RuneCountInString(content))
+		metrics.UserFileOps.WithLabelValues("status", "corrected").Inc()
+		correction = statusCorrection
 	default:
 		return content, reasoning, executed, nil
 	}

@@ -35,9 +35,26 @@ var (
 	conversationalWords = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:` +
 		`теб|ти|тебе|си|правиш|мислиш|смяташ|чувстваш|можеш|искаш|помниш|знаеш|харесваш|` +
 		`мен|ме|аз|чувствам|нас|ние|` +
+		// "твоят любим цвят" and "как се казвам" (found on 2026-11-20 in the real chats and
+		// the questions of task 32): about the two who talk
+		`твой|твоя|твоят|твоята|твоето|твоите|твои|казвам|` +
 		`днес|утре|вчера|сега|часът|времето|` +
 		`you|your|yourself|today|tomorrow|yesterday|weather` +
 		`)(?:[^\p{L}]|$)`)
+
+	// currentAffairs: a question about the news, the markets or a sum - what a search of
+	// the web or a calculator answers, and the books do not (plan item P53, task 3 of
+	// 2026-11-21): "Какво ново по света", "Защо падна цената но новото IPO Anthropic" (the two
+	// real messages of the owner that were taken for questions to the books and went to the
+	// paid model), "колко е 17 по 23". Only words that mark the news itself: "цената",
+	// "акциите", "борсата" alone are also what an investing book is about.
+	currentAffairs = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:` +
+		`какво\s+ново|новини|новина|новините|по\s+света|` +
+		`падна|падат|падаха|скочи|скочиха|поскъпна|поскъпват|поевтиня|` +
+		`latest\s+news|breaking\s+news|stock\s+price` +
+		`)(?:[^\p{L}]|$)|` +
+		`(?:колко\s+(?:е|прави|правят)|how\s+much\s+is)\s+[\d(]|` +
+		`\d\s*(?:по|плюс|минус|делено\s+на|[+*×/÷])\s*\d`)
 
 	// requestFiller: the little words a speaker puts in front of a request.
 	requestFiller = `(?i)^\s*(?:(?:а|и|ами|добре|моля|хайде|please)[,\s]+)?`
@@ -99,7 +116,7 @@ func asksForKnowledge(message string) bool {
 	if shouldSkipRetrieval(message) {
 		return false
 	}
-	return knowledgeOpening.MatchString(message) && !conversationalWords.MatchString(message)
+	return knowledgeOpening.MatchString(message) && !conversationalWords.MatchString(message) && !currentAffairs.MatchString(message)
 }
 
 // forcedFirstTool names the tool the first round must call, or "" when the model
