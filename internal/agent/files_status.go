@@ -34,6 +34,11 @@ const (
 )
 
 // notDone: the assistant says the work was not done ("Не успях", "още не е готово").
+// doneVerb: a verb of the assistant about itself in the past ("успях", "преструктурирах",
+// "обнових"): it says that it did something. An answer that refuses at the start and then says
+// "вместо това преструктурирах файла" (found in 16 replays of 2026-11-20) is a claim too.
+var doneVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])\p{L}{3,}(?:ах|ях|их|ох)(?:[^\p{L}]|$)`)
+
 var notDone = regexp.MustCompile(`(?i)(?:не\s+(?:успях|успех|успя|съм\s+успял\p{L}*|е\s+готов\p{L}*|са\s+готов\p{L}*)|все\s+още\s+не|още\s+не)`)
 
 // filesChangeChecker is a tool registry that can tell whether the user's files changed.
@@ -91,7 +96,7 @@ func requestSince(history []openai.ChatCompletionMessage, at []time.Time) time.T
 // changed since their earlier messages. The answer must be about a file, and must neither
 // ask, refuse, say "не успях" nor promise (those are not claims of success).
 func (o *Orchestrator) statusClaimUnbacked(ctx context.Context, turn *turnState, userMessage, answer string, called bool) bool {
-	if called || !asksForStatus(userMessage) || !leavesTheWork(answer) || notDone.MatchString(answer) {
+	if called || !asksForStatus(userMessage) || !claimsOrLeaves(answer) || notDone.MatchString(answer) {
 		return false
 	}
 	if !fileMention.MatchString(answer) && !fileMention.MatchString(userMessage) && !asksToSave(userMessage) {
@@ -105,4 +110,15 @@ func (o *Orchestrator) statusClaimUnbacked(ctx context.Context, turn *turnState,
 	}
 	changed, err := checker.FilesChangedSince(userID, since)
 	return err == nil && !changed
+}
+
+// claimsOrLeaves tells whether an answer to a question about the work is neither a question
+// nor a plain refusal: it says that something was done, or says nothing of the work. An answer
+// that asks the user, or refuses and claims nothing, is left alone.
+func claimsOrLeaves(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" || utf8.RuneCountInString(answer) > maxStallAnswerRunes || strings.Contains(answer, "?") || asksTheUser.MatchString(answer) {
+		return false
+	}
+	return !refusal.MatchString(answer) || doneVerb.MatchString(answer)
 }

@@ -218,3 +218,33 @@ func TestAStatusAnswerAfterAToolCallIsLeftAlone(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Да, успях да запиша бележката за файла.", content)
 }
+
+// Found in 16 replays of the turn of 19:06 (2026-11-20): a refusal at the start does not
+// excuse a claim after it.
+func TestARefusalFollowedByAClaimIsStillCheckedAgainstTheFolder(t *testing.T) {
+	for _, answer := range []string{
+		"Не е възможно да запиша буквално всяка дума в един файл. Вместо това аз преструктурирах файла с пълния логически поток на изследването.",
+		"Нямам достъп до целия текст, но започнах файла с каквото знам.",
+	} {
+		content, _ := askStatus(t, &statusRegistry{changed: false}, answer, "успя ли ?")
+		assert.Equal(t, answer+"\n\n"+statusCorrection, content, answer)
+	}
+
+	// the same refusals without a claim are left alone
+	for _, answer := range []string{
+		"Не е възможно да запиша буквално всяка дума в един файл.",
+		"Нямам достъп до целия текст на статията, затова файлът е същият.",
+	} {
+		content, _ := askStatus(t, &statusRegistry{changed: false}, answer, "успя ли ?")
+		assert.Equal(t, answer, content, answer)
+	}
+}
+
+func TestDoneVerb(t *testing.T) {
+	for _, s := range []string{"успях", "Преструктурирах файла", "аз обнових го", "направих го.", "започнах да чета"} {
+		assert.True(t, doneVerb.MatchString(s), s)
+	}
+	for _, s := range []string{"не мога", "ще го направя", "файлът е готов", "то е", "ах!", "мях"} {
+		assert.False(t, doneVerb.MatchString(s), s)
+	}
+}
