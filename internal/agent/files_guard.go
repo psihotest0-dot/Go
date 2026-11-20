@@ -25,7 +25,7 @@ import (
 // The first is told to the model, when the message asks for it (a note on that one request,
 // not in every prompt). The second cannot be prevented by a prompt, so it is checked in
 // code: an answer that claims a write no file tool made is asked again once, with the file
-// tools open (retryUnbackedWrite), and an answer that still claims a write or a removal
+// tools open (retryUnbacked), and an answer that still claims a write or a removal
 // that did not happen gets a correction under it.
 
 const (
@@ -41,13 +41,29 @@ const (
 		"Кажи ми пак какво да направя."
 
 	// retryNote is added to the message of the user, for the model only, when its answer
-	// claimed a write that no tool made and the turn is asked again (retryUnbackedWrite).
+	// claimed a write that no tool made and the turn is asked again (retryUnbacked).
 	retryNote = "[Note for the assistant, not written by the user: your first answer to this message said that a file was written, " +
 		"but no file tool was called and nothing was written. Do what the user asked now with the file tools " +
 		"(append_file adds to a file that exists, write_file makes a new one; list_files shows what is there), " +
 		"then say in one or two sentences what the tools did.]"
 	// retryNotice is streamed under the first answer before the second one.
 	retryNotice = "\n\n⚠️ Това не беше записано — правя го сега.\n\n"
+
+	// stallNote and stallNotice are the same for an answer that did not claim a write but
+	// promised the work for later or said it was going on (plan item P53): "Ще започна
+	// веднага да пренаписвам файла… Когато завърша, ще ти кажа." with no tool called.
+	stallNote = "[Note for the assistant, not written by the user: your first answer to this message promised to do the work later " +
+		"or said that it was going on, but no tool was called and nothing was done. Nothing runs between two messages. " +
+		"Do what the user asked now with the file tools (append_file adds to a file that exists, write_file makes a new one; " +
+		"list_files shows what is there), then say in one or two sentences what the tools did.]"
+	stallNotice = "\n\n⚠️ Обещах го, но нищо не беше направено — правя го сега.\n\n"
+	// stallCorrection goes under an answer that still promises work for later or says it
+	// is going on, after no tool was called. Nothing happens between two messages.
+	stallCorrection = "⚠️ Поправка: не работя на заден план — нищо не се прави между съобщенията ми и в този отговор не е направено нищо. " +
+		"Кажи ми какво да направя и го правя в самия отговор."
+	// maxStallAnswerRunes: a long answer has done its work in words; a stray phrase in it is
+	// not a promise.
+	maxStallAnswerRunes = 1500
 
 	maxRemovalQuestionRunes = 400
 )
@@ -62,13 +78,54 @@ var (
 	// removalClaim: the assistant says it deleted, removed or renamed something.
 	removalClaim = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:изтрих|премахнах|преименувах|унищожих|deleted|removed)(?:[^\p{L}]|$)`)
 	// writeClaim: it says it wrote or added something.
-	writeClaim = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:записах|запазих|съхраних|добавих|прехвърлих|saved|wrote)(?:[^\p{L}]|$)`)
+	// "създадох" and the rest were added on 2026-11-20: asked to "create the file first",
+	// the model answered "Създадох файла …" with no call in 8 of 8 replays of the real chat.
+	// Such a word counts only in an answer about a file (unbackedFileClaim).
+	writeClaim = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:записах|запазих|съхраних|добавих|прехвърлих|създадох|направих|подготвих|изготвих|пренаписах|презаписах|обнових|замених|замянах|saved|wrote|created)(?:[^\p{L}]|$)`)
 	// appendVerb: the message asks to add to something ("добави", "допиши", "append", "add");
 	// createVerb: it says it is a new file. See asksToAppend.
 	appendVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:добав|допиш|дописв|допълн|прибав|append|add(?:[^\p{L}]|$))`)
 	createVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:създа|нов\p{L}*\s+файл|new\s+file|create|make\s+a\s+file)`)
 	// fileMention: the sentence is about a file.
 	fileMention = regexp.MustCompile(`(?i)(?:файл|папк|\.(?:txt|md|csv|json|ya?ml|log)(?:[^\p{L}]|$)|(?:^|[^\p{L}])(?:file|folder)(?:[^\p{L}]|$))`)
+
+	// workInProgress: the assistant says that it is working on something now, or that it
+	// will tell when it is done. No tool was called, so nothing is going on: nothing runs
+	// between two messages. First person only - "в процес на" alone is also how a text says
+	// that a city is being rebuilt.
+	workInProgress = regexp.MustCompile(`(?i)(?:` +
+		`(?:съм|сме)\s+в\s+процес\s+на|` +
+		`в\s+момента\s+(?:работя|обработвам|пиша|пренаписвам|извличам|преобразувам|записвам|подготвям|изготвям)|` +
+		`(?:още|все\s+още)\s+(?:обработвам|пиша|пренаписвам|извличам|преобразувам|записвам|подготвям)|` +
+		`(?:щом|когато|след\s+като)\s+(?:завърша|приключа|свърша|довърша)|` +
+		`(?:щом|когато|след\s+като)\s+(?:е|са|бъде|бъдат)\s+готов\p{L}*|` +
+		`i['’]m\s+(?:currently\s+)?(?:working\s+on|processing|in\s+the\s+process)|` +
+		`(?:when|once|as\s+soon\s+as)\s+i(?:['’]m|\s+am|\s+have)?\s+(?:done|finished)|` +
+		`i['’]ll\s+let\s+you\s+know\s+(?:when|once|as)` +
+		`)`)
+	// workStartsNow: "ще започна веднага", "започвам сега" - a promise to start. After the
+	// answer is over it is a promise of work no one does, but "ще го запиша веднага щом ми
+	// кажеш името" is a condition and not one (promisesWork looks at what follows).
+	workStartsNow = regexp.MustCompile(`(?i)(?:` +
+		`ще\s+(?:започна|го\s+направя|го\s+запиша|го\s+запазя|се\s+заема|продължа|пренапиша|запиша)\s+(?:веднага|сега|незабавно)|` +
+		`започвам\s+(?:веднага|сега|незабавно)|` +
+		`i['’]ll\s+(?:start|begin|do\s+it|get\s+started)\s+(?:right\s+away|now|immediately)` +
+		`)`)
+	// afterCondition: what follows "веднага" when it is the start of a condition.
+	afterCondition = regexp.MustCompile(`(?i)^\s+(?:щом|след|като|когато|ако|as\s+soon|once|when|after)`)
+	// statusQuestion: the message asks how far the work is ("успя ли?"). Asking the turn
+	// again with the file tools would not answer it; the answer must be honest.
+	statusQuestion = regexp.MustCompile(`(?i)(?:успя\s+ли|успяла\s+ли|успя\p{L}*\s+ли|готов\p{L}*\s+ли|готово\s+ли|свърши\s+ли|приключи\s+ли|как\s+върви|докъде\s+(?:стигна|си|сме)|` +
+		`did\s+you\s+(?:finish|manage|do)|is\s+it\s+(?:done|ready)|any\s+progress)`)
+	// saveVerb: the message asks to keep something ("запиши цялата статия", "запази го"):
+	// a request for the file tools even where no file is named. "напиши" and "създай" are
+	// not here: they ask for a text as often as for a file.
+	saveVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:запиш|запаз|съхран|допиш|дописв|save|append)`)
+	// refusal: the assistant says it cannot, or has nothing to do it with.
+	refusal = regexp.MustCompile(`(?i)(?:не\s+мога|нямам|не\s+разполагам|не\s+е\s+възможно|не\s+съм\s+в\s+състояние|i\s+can['’]?t|cannot|i\s+don['’]?t\s+have|unable\s+to)`)
+	// asksTheUser: the answer asks for what it needs ("кажи ми името на файла") without a
+	// question mark.
+	asksTheUser = regexp.MustCompile(`(?i)(?:кажи\s+ми|кажете\s+ми|дай\s+ми|уточни|посочи|избери|изпрати\s+ми|прати\s+ми|напиши\s+ми|tell\s+me|let\s+me\s+know|please\s+(?:specify|provide|send))`)
 )
 
 // asksToRemoveFile tells whether a message asks to delete, rename or move a file. A plain
@@ -85,6 +142,59 @@ func asksToRemoveFile(message string) bool {
 // filter: when the message also speaks of creating or of a new file it is not one.
 func asksToAppend(message string) bool {
 	return appendVerb.MatchString(message) && !createVerb.MatchString(message)
+}
+
+// promisesWork tells whether an answer promises work for later or says that it is going
+// on - "Ще започна веднага да пренаписвам файла… Когато завърша, ще ти кажа.", "В момента
+// съм в процес на преобразуване" (the real answers of 2026-11-20, 19:01 and 19:06) - and
+// is not an answer that asks the user something it needs. Meant to be called for an answer
+// after which no tool was called: then nothing is going on, and nothing will. A plain
+// filter: a false alarm costs one more request to the model, or a line under the answer.
+func promisesWork(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" || utf8.RuneCountInString(answer) > maxStallAnswerRunes {
+		return false
+	}
+	if workInProgress.MatchString(answer) {
+		return true
+	}
+	// "Ще започна веднага. Искаш ли да продължа?" hands the turn back to the user.
+	if strings.HasSuffix(answer, "?") {
+		return false
+	}
+	for _, at := range workStartsNow.FindAllStringIndex(answer, -1) {
+		if !afterCondition.MatchString(answer[at[1]:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// asksForStatus tells whether a message asks how far some work is.
+func asksForStatus(message string) bool { return statusQuestion.MatchString(message) }
+
+// asksToSave tells whether a message asks to keep something: "запиши цялата статия".
+func asksToSave(message string) bool { return saveVerb.MatchString(message) }
+
+// asksToWrite tells whether a message asks for a change of a file: to keep something, or to
+// add to or make a file it names.
+func asksToWrite(message string) bool {
+	return asksToSave(message) || (fileMention.MatchString(message) && (appendVerb.MatchString(message) || createVerb.MatchString(message)))
+}
+
+// leavesTheWork tells whether an answer to a request to write, given after no tool was
+// called, does neither of the honest things: asks the user for what it needs, or says it
+// cannot. What is left is talk about what the assistant will do. The real answers of
+// 2026-11-20, 8 replays of one turn (one with a call): "ще презапиша файла…", "ще започна
+// работа по … веднага", "ще обновя файла…", "мога да започна с първия блок веднага" - six
+// wordings of one promise, so the promise itself is not looked for, its absence of a
+// question is.
+func leavesTheWork(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" || utf8.RuneCountInString(answer) > maxStallAnswerRunes {
+		return false
+	}
+	return !strings.Contains(answer, "?") && !refusal.MatchString(answer) && !asksTheUser.MatchString(answer)
 }
 
 // unbackedFileClaim returns the correction to show under an answer that says a file was
@@ -152,20 +262,38 @@ func (o *Orchestrator) generateGuarded(
 		return content, reasoning, executed, err
 	}
 	turn := turnFrom(ctx)
-	userNamedFile := fileMention.MatchString(lastUserContent(finalMessages))
+	userMessage := lastUserContent(finalMessages)
+	userNamedFile := fileMention.MatchString(userMessage)
 	claim := func() string {
 		return unbackedFileClaim(content, turn.filesWritten() > 0, userNamedFile && len(executed) == 0)
 	}
-	if claim() == writeCorrection && !usedFileTools(executed) {
+	// stalled: the answer promises work for later or says it is going on, and no tool of
+	// any kind was called in the turn.
+	stalled := func() bool { return len(executed) == 0 && promisesWork(content) }
+	// ignored: the message asked for a change of a file, no tool of any kind was called, and
+	// the answer neither asks nor refuses (leavesTheWork).
+	ignored := func() bool {
+		return len(executed) == 0 && !asksForStatus(userMessage) && asksToWrite(userMessage) && leavesTheWork(content)
+	}
+
+	var retry *fileRetry
+	switch {
+	case claim() == writeCorrection && !usedFileTools(executed):
+		retry = &writeRetry
+	case ignored(), stalled() && !asksForStatus(userMessage) &&
+		(userNamedFile || fileMention.MatchString(content) || asksToSave(userMessage)):
+		retry = &stallRetry
+	}
+	if retry != nil {
 		if open, required := o.retryFileTools(tools, turn); len(required) > 0 {
 			// "Add to the file" after a history in which the model said it had deleted it:
 			// left a choice the model took write_file (a replacement, which waits for the
 			// user's confirmation) instead of append_file. The first round of the retry
 			// offers no write_file; the later rounds still do, for a file that is not there.
-			if asksToAppend(lastUserContent(finalMessages)) {
+			if asksToAppend(userMessage) {
 				required = withoutTools(required, writeFileTool)
 			}
-			retried, retriedReasoning, retriedCalls, err := o.retryUnbackedWrite(ctx, messages, open, required, onDelta)
+			retried, retriedReasoning, retriedCalls, err := o.retryUnbacked(ctx, messages, open, required, *retry, onDelta)
 			reasoning += retriedReasoning
 			executed = append(executed, retriedCalls...)
 			if err != nil {
@@ -174,19 +302,47 @@ func (o *Orchestrator) generateGuarded(
 			content = retried
 		}
 	}
-	if note := claim(); note != "" {
+	correction := claim()
+	switch {
+	case correction != "":
 		slog.WarnContext(ctx, "the answer claims a change of the files that did not happen; a correction is added",
 			"answer_runes", utf8.RuneCountInString(content))
 		metrics.UserFileOps.WithLabelValues("claim", "corrected").Inc()
-		content += "\n\n" + note
-		if onDelta != nil {
-			if err := onDelta("\n\n"+note, ""); err != nil {
-				return content, reasoning, executed, err
-			}
+	case stalled():
+		slog.WarnContext(ctx, "the answer promises work for later and no tool was called; a correction is added",
+			"answer_runes", utf8.RuneCountInString(content))
+		metrics.UserFileOps.WithLabelValues("stall", "corrected").Inc()
+		correction = stallCorrection
+	case ignored():
+		// The retry could not be made, or made no call: say that nothing was written.
+		slog.WarnContext(ctx, "the message asked for a file change and the answer did nothing about it; a correction is added",
+			"answer_runes", utf8.RuneCountInString(content))
+		metrics.UserFileOps.WithLabelValues("stall", "corrected").Inc()
+		correction = writeCorrection
+	default:
+		return content, reasoning, executed, nil
+	}
+	content += "\n\n" + correction
+	if onDelta != nil {
+		if err := onDelta("\n\n"+correction, ""); err != nil {
+			return content, reasoning, executed, err
 		}
 	}
 	return content, reasoning, executed, nil
 }
+
+// fileRetry is what differs between the two reasons to ask a turn again with the file tools:
+// the note for the model only, the line the client sees, and the label of the counter.
+type fileRetry struct {
+	note, notice, op string
+}
+
+var (
+	// writeRetry: the answer claimed a write that no tool made (P52).
+	writeRetry = fileRetry{note: retryNote, notice: retryNotice, op: "claim"}
+	// stallRetry: the answer promised the work for later and no tool was called (P53).
+	stallRetry = fileRetry{note: stallNote, notice: stallNotice, op: "stall"}
+)
 
 // usedFileTools tells whether the turn called any tool of the file group, the stub
 // included. Such a turn may have made a proposal or read a file; its claim is only
@@ -216,7 +372,7 @@ func (o *Orchestrator) retryFileTools(tools []openai.Tool, turn *turnState) (ope
 	return open, addedTools(tools, open)
 }
 
-// retryUnbackedWrite asks the model again, when its answer claimed a file was written and
+// retryUnbacked asks the model again, when its answer claimed a file was written and
 // no file tool was called: the file group is open and the first round must call one of
 // its tools (plan item P52).
 //
@@ -230,18 +386,22 @@ func (o *Orchestrator) retryFileTools(tools []openai.Tool, turn *turnState) (ope
 // The client has already seen the first answer as it streamed: a line under it says it
 // was not written and the second answer follows. What is returned, and stored, is the
 // second answer alone, so that the history does not keep the false claim.
-func (o *Orchestrator) retryUnbackedWrite(
+//
+// The same is done for an answer that promised the work for later (fileRetry, P53).
+func (o *Orchestrator) retryUnbacked(
 	ctx context.Context,
 	messages []openai.ChatCompletionMessage,
 	open, required []openai.Tool,
+	why fileRetry,
 	onDelta deltaFunc,
 ) (string, string, []openai.ToolCall, error) {
-	slog.WarnContext(ctx, "the answer claims a file write that no tool made; the turn is asked again with the file tools")
-	metrics.UserFileOps.WithLabelValues("claim", "retried").Inc()
+	slog.WarnContext(ctx, "the answer claims or promises a file change that no tool made; the turn is asked again with the file tools",
+		"reason", why.op)
+	metrics.UserFileOps.WithLabelValues(why.op, "retried").Inc()
 	if onDelta != nil {
-		if err := onDelta(retryNotice, ""); err != nil {
+		if err := onDelta(why.notice, ""); err != nil {
 			return "", "", nil, err
 		}
 	}
-	return o.runRounds(ctx, withNoteOnLastUser(messages, retryNote), open, onDelta, required)
+	return o.runRounds(ctx, withNoteOnLastUser(messages, why.note), open, onDelta, required)
 }
