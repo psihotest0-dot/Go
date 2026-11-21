@@ -21,6 +21,7 @@ import (
 	"go-monolith/internal/db"
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
+	"go-monolith/internal/taskplan"
 	"go-monolith/internal/userfiles"
 	"go-monolith/metrics"
 )
@@ -42,6 +43,8 @@ type DefaultToolRegistry struct {
 	// fetcher and adder are what add_to_library works with; nil means the tool is off.
 	fetcher documentFetcher
 	adder   libraryAdder
+	// plans keeps the plans of the tasks; nil means the plan tools are off.
+	plans *taskplan.Store
 }
 
 // WithAttachments lets the read_attachment tool read the files attached to a
@@ -81,6 +84,18 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeReadAttachment(ctx, userID, args)
 	case addToLibraryTool:
 		return r.executeAddToLibrary(ctx, userID, args)
+	case planStubTool, planSetTool, planUpdateTool:
+		if r.plans == nil {
+			return nil, fmt.Errorf("unknown tool: %s", name)
+		}
+		switch name {
+		case planStubTool:
+			return r.executePlanStub()
+		case planSetTool:
+			return r.executePlanSet(ctx, userID, args)
+		default:
+			return r.executePlanUpdate(ctx, userID, args)
+		}
 	case "save_global_rule":
 		return r.executeSaveGlobalRule(ctx, userID, args)
 	case styleNoteTool:

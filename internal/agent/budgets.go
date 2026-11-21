@@ -164,6 +164,9 @@ func newBudgets(cfg *config.Config) budgets {
 		if cfg.FilesEnabled {
 			b.extraFixedTokens = filesStubTokens
 		}
+		if cfg.TaskPlanEnabled {
+			b.extraFixedTokens += planStubTokens()
+		}
 		room := b.contextTokens - b.answerTokens - fixedPromptTokens - b.extraFixedTokens - maxSummaryTokens - toolFloorTokens - b.contextTokens/20
 		if room < minDerivedRoom {
 			room = minDerivedRoom

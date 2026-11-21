@@ -1061,6 +1061,38 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
+  /task-plan:
+    get:
+      summary: The plan of the task of a conversation
+      description: |
+        The newest plan of the conversation, whatever became of it (`active`, `done` or
+        `cancelled`), or `{"plan": null}` when it has none. A plan exists only when the server runs
+        with `TASK_PLAN_ENABLED=true` and the assistant made one for a task with several steps
+        (`plan_set`); the assistant reports on the steps (`plan_update`), and the server checks
+        that a step is `done` only after a successful call of the tool the step names. The app
+        only shows it: nothing here changes a plan. What the tools did (the ledger) is not part of
+        the answer; the line that says it is `evidence` of a done step.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      - name: session_id
+        in: query
+        required: true
+        description: The conversation (1 to 128 characters, no control characters).
+        schema:
+          type: string
+      responses:
+        '200':
+          description: The plan, or null
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPlanResponse'
+        '400':
+          description: No usable `session_id`.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
   /oracle/evaluate:
     post:
       summary: Second opinion on a trading signal (called by the trading bot)
@@ -1870,6 +1902,67 @@ components:
           type: string
           description: What the app calls the conversation (`Telegram`, `Telegram 2`, ...).
           example: Telegram
+    TaskPlanResponse:
+      type: object
+      required:
+      - plan
+      properties:
+        plan:
+          nullable: true
+          oneOf:
+          - $ref: '#/components/schemas/TaskPlan'
+    TaskPlan:
+      type: object
+      required: [id, goal, steps, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        goal:
+          type: string
+        status:
+          type: string
+          enum: [active, done, cancelled]
+          description: '`done`: no step is left to do. `cancelled`: another plan took its place.'
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskPlanStep'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TaskPlanStep:
+      type: object
+      required: [id, text, status]
+      properties:
+        id:
+          type: integer
+          description: The number of the step, from 1.
+        text:
+          type: string
+        tool:
+          type: string
+          enum: [web_search, web_fetch, add_to_library, list_documents, search_documents, read_attachment, read_file, write_file, none]
+          description: >-
+            The tool that does the step. A step that names one is `done` only after a successful
+            call of it (a write may be a `write_file` or an `append_file`) that no other step has
+            used. `none` is a step that needs no tool (a decision, the answer to the user) and is
+            done on the word of the assistant. A step that names nothing at all is `done` after
+            some successful call of any tool that no other step has used.
+        status:
+          type: string
+          enum: [pending, doing, done, failed, skipped]
+        evidence:
+          type: string
+          description: >-
+            What the tool did, for a step that was done with one, for example
+            `web_fetch https://example.org/paper -> 1.3 KB (short: a summary?)`.
+        note:
+          type: string
+          description: The reason of a failed or skipped step.
     TelegramSessionList:
       type: object
       required:

@@ -506,3 +506,12 @@ func TestLoadTelegramLLM(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadTaskPlanSetting(t *testing.T) {
+	for value, want := range map[string]bool{"": false, "true": true, "1": true, "maybe": false, "false": false} {
+		t.Setenv("TASK_PLAN_ENABLED", value)
+		if got := Load().TaskPlanEnabled; got != want {
+			t.Errorf("TASK_PLAN_ENABLED=%q gives %v, want %v", value, got, want)
+		}
+	}
+}

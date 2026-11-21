@@ -396,6 +396,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 						notes[i] = toolNoteSeparator + note
 					}
 					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
+					o.recordPlanEvidence(ctx, tc.Function.Name, args, res, len(resBytes))
 				}
 			}
 		}
@@ -499,6 +500,11 @@ func (o *Orchestrator) runRounds(
 			req.Tools = asked
 			req.ToolChoice = "required"
 		}
+		// The forced tool is for the first round only. A round that only unlocks a group does not
+		// count as a tool round, so without this a forced stub (the plan, for work on every item)
+		// would be forced again in the round that must use the tools it unlocked, and these would
+		// never be offered (found by the replay of 2026-11-21: the plan was never made).
+		forced = ""
 		asked = nil
 		result, err := o.streamWithRescue(ctx, req, onDelta)
 		assistantContent.WriteString(result.content)
@@ -524,7 +530,12 @@ func (o *Orchestrator) runRounds(
 		}
 		// The rounds for tools: two, and more for each group that was unlocked - never for more
 		// groups than there are, whatever the model calls.
-		if toolRounds >= maxToolRounds+groupExtraRounds*min(unlocks, len(o.groups)) && !unlock {
+		rounds := maxToolRounds + groupExtraRounds*min(unlocks, len(o.groups))
+		if planned := turnFrom(ctx).extraRounds(); planned > 0 {
+			// A plan is a step for a call: the rounds of a plan replace those of the groups, not add to them.
+			rounds = max(rounds, maxToolRounds+planned)
+		}
+		if toolRounds >= rounds && !unlock {
 			slog.WarnContext(ctx, "tool round limit reached, answering without further tools",
 				"rounds", toolRounds,
 				"pending_tool_calls", len(result.toolCalls))

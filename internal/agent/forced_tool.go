@@ -120,10 +120,14 @@ func asksForKnowledge(message string) bool {
 }
 
 // forcedFirstTool names the tool the first round must call, or "" when the model
-// is left to choose. A question about what the library holds comes first; a
-// question to the books and a request for a passage of one both search.
+// is left to choose. Work on every item of a set comes first and is a plan (the stub of the
+// plan is on offer only when the plan is on and the conversation has none in progress); a
+// question about what the library holds comes next; a question to the books and a request for a
+// passage of one both search.
 func forcedFirstTool(tools []openai.Tool, message string) string {
 	switch {
+	case asksForManySteps(message) && onlyTool(tools, planStubTool) != nil:
+		return planStubTool
 	case asksAboutLibrary(message) && onlyTool(tools, listDocumentsTool) != nil:
 		return listDocumentsTool
 	case (asksForKnowledge(message) || asksForPassage(message)) && onlyTool(tools, searchDocumentsTool) != nil:

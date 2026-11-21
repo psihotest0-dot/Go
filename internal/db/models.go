@@ -134,6 +134,18 @@ type SessionSummary struct {
 	UpdatedAt             time.Time `json:"updated_at"`
 }
 
+type TaskPlan struct {
+	ID        int64           `json:"id"`
+	UserID    uuid.UUID       `json:"user_id"`
+	SessionID string          `json:"session_id"`
+	Goal      string          `json:"goal"`
+	Steps     json.RawMessage `json:"steps"`
+	Ledger    json.RawMessage `json:"ledger"`
+	Status    string          `json:"status"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
 type User struct {
 	ID        uuid.UUID    `json:"id"`
 	CreatedAt sql.NullTime `json:"created_at"`

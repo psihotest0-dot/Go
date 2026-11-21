@@ -46,6 +46,7 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 		"oracle_requests_total",
 		"oracle_verdicts_total",
 		"oracle_latency_seconds",
+		"task_plan_events_total",
 		"ingest_jobs_total",
 		"ingest_job_duration_seconds",
 		"distillation_summaries_total",
@@ -153,4 +154,26 @@ func counterValue(t *testing.T, name string) float64 {
 	}
 	t.Fatalf("metric %s not found", name)
 	return 0
+}
+
+// The events of a plan exist at zero from the start, so that the first one shows in rate().
+func TestTaskPlanEventsExistFromTheStart(t *testing.T) {
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	events := map[string]bool{}
+	for _, family := range families {
+		if family.GetName() != "task_plan_events_total" {
+			continue
+		}
+		for _, m := range family.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "event" {
+					events[l.GetValue()] = true
+				}
+			}
+		}
+	}
+	for _, want := range []string{"set", "step_done", "step_failed", "step_skipped", "step_doing", "step_refused", "completed", "evidence"} {
+		assert.True(t, events[want], "task_plan_events_total{event=%q} is not exported", want)
+	}
 }

@@ -19,6 +19,7 @@ type DeletedSession struct {
 	Attachments int64
 	Traces      int64
 	Summaries   int64
+	Plans       int64 // the plans of the tasks of the conversation
 }
 
 // DeleteSession removes a chat session of a user: its messages, the rolling summary, the
@@ -48,6 +49,9 @@ func (d *Database) DeleteSession(ctx context.Context, userID uuid.UUID, sessionI
 	}
 	if res.Summaries, err = q.DeleteSessionSummary(ctx, DeleteSessionSummaryParams{UserID: userID, SessionID: sessionID}); err != nil {
 		return res, fmt.Errorf("delete summary: %w", err)
+	}
+	if res.Plans, err = q.DeleteSessionTaskPlans(ctx, DeleteSessionTaskPlansParams{UserID: userID, SessionID: sessionID}); err != nil {
+		return res, fmt.Errorf("delete task plans: %w", err)
 	}
 	if res.Messages, err = q.DeleteSessionMessages(ctx, DeleteSessionMessagesParams{UserID: userID, SessionID: sessionID}); err != nil {
 		return res, fmt.Errorf("delete messages: %w", err)

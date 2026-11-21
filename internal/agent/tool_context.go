@@ -78,6 +78,31 @@ type turnState struct {
 	// since is the time from which a change of a file counts as work done for a question about
 	// how far the work is (requestSince); the zero time: not known.
 	since time.Time
+	// planActive: the conversation has a plan in progress in this turn (see plan_tool.go).
+	planActive bool
+}
+
+// markPlanActive records that this turn works on a plan in progress.
+func (t *turnState) markPlanActive() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.planActive = true
+}
+
+// extraRounds are the rounds for tools this turn gets more than the usual: those of a plan.
+func (t *turnState) extraRounds() int {
+	if t == nil {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.planActive {
+		return planActiveRounds
+	}
+	return 0
 }
 
 // setRequestSince records the time for statusClaimUnbacked.

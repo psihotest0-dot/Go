@@ -152,6 +152,10 @@ type Config struct {
 	// downloads the documents behind links the user wrote and adds them to the library
 	// (plan item P53). Off by default: without it nothing changes.
 	LibraryAddEnabled bool
+	// TaskPlanEnabled (TASK_PLAN_ENABLED) turns on the plan of a task: the assistant makes a
+	// plan of a task with several steps, the server keeps it and checks that a step is done
+	// before it is marked so (package taskplan). Off by default: without it nothing changes.
+	TaskPlanEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -356,6 +360,7 @@ func Load() *Config {
 		FilesEnabled:       boolEnv("FILES_ENABLED", false),
 		FilesDir:           filesDir(),
 		LibraryAddEnabled:  boolEnv("LIBRARY_ADD_ENABLED", false),
+		TaskPlanEnabled:    boolEnv("TASK_PLAN_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

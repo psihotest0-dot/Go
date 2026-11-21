@@ -20,6 +20,7 @@ import (
 	"go-monolith/internal/llm"
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
+	"go-monolith/internal/taskplan"
 )
 
 // persistTimeout bounds the writes after an answer (storing it, the trace). Each
@@ -66,6 +67,8 @@ type Orchestrator struct {
 	// addToLibrary: the tool add_to_library is offered in a turn whose conversation has a
 	// link the person wrote (see offersLibraryAdd).
 	addToLibrary bool
+	// plans keeps the plan of the task of a conversation; nil means no plans (see plan_tool.go).
+	plans *taskplan.Store
 	// paid is the paid model of the chat (nil: none), paidName its name; libraryPaid says that
 	// the questions to the library go to it on their own. See model_routing.go.
 	paid        llm.LLMClient

@@ -55,7 +55,11 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// The dose of questions (P49): a note next to the message, in the copy the model reads.
 	// It goes in before the history is pruned, so that its tokens come out of the history
 	// budget, not out of the room of the answer.
-	chatCtx = o.withClosingNote(ctx, userID, req.SessionID, chatCtx, len(plan.files) > 0)
+	//
+	// A conversation with a plan in progress has the plan next to the message too (plan_tool.go),
+	// and no question to end with: it is a task, not a talk.
+	chatCtx, taskPlan, planToolTokens := o.withPlanNote(ctx, userID, req.SessionID, chatCtx)
+	chatCtx = o.withClosingNote(ctx, userID, req.SessionID, chatCtx, len(plan.files) > 0 || taskPlan != nil)
 
 	// The tools of this turn share its state: what untrusted text it has read and
 	// which proposals it made (see turnState).
@@ -80,6 +84,13 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	userURLs := userURLKeys(chatCtx.History)
 	tools := o.turnTools()
 	historyTokens := plan.limits.historyTokens
+	if taskPlan != nil {
+		// The tools of the plan are on offer from the start, in the place of their stub; the note
+		// is part of the last message and is counted with the history.
+		tools = replaceTool(tools, planStubTool, planToolDefinitions())
+		historyTokens = max(0, historyTokens-planToolTokens)
+		turn.markPlanActive()
+	}
 	if o.offersLibraryAdd(userURLs) {
 		tools = append(tools, addToLibraryDefinition())
 		historyTokens = max(0, historyTokens-libraryAddTokens)

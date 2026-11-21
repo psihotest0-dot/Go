@@ -86,6 +86,15 @@ var (
 		Help: "Operations of the file tools on the user's files, by operation and result.",
 	}, []string{"op", "result"})
 
+	// TaskPlanEvents counts what happens to the plans of the tasks (package taskplan): "set" a
+	// plan was made, "step_done", "step_failed", "step_skipped" and "step_doing" a step was
+	// reported on, "step_refused" a step was claimed done without a call of its tool on record,
+	// "completed" the last step was finished, "evidence" a tool call was written to a ledger.
+	TaskPlanEvents = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_plan_events_total",
+		Help: "Events of the plans of the tasks, by event.",
+	}, []string{"event"})
+
 	// OracleRequests counts the calls of the trading bot to POST /oracle/evaluate by how they
 	// ended. "answered" is a verdict from the model, "cached" one repeated from memory,
 	// "failed" a call the model could not answer (the bot treats it as a HOLD),
@@ -273,6 +282,9 @@ func init() {
 	// has no earlier sample to grow from, so increase() would miss the first event of its
 	// kind, and the alerts on refused or failed calls would miss the first refused or
 	// failed call.
+	for _, event := range []string{"set", "step_done", "step_failed", "step_skipped", "step_doing", "step_refused", "completed", "evidence"} {
+		TaskPlanEvents.WithLabelValues(event)
+	}
 	for _, mode := range OracleModes {
 		OracleLatency.WithLabelValues(mode)
 		for _, outcome := range []string{"answered", "cached", "failed", "unauthorized", "bad_request"} {
