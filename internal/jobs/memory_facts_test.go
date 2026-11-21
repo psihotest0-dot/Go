@@ -249,3 +249,39 @@ func (r *roleRecordingLLM) ChatWithJSONSchema(_ context.Context, req openai.Chat
 		Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Content: "[]"}}},
 	}, nil
 }
+
+// The reflector copied the person's own words as the fact ("от 6-7 години живея в Бремен"), and
+// the memories read as if he had written them. It is asked for the third person: with the name
+// once a fact of the kind "name" is remembered, "Потребителят" before.
+func TestTheReflectorWritesAboutThePersonInTheThirdPerson(t *testing.T) {
+	var seen []string
+	e := newConsolidationEnv(t)
+	e.worker.llmClient = &promptRecordingLLM{prompts: &seen, answer: factJSON("name", "Ивайло", "Потребителят се казва Ивайло", false)}
+	e.say("Казвам се Ивайло")
+	e.worker.llmClient = &promptRecordingLLM{prompts: &seen, answer: "[]"}
+	e.say("Живея в София")
+
+	require.Len(t, seen, 2)
+	assert.Contains(t, seen[0], "ТРЕТО ЛИЦЕ")
+	assert.Contains(t, seen[0], `"Потребителят живее в София"`, "no name is known yet")
+	assert.Contains(t, seen[1], `"Ивайло живее в София"`, "the remembered name is used")
+	assert.Contains(t, seen[1], "Извлечи факти за потребителя (Ивайло).")
+}
+
+// promptRecordingLLM remembers the system prompt it is given and answers with answer.
+type promptRecordingLLM struct {
+	mockLLMClient
+	prompts *[]string
+	answer  string
+}
+
+func (r *promptRecordingLLM) ChatWithJSONSchema(_ context.Context, req openai.ChatCompletionRequest, _ interface{}) (openai.ChatCompletionResponse, error) {
+	for _, m := range req.Messages {
+		if m.Role == openai.ChatMessageRoleSystem {
+			*r.prompts = append(*r.prompts, m.Content)
+		}
+	}
+	return openai.ChatCompletionResponse{
+		Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Content: r.answer}}},
+	}, nil
+}

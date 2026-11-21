@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/llm"
@@ -219,7 +220,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		}
 
 		analyzeCtx, analyzeCancel := context.WithTimeout(ctx, 120*time.Second)
-		facts, err := w.analyzeMessage(analyzeCtx, msg.Content)
+		facts, err := w.analyzeMessage(analyzeCtx, msg.UserID, msg.Content)
 		analyzeCancel()
 
 		if err != nil {
@@ -277,8 +278,38 @@ func (w *MemoryConsolidationWorker) countFailedAnalysis(ctx context.Context, msg
 	}
 }
 
-func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content string) ([]Fact, error) {
-	systemPrompt, err := prompts.GlobalManager.Render("memory_reflector.tmpl", nil)
+// maxNameRunes bounds the name put in the prompt of the reflector: it is a value the model wrote.
+const maxNameRunes = 40
+
+// knownName is the person's name, when a fact of the kind "name" is remembered, or "". The
+// reflector writes a fact about the person in the third person, with the name when there is one
+// ("Ивайло живее в Бремен"); before, it copied the person's own words ("от 6-7 години живея в
+// Бремен"), and the memories read as if he had written them himself (2026-11-22).
+func (w *MemoryConsolidationWorker) knownName(ctx context.Context, userID uuid.UUID) string {
+	rows, err := w.dbClient.Queries.GetLiveMemoriesByFactKey(ctx, db.GetLiveMemoriesByFactKeyParams{UserID: userID, FactKey: "name"})
+	if err != nil {
+		slog.Warn("could not read the name of the person for the reflector; the facts are written without it", "error", err)
+		return ""
+	}
+	for _, row := range rows {
+		if !row.Metadata.Valid {
+			continue
+		}
+		var meta struct {
+			Value string `json:"value"`
+		}
+		if json.Unmarshal(row.Metadata.RawMessage, &meta) != nil {
+			continue
+		}
+		if name := strings.Join(strings.Fields(meta.Value), " "); name != "" && utf8.RuneCountInString(name) <= maxNameRunes {
+			return name
+		}
+	}
+	return ""
+}
+
+func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, userID uuid.UUID, content string) ([]Fact, error) {
+	systemPrompt, err := prompts.GlobalManager.Render("memory_reflector.tmpl", map[string]any{"Name": w.knownName(ctx, userID)})
 	if err != nil {
 		slog.Error("failed to render memory_reflector prompt", "err", err)
 		systemPrompt = "Extract facts about the user. Return an array of JSON objects with keys: fact_key, value, statement, is_explicit_change."
