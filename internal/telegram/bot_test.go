@@ -363,6 +363,19 @@ func TestProcessorErrorIsReportedGenerically(t *testing.T) {
 	assert.NotContains(t, f.sender.texts()[0], "10.1.2.3")
 }
 
+// The conversation is shared with the app: when a long answer there keeps it busy until the turn's
+// time is out, Telegram says so and does not report a failure of the model.
+func TestABusyConversationIsSaidSoAndNotReportedAsAFailure(t *testing.T) {
+	f := newFixture(42)
+	f.processor.err = fmt.Errorf("%w: context deadline exceeded", agent.ErrConversationBusy)
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+	require.Len(t, f.sender.texts(), 1)
+	assert.Contains(t, f.sender.texts()[0], "Разговорът още пише отговор")
+	assert.NotContains(t, f.sender.texts()[0], "Възникна грешка")
+}
+
 func TestGroupAndMediaMessages(t *testing.T) {
 	f := newFixture(7, 42)
 

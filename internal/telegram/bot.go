@@ -484,6 +484,13 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 		if ctx.Err() != nil {
 			return // shutting down
 		}
+		if errors.Is(err, agent.ErrConversationBusy) {
+			// The same conversation is open in the app and a long answer there is not
+			// finished; nothing of this message was stored.
+			slog.Warn("Telegram message dropped: the conversation stayed busy", slog.Int64("chat_id", chatID))
+			b.sendReply(chatID, "Разговорът още пише отговор другаде (например във Flet). Опитай пак след малко.")
+			return
+		}
 		slog.Error("Failed to process telegram chat", slog.Any("error", err), slog.Int64("chat_id", chatID))
 		b.sendReply(chatID, "Възникна грешка при генерирането на отговор.")
 		return

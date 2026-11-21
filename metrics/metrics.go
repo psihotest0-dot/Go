@@ -150,6 +150,20 @@ var (
 		Help: "Chat turns by the model that answered and why.",
 	}, []string{"route", "reason"})
 
+	// ChatSessionWaits counts the turns that found their conversation taken by another turn (a
+	// message from the app while Telegram's was still being answered, or the other way round) and
+	// waited: "served" got its turn, "gave_up" ran out of time or left first. A turn that found the
+	// conversation free is not counted. ChatSessionWaitSeconds is how long those waits took.
+	ChatSessionWaits = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chat_session_waits_total",
+		Help: "Chat turns that had to wait for their conversation to be free, by how the wait ended.",
+	}, []string{"result"})
+	ChatSessionWaitSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "chat_session_wait_seconds",
+		Help:    "How long chat turns waited for their conversation to be free.",
+		Buckets: []float64{0.5, 2, 5, 15, 30, 60, 120, 180, 300},
+	})
+
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_web_tool_requests_total",

@@ -465,8 +465,18 @@ paths:
       summary: Stream chat messages
       description: >-
         Stores the user message, answers with a Server-Sent Events stream and
-        stores the finished answer. Frames, in the order they arrive:
+        stores the finished answer. A conversation (a person and a `session_id`)
+        has one reply at a time, whoever asked for it - this endpoint,
+        `/chat/regenerate` or the Telegram bot: a request that finds the
+        conversation busy waits for its turn, in the order requests came, and
+        the wait counts in the time of the request (5 minutes). Nothing of it is
+        stored until its turn comes. Frames, in the order they arrive:
 
+
+        * `event: queued` with `{}` - only when the request has `queue_events`
+          true and the conversation is busy: the request is waiting for another
+          reply to end. Sent once, before every other frame; the status 200 goes
+          out with it, so a failure after it comes as an `event: error` frame;
 
         * `event: sources` - first: a JSON array of `SourceInfo` (the
           documents and memories in the prompt; `[]` when none);
@@ -502,8 +512,11 @@ paths:
           `request_id` to find the details in the log.
 
 
-        Failures before the first frame are ordinary HTTP errors. A question
-        that got no answer stays in the history; `/chat/regenerate` answers it.
+        Failures before the first frame are ordinary HTTP errors; when the
+        conversation stays busy until the time of the request ends it is `503`
+        and nothing is stored (with `queue_events` that is an `event: error`
+        frame). A question that got no answer stays in the history;
+        `/chat/regenerate` answers it.
       parameters:
       - $ref: '#/components/parameters/UserId'
       requestBody:
@@ -531,6 +544,12 @@ paths:
                     (`PAID_LLM_ENABLED`). If the paid model fails before it has done anything
                     (no limit left for the day, no network, a refusal) the local one answers
                     instead.
+                queue_events:
+                  type: boolean
+                  description: >-
+                    Ask to be told, with `event: queued`, that the request waits for another
+                    reply in the same conversation. A client that does not know the frame must
+                    not ask for it - it would take it for text. Left out: false.
       responses:
         '200':
           description: Stream of events
@@ -560,6 +579,12 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The conversation stayed busy with another reply until the time of the request ended; nothing was stored
+          content:
+            text/plain:
+              schema:
+                type: string
   /chat/regenerate:
     post:
       summary: Regenerate the last answer of a session
@@ -572,6 +597,8 @@ paths:
         failed turn) only gets one; the answers of earlier questions, and of a
         turn sent meanwhile, are never touched. When another regeneration has
         replaced the same answer first, this one is streamed but not stored.
+        Like a new message it waits when the conversation is busy (see
+        `/chat/stream`; `queue_events` and the `503` are the same).
       parameters:
       - $ref: '#/components/parameters/UserId'
       requestBody:
@@ -595,6 +622,9 @@ paths:
                     (`PAID_LLM_ENABLED`). If the paid model fails before it has done anything
                     (no limit left for the day, no network, a refusal) the local one answers
                     instead.
+                queue_events:
+                  type: boolean
+                  description: As for `/chat/stream`.
       responses:
         '200':
           description: Stream of events, as for `/chat/stream`
@@ -616,6 +646,12 @@ paths:
           $ref: '#/components/responses/PayloadTooLarge'
         '500':
           $ref: '#/components/responses/InternalError'
+        '503':
+          description: The conversation stayed busy with another reply until the time of the request ended
+          content:
+            text/plain:
+              schema:
+                type: string
   /chat/attachments:
     post:
       summary: Attach a text file to a conversation

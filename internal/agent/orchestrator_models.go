@@ -30,6 +30,10 @@ type ChatRequest struct {
 	// out - the default (the local model; library questions follow LIBRARY_LLM). It does
 	// nothing while the paid provider is off.
 	UsePaid *bool `json:"use_paid,omitempty"`
+	// QueueEvents asks for the frame "event: queued" when the conversation is taken by another
+	// reply and this turn has to wait. A client that does not know the frame must not ask for
+	// it: it would take the frame for text.
+	QueueEvents bool `json:"queue_events,omitempty"`
 }
 
 type chatContext struct {

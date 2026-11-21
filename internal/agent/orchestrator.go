@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -45,6 +46,8 @@ type Orchestrator struct {
 	// windows remembers where each session's history window began, so that it
 	// is cut in steps and not slid on every turn (see historyWindows).
 	windows historyWindows
+	// sessions gives each conversation one turn at a time (see sessionLocks).
+	sessions sessionLocks
 	// budgets are the token limits requests are built with; the zero value
 	// means the built-in ones (see limits).
 	budgets budgets
@@ -163,6 +166,21 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	r = r.WithContext(WithCurrentQuery(r.Context(), req.Content))
 	r = r.WithContext(WithLLMChoice(r.Context(), req.UsePaid))
 
+	// One turn at a time in a conversation, from the question to the stored answer: the
+	// next one (the app and Telegram share a conversation) reads the history only after this
+	// answer is in it. The wait is part of the request's time.
+	streaming := false
+	unlock, err := o.sessions.lock(ctx, userID, req.SessionID, func() {
+		if req.QueueEvents {
+			streaming = beginQueuedStream(w)
+		}
+	})
+	if err != nil {
+		o.refuseBusy(ctx, w, streaming, err, req.SessionID)
+		return
+	}
+	defer unlock()
+
 	// The user turn is stored before generation because the prompt history is
 	// read back from the database. A failed generation therefore leaves the
 	// question without an answer; /chat/regenerate is the recovery path, so the
@@ -170,17 +188,17 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	// LLM error.
 	if err := o.saveUserMessage(r.Context(), userID, req.SessionID, req.Content); err != nil {
 		slog.ErrorContext(ctx, "failed to save user message", "err", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		chatFailure(w, streaming, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	prep, err := o.prepareTurn(r.Context(), userID, req, false)
 	if err != nil {
-		// Streaming has not started, so the client can still receive a normal
-		// HTTP error instead of a "200 OK" with an empty body that leaves the
-		// caller waiting for events that never arrive.
+		// Streaming has not started (unless the client waited in a queue and was told so),
+		// so the client can still receive a normal HTTP error instead of a "200 OK" with an
+		// empty body that leaves the caller waiting for events that never arrive.
 		slog.ErrorContext(ctx, "failed to prepare the chat turn", "err", err, "session_id", req.SessionID)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		chatFailure(w, streaming, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	r = r.WithContext(prep.ctx)
@@ -215,6 +233,8 @@ type RegenerateRequest struct {
 	SessionID string `json:"session_id"`
 	// UsePaid is the same choice as in ChatRequest.
 	UsePaid *bool `json:"use_paid,omitempty"`
+	// QueueEvents is the same as in ChatRequest.
+	QueueEvents bool `json:"queue_events,omitempty"`
 }
 
 // HandleRegenerate handles regenerating the last assistant response.
@@ -247,6 +267,20 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Like a new turn, a regeneration has the conversation to itself: the answer it replaces
+	// is picked out below, and a turn that came in meanwhile must not lose its answer to it.
+	streaming := false
+	unlock, err := o.sessions.lock(ctx, userID, regenReq.SessionID, func() {
+		if regenReq.QueueEvents {
+			streaming = beginQueuedStream(w)
+		}
+	})
+	if err != nil {
+		o.refuseBusy(ctx, w, streaming, err, regenReq.SessionID)
+		return
+	}
+	defer unlock()
+
 	dbMsgs, err := o.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 		UserID:    userID,
 		SessionID: regenReq.SessionID,
@@ -254,7 +288,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to get messages", "err", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		chatFailure(w, streaming, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -276,7 +310,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	if lastUserContent == "" {
 		slog.WarnContext(ctx, "no user message found to regenerate from", slog.String("session_id", regenReq.SessionID))
-		http.Error(w, "no user message found to regenerate from", http.StatusBadRequest)
+		chatFailure(w, streaming, http.StatusBadRequest, "no user message found to regenerate from")
 		return
 	}
 
@@ -293,10 +327,11 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 
 	prep, err := o.prepareTurn(r.Context(), userID, req, true)
 	if err != nil {
-		// Streaming has not started, so the client can still receive a normal
-		// HTTP error instead of a "200 OK" with an empty body.
+		// Streaming has not started (unless the client waited in a queue and was told so), so
+		// the client can still receive a normal HTTP error instead of a "200 OK" with an
+		// empty body.
 		slog.ErrorContext(ctx, "failed to prepare the chat turn", "err", err, "session_id", req.SessionID)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		chatFailure(w, streaming, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	r = r.WithContext(prep.ctx)
@@ -335,6 +370,17 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// refuseBusy answers a request that waited for its conversation and ran out of time. A client
+// that has left (cancelled) is owed nothing.
+func (o *Orchestrator) refuseBusy(ctx context.Context, w http.ResponseWriter, streaming bool, err error, sessionID string) {
+	if errors.Is(err, context.Canceled) {
+		slog.InfoContext(ctx, "the client left while it waited for its conversation", "session_id", sessionID)
+		return
+	}
+	slog.WarnContext(ctx, "the conversation stayed busy", "err", err, "session_id", sessionID)
+	chatFailure(w, streaming, http.StatusServiceUnavailable, busyMessage)
+}
+
 // ChatTurn is the outcome of a chat turn run without HTTP.
 type ChatTurn struct {
 	// Answer has the hidden reasoning and the tool markup already removed.
@@ -360,6 +406,15 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	if req.SessionID == "" || req.Content == "" {
 		return ChatTurn{}, fmt.Errorf("session_id and content are required")
 	}
+
+	// See HandleStreamChat: one turn at a time in a conversation. The caller's time
+	// (Telegram: chatTurnTimeout) covers the wait; when it ends first nothing was stored.
+	unlock, err := o.sessions.lock(ctx, userID, req.SessionID, nil)
+	if err != nil {
+		slog.WarnContext(ctx, "the conversation stayed busy", "err", err, "session_id", req.SessionID)
+		return ChatTurn{}, fmt.Errorf("%w: %v", ErrConversationBusy, err)
+	}
+	defer unlock()
 
 	// See HandleStreamChat: the user turn is persisted up front so that it is
 	// part of the history the prompt is built from.
