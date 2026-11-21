@@ -338,10 +338,12 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 	for i, tc := range calls {
 		var content string
 
+		turn := turnFrom(ctx)
 		if tc.Function.Name == "" {
 			// The conversation still needs a tool message for this call ID,
 			// otherwise the next request is rejected as malformed.
 			slog.WarnContext(ctx, "tool call without a name", "id", tc.ID)
+			countToolCall("", toolResultBadArgs)
 			content = "Error: tool name missing"
 		} else {
 			args := map[string]interface{}{}
@@ -365,6 +367,8 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 					"raw", truncateRunes(rawArgs, maxLoggedToolArgsRunes))
 				content = fmt.Sprintf("Error: %v. Call %s again with a JSON object that matches its schema.",
 					parseErr, tc.Function.Name)
+				countToolCall(tc.Function.Name, toolResultBadArgs)
+				turn.addToolLog(toolLogFailure(tc.Function.Name, "the arguments were not a JSON object", true))
 			} else {
 				res, err := o.tools.ExecuteTool(ctx, tc.Function.Name, args)
 				switch {
@@ -374,14 +378,20 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 						// The model got the call wrong, the server did not fail;
 						// the reason goes back to the model as tool output.
 						slog.WarnContext(ctx, "tool call rejected", "tool", tc.Function.Name, "err", err)
+						countToolCall(tc.Function.Name, toolResultRefused)
+						turn.addToolLog(toolLogFailure(tc.Function.Name, argErr.reason, true))
 					} else {
 						slog.ErrorContext(ctx, "tool execution failed", "tool", tc.Function.Name, "err", err)
+						countToolCall(tc.Function.Name, toolResultFailed)
+						turn.addToolLog(toolLogFailure(tc.Function.Name, "", false))
 					}
 					content = fmt.Sprintf("Error: %v", err)
 				default:
 					resBytes, marshalErr := json.Marshal(res)
 					if marshalErr != nil {
 						slog.ErrorContext(ctx, "failed to marshal tool result", "tool", tc.Function.Name, "err", marshalErr)
+						countToolCall(tc.Function.Name, toolResultFailed)
+						turn.addToolLog(toolLogFailure(tc.Function.Name, "", false))
 						content = fmt.Sprintf("Error: %v", marshalErr)
 						break
 					}
@@ -390,6 +400,8 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 						notes[i] = toolNoteSeparator + note
 					}
 					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
+					countToolCall(tc.Function.Name, toolResultOK)
+					turn.addToolLog(toolLogLine(tc.Function.Name, args, res, len(resBytes)))
 					o.recordPlanEvidence(ctx, tc.Function.Name, args, res, len(resBytes))
 				}
 			}

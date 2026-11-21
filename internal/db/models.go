@@ -110,6 +110,7 @@ type Message struct {
 	SourceChunkIds   pqtype.NullRawMessage `json:"source_chunk_ids"`
 	IsAnalyzed       bool                  `json:"is_analyzed"`
 	AnalysisAttempts int32                 `json:"analysis_attempts"`
+	ToolLog          sql.NullString        `json:"tool_log"`
 }
 
 type PendingAction struct {

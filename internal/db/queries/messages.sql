@@ -1,5 +1,5 @@
 -- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING *;
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;
 
 -- name: GetMessagesBySession :many
 SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3;

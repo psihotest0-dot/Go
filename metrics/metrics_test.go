@@ -27,6 +27,9 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 	DistillationSummaries.WithLabelValues("ok").Inc()
 	CacheHits.WithLabelValues(CacheKindQuery).Inc()
 	CacheMisses.WithLabelValues(CacheKindPassage).Inc()
+	ToolCalls.WithLabelValues("web_search", "ok").Inc()
+	UserFileOps.WithLabelValues("claim", "corrected").Inc()
+	LLMSilentStreams.WithLabelValues("retried").Inc()
 
 	families, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
@@ -52,6 +55,9 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 		"distillation_summaries_total",
 		"cache_hits_total",
 		"cache_misses_total",
+		"agent_tool_calls_total",
+		"user_files_operations_total",
+		"llm_silent_streams_total",
 	} {
 		assert.True(t, got[name], "metric %s is not exported", name)
 	}

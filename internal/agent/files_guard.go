@@ -238,10 +238,10 @@ func withNoteOnLastUser(messages []openai.ChatCompletionMessage, note string) []
 	return out
 }
 
-// generateGuarded runs the rounds (generateRounds), checks what the answer says about the
-// files (generateChecked) and, when links were not added to the library in the turn, tells
-// the person which. Which model runs them is decided by generateResponse (model_routing.go),
-// which calls this.
+// generateGuarded runs the rounds (generateRounds, with the retries of generateChecked), puts
+// under the answer the line of the first check that finds it wrong (answerChecks) and, when links
+// were not added to the library in the turn, tells the person which. Which model runs them is
+// decided by generateResponse (model_routing.go), which calls this.
 func (o *Orchestrator) generateGuarded(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
@@ -252,26 +252,21 @@ func (o *Orchestrator) generateGuarded(
 	if err != nil {
 		return content, executed, err
 	}
-	// An "extraction" of a study that no tool opened is the model's own writing (see
-	// extraction_claim.go); the line under it says so. Not when another check has already put
-	// its correction there.
-	if note := unbackedExtraction(content, executed, strings.Contains(content, "⚠️")); note != "" {
-		slog.WarnContext(ctx, "the answer delivers an extraction of a source and the turn opened none; a note is added",
-			"answer_runes", utf8.RuneCountInString(content), "tools_called", len(executed))
-		metrics.UserFileOps.WithLabelValues("extraction", "noted").Inc()
-		content += "\n\n" + note
-		if onDelta != nil {
-			if err := onDelta("\n\n"+note, ""); err != nil {
-				return content, executed, err
-			}
-		}
-	}
+	userMessage := lastUserContent(finalMessages)
+	note := o.checkAnswer(ctx, answerFacts{
+		content: content, executed: executed, turn: turnFrom(ctx),
+		userMessage: userMessage, userNamedFile: fileMention.MatchString(userMessage),
+	})
 	// The model was told which links were refused, and in the real runs it wrote that all of
 	// them were added over a link it had changed (plan item P53): the line is not left to it.
-	if report := turnFrom(ctx).libraryReport(); report != "" {
-		content += "\n\n" + report
+	report := turnFrom(ctx).libraryReport()
+	for _, line := range []string{note, report} {
+		if line == "" {
+			continue
+		}
+		content += "\n\n" + line
 		if onDelta != nil {
-			if err := onDelta("\n\n"+report, ""); err != nil {
+			if err := onDelta("\n\n"+line, ""); err != nil {
 				return content, executed, err
 			}
 		}
@@ -279,8 +274,9 @@ func (o *Orchestrator) generateGuarded(
 	return content, executed, nil
 }
 
-// generateChecked is generateGuarded without the report of the library: it checks what the
-// answer says about the files. See the comment at the top of this file.
+// generateChecked runs the rounds and, when the answer claims a write or promises work that no
+// tool did, asks the turn once more with the file tools open (see the comment at the top of this
+// file). The checks of the answer that is kept are in answerChecks.
 func (o *Orchestrator) generateChecked(
 	ctx context.Context,
 	finalMessages []openai.ChatCompletionMessage,
@@ -304,76 +300,36 @@ func (o *Orchestrator) generateChecked(
 	turn := turnFrom(ctx)
 	userMessage := lastUserContent(finalMessages)
 	userNamedFile := fileMention.MatchString(userMessage)
-	claim := func() string {
-		return unbackedFileClaim(content, turn.filesWritten() > 0, userNamedFile && len(executed) == 0)
-	}
 	// stalled: the answer promises work for later or says it is going on, and no tool of
-	// any kind was called in the turn.
-	stalled := func() bool { return len(executed) == 0 && promisesWork(content) }
-	// ignored: the message asked for a change of a file, no tool of any kind was called, and
-	// the answer neither asks nor refuses (leavesTheWork).
-	ignored := func() bool {
-		return len(executed) == 0 && !asksForStatus(userMessage) && asksToWrite(userMessage) && leavesTheWork(content)
-	}
+	// any kind was called in the turn. ignored: the message asked for a change of a file, no
+	// tool of any kind was called, and the answer neither asks nor refuses (leavesTheWork).
+	stalled := len(executed) == 0 && promisesWork(content)
+	ignored := len(executed) == 0 && !asksForStatus(userMessage) && asksToWrite(userMessage) && leavesTheWork(content)
 
 	var retry *fileRetry
 	switch {
-	case claim() == writeCorrection && !usedFileTools(executed):
+	case unbackedFileClaim(content, turn.filesWritten() > 0, userNamedFile && len(executed) == 0) == writeCorrection && !usedFileTools(executed):
 		retry = &writeRetry
-	case ignored(), stalled() && !asksForStatus(userMessage) &&
+	case ignored, stalled && !asksForStatus(userMessage) &&
 		(userNamedFile || fileMention.MatchString(content) || asksToSave(userMessage)):
 		retry = &stallRetry
 	}
-	if retry != nil {
-		if open, required := o.retryFileTools(tools, turn); len(required) > 0 {
-			// "Add to the file" after a history in which the model said it had deleted it:
-			// left a choice the model took write_file (a replacement, which waits for the
-			// user's confirmation) instead of append_file. The first round of the retry
-			// offers no write_file; the later rounds still do, for a file that is not there.
-			if asksToAppend(userMessage) {
-				required = withoutTools(required, writeFileTool)
-			}
-			retried, retriedCalls, err := o.retryUnbacked(ctx, messages, open, required, *retry, onDelta)
-			executed = append(executed, retriedCalls...)
-			if err != nil {
-				return retried, executed, err
-			}
-			content = retried
-		}
-	}
-	correction := claim()
-	switch {
-	case correction != "":
-		slog.WarnContext(ctx, "the answer claims a change of the files that did not happen; a correction is added",
-			"answer_runes", utf8.RuneCountInString(content))
-		metrics.UserFileOps.WithLabelValues("claim", "corrected").Inc()
-	case stalled():
-		slog.WarnContext(ctx, "the answer promises work for later and no tool was called; a correction is added",
-			"answer_runes", utf8.RuneCountInString(content))
-		metrics.UserFileOps.WithLabelValues("stall", "corrected").Inc()
-		correction = stallCorrection
-	case ignored():
-		// The retry could not be made, or made no call: say that nothing was written.
-		slog.WarnContext(ctx, "the message asked for a file change and the answer did nothing about it; a correction is added",
-			"answer_runes", utf8.RuneCountInString(content))
-		metrics.UserFileOps.WithLabelValues("stall", "corrected").Inc()
-		correction = writeCorrection
-	case o.statusClaimUnbacked(ctx, turn, userMessage, content, len(executed) > 0):
-		// "Успя ли?" - "Да, успях": no file was changed since the user's earlier messages.
-		slog.WarnContext(ctx, "the answer to a question about the work says it is done and no file was changed; a correction is added",
-			"answer_runes", utf8.RuneCountInString(content))
-		metrics.UserFileOps.WithLabelValues("status", "corrected").Inc()
-		correction = statusCorrection
-	default:
+	if retry == nil {
 		return content, executed, nil
 	}
-	content += "\n\n" + correction
-	if onDelta != nil {
-		if err := onDelta("\n\n"+correction, ""); err != nil {
-			return content, executed, err
-		}
+	open, required := o.retryFileTools(tools, turn)
+	if len(required) == 0 {
+		return content, executed, nil
 	}
-	return content, executed, nil
+	// "Add to the file" after a history in which the model said it had deleted it: left a
+	// choice the model took write_file (a replacement, which waits for the user's
+	// confirmation) instead of append_file. The first round of the retry offers no
+	// write_file; the later rounds still do, for a file that is not there.
+	if asksToAppend(userMessage) {
+		required = withoutTools(required, writeFileTool)
+	}
+	retried, retriedCalls, err := o.retryUnbacked(ctx, messages, open, required, *retry, onDelta)
+	return retried, append(executed, retriedCalls...), err
 }
 
 // fileRetry is what differs between the two reasons to ask a turn again with the file tools:

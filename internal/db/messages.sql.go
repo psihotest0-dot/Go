@@ -40,7 +40,7 @@ func (q *Queries) CountAssistantRepliesBefore(ctx context.Context, arg CountAssi
 }
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log
 `
 
 type CreateMessageParams struct {
@@ -49,6 +49,7 @@ type CreateMessageParams struct {
 	Role           string                `json:"role"`
 	Content        string                `json:"content"`
 	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
+	ToolLog        sql.NullString        `json:"tool_log"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
@@ -58,6 +59,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.Role,
 		arg.Content,
 		arg.SourceChunkIds,
+		arg.ToolLog,
 	)
 	var i Message
 	err := row.Scan(
@@ -70,6 +72,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.SourceChunkIds,
 		&i.IsAnalyzed,
 		&i.AnalysisAttempts,
+		&i.ToolLog,
 	)
 	return i, err
 }
@@ -118,7 +121,7 @@ func (q *Queries) GetMessageCursor(ctx context.Context, arg GetMessageCursorPara
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
 `
 
 type GetMessagesBySessionParams struct {
@@ -146,6 +149,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 			&i.SourceChunkIds,
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
+			&i.ToolLog,
 		); err != nil {
 			return nil, err
 		}
@@ -161,7 +165,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 }
 
 const getMessagesBySessionBefore = `-- name: GetMessagesBySessionBefore :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log FROM messages
 WHERE user_id = $1 AND session_id = $2
   AND created_at <= $3::timestamptz
   AND (created_at, id) < ($3::timestamptz, $4::uuid)
@@ -205,6 +209,7 @@ func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessage
 			&i.SourceChunkIds,
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
+			&i.ToolLog,
 		); err != nil {
 			return nil, err
 		}
@@ -220,7 +225,7 @@ func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessage
 }
 
 const getRecentMessagesByUser = `-- name: GetRecentMessagesByUser :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
 `
 
 type GetRecentMessagesByUserParams struct {
@@ -247,6 +252,7 @@ func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMess
 			&i.SourceChunkIds,
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
+			&i.ToolLog,
 		); err != nil {
 			return nil, err
 		}
@@ -262,7 +268,7 @@ func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMess
 }
 
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log
 FROM messages
 WHERE is_analyzed = FALSE AND user_id = $1
 ORDER BY created_at ASC
@@ -288,6 +294,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 			&i.SourceChunkIds,
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
+			&i.ToolLog,
 		); err != nil {
 			return nil, err
 		}

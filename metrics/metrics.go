@@ -67,6 +67,16 @@ var (
 		Help: "Groups of tools unlocked by the model during a chat turn, by group.",
 	}, []string{"group"})
 
+	// ToolCalls counts the calls of the model's tools in the chat, by tool and result: "ok" the
+	// tool ran, "refused" the model got the call wrong (a missing argument, a link it did not
+	// get from the user; the reason went back to it), "failed" the server failed, "bad_args" the
+	// arguments were not a JSON object. The tool is one of the names the server knows, or
+	// "unknown" (a name the model made up), so the label cannot grow without bound.
+	ToolCalls = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "agent_tool_calls_total",
+		Help: "Calls of the model's tools during chat turns, by tool and result.",
+	}, []string{"tool", "result"})
+
 	// UserFileOps counts what the model's file tools do to the user's files: list, read, write
 	// (a new file), append and propose (a write that waits for the user), each ended "ok",
 	// "saved", "appended", "created", "not_found", "exists", "refused" (a call the tool

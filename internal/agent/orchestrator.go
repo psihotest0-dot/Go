@@ -217,7 +217,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	store := func(content string, toolCalls []openai.ToolCall) {
 		storeCtx, cancelStore := context.WithTimeout(context.Background(), persistTimeout)
 		defer cancelStore()
-		o.storeAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources))
+		o.storeAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog())
 	}
 
 	assistantContent, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, store)
@@ -360,7 +360,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		}
 		// The old answer goes only now that a complete new one exists, and in the
 		// same transaction as the new one is written.
-		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, replaced, content, toolCalls, answerSources(prep.turn, prep.sources)); err != nil {
+		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, replaced, content, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog()); err != nil {
 			slog.ErrorContext(ctx, "failed to replace the previous answer; it is kept", "err", err, "session_id", req.SessionID)
 		}
 	}
@@ -451,7 +451,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), persistTimeout)
 	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(prep.turn, prep.sources))
+	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog())
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(answer),

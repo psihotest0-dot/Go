@@ -80,6 +80,9 @@ type turnState struct {
 	since time.Time
 	// planActive: the conversation has a plan in progress in this turn (see plan_tool.go).
 	planActive bool
+	// toolLog is what the tools of the turn did, one line a call, written by the server and
+	// stored with the answer (see tool_log.go).
+	toolLog []string
 }
 
 // markPlanActive records that this turn works on a plan in progress.

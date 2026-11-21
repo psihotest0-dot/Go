@@ -67,7 +67,7 @@ func TestStoreAnswerLogsADatabaseFailure(t *testing.T) {
 	o := &Orchestrator{db: unreachableDB(t)}
 	ctx := context.WithValue(context.Background(), api.RequestIDKey, "req-7")
 
-	o.storeAnswer(ctx, uuid.New(), "session-1", "Отговор, който не се записа", nil, nil)
+	o.storeAnswer(ctx, uuid.New(), "session-1", "Отговор, който не се записа", nil, nil, "")
 
 	line := findLogLine(t, lines(), "failed to store the assistant answer")
 	assert.Equal(t, "ERROR", line["level"])
@@ -94,7 +94,7 @@ func TestStoreAnswerDoesNotReportAnErrorForAnEmptyAnswer(t *testing.T) {
 	lines := jsonLogs(t)
 	o := &Orchestrator{db: unreachableDB(t)}
 
-	o.storeAnswer(context.Background(), uuid.New(), "session-3", "<think>само мисли</think>", nil, nil)
+	o.storeAnswer(context.Background(), uuid.New(), "session-3", "<think>само мисли</think>", nil, nil, "")
 
 	for _, l := range lines() {
 		assert.NotEqual(t, "failed to store the assistant answer", l["msg"])

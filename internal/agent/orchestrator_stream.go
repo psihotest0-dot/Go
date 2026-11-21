@@ -72,7 +72,10 @@ type streamFilter struct {
 	// (callClose) is dropped.
 	inCall    bool
 	callClose []string
-	buffer    string
+	// inRecord: the model began to copy the record of the tools (copiedToolRecord); nothing
+	// after it is shown.
+	inRecord bool
+	buffer   string
 }
 
 // Process appends chunk to the internal buffer and returns the content that is
@@ -82,7 +85,12 @@ func (f *streamFilter) Process(chunk string) string {
 	f.buffer += chunk
 	var out strings.Builder
 
+scan:
 	for len(f.buffer) > 0 {
+		if f.inRecord {
+			f.buffer = ""
+			break
+		}
 		if f.inCall {
 			if _, end := firstMarker(f.buffer, f.callClose); end != 0 {
 				f.inCall = false
@@ -110,7 +118,7 @@ func (f *streamFilter) Process(chunk string) string {
 			break
 		}
 
-		idx := strings.IndexByte(f.buffer, '<')
+		idx := strings.IndexAny(f.buffer, "<[")
 		if idx == -1 {
 			out.WriteString(f.buffer)
 			f.buffer = ""
@@ -120,6 +128,21 @@ func (f *streamFilter) Process(chunk string) string {
 		if idx > 0 {
 			out.WriteString(f.buffer[:idx])
 			f.buffer = f.buffer[idx:]
+		}
+
+		if f.buffer[0] == '[' {
+			switch {
+			case strings.HasPrefix(f.buffer, copiedToolRecord):
+				f.inRecord = true
+				f.buffer = ""
+			case strings.HasPrefix(copiedToolRecord, f.buffer):
+				// It may still become the record: wait for the next chunk.
+				break scan
+			default:
+				out.WriteByte('[')
+				f.buffer = f.buffer[1:]
+			}
+			continue
 		}
 
 		if strings.HasPrefix(f.buffer, streamFilterDSMLOpen) {
@@ -177,7 +200,7 @@ func (f *streamFilter) Process(chunk string) string {
 }
 
 func (f *streamFilter) Flush() string {
-	if f.inThink || f.inCall {
+	if f.inThink || f.inCall || f.inRecord {
 		f.buffer = ""
 		return ""
 	}
@@ -191,6 +214,7 @@ func (f *streamFilter) Flush() string {
 func (f *streamFilter) Reset() {
 	f.inThink = false
 	f.inCall = false
+	f.inRecord = false
 	f.buffer = ""
 }
 
@@ -220,6 +244,12 @@ func sanitizeAssistantText(s string) string {
 	f := &streamFilter{}
 	return strings.TrimSpace(f.Process(dropOrphanThinking(s)) + f.Flush())
 }
+
+// copiedToolRecord starts the note the server puts after an answer in the history (tool_log.go).
+// The model reads it there and may copy it into a new answer (1 and 2 of 12 answers in the
+// measurement of 2026-11-21); a record it writes itself is not one, so the filter shows nothing
+// from where it starts.
+const copiedToolRecord = "[System record"
 
 // streamResponse streams one answer as Server-Sent Events. beforeDone (may be nil)
 // gets the finished answer just before the final "[DONE]" frame and stores it: a

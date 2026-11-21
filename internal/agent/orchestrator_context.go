@@ -312,6 +312,11 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 		if msg.Role == "assistant" && msg.Content == "" && len(msg.ToolCalls) == 0 {
 			continue
 		}
+		if msg.Role == "assistant" && m.ToolLog.Valid {
+			// What the tools of that turn did, written by the server (tool_log.go): the
+			// words of the answer alone do not tell work done from work only claimed.
+			msg.Content += historyToolNote(m.ToolLog.String)
+		}
 		chatCtx.History = append(chatCtx.History, msg)
 		chatCtx.HistoryAt = append(chatCtx.HistoryAt, m.CreatedAt.Time)
 	}

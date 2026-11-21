@@ -724,6 +724,57 @@
       },
       "description": "web_search / web_fetch са платени (~$0.75 на 1000 заявки).",
       "id": 28
+    },
+    {
+      "type": "timeseries",
+      "title": "Tool calls per day by tool and result",
+      "targets": [
+        {
+          "expr": "sum by (tool, result) (increase(agent_tool_calls_total[1d])) > 0",
+          "legendFormat": "{{tool}} {{result}}",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 91,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Извикванията на инструментите в чата: ok — изпълнен; refused — моделът е сгрешил извикването (причината отива при него); failed — сървърът е паднал; bad_args — аргументите не са JSON. unknown е име, което моделът си е измислил.",
+      "id": 31
+    },
+    {
+      "type": "timeseries",
+      "title": "Checks of the answers per day",
+      "targets": [
+        {
+          "expr": "sum by (op, result) (increase(user_files_operations_total{op=~\"claim|stall|status|extraction|removal\"}[1d])) > 0",
+          "legendFormat": "{{op}} {{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(llm_silent_streams_total[1d])) > 0",
+          "legendFormat": "silent stream",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 12,
+        "y": 91,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "Колко пъти проверките след отговора са се намесили: claim — твърдение за запис без запис; stall — обещание без работа; status — „успях“ без промяна във файловете; extraction — „извлечено“ без отворен източник; removal — молба за изтриване. retried — ходът е питан наново, corrected/noted — под отговора има ⚠️. Растяща линия значи, че моделът по-често казва нещо, което не е направил.",
+      "id": 32
     }
   ]
 }
