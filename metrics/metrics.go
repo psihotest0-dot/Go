@@ -78,7 +78,9 @@ var (
 	// asked again with the file tools, plan item P52). "stall"/"retried" and "stall"/"corrected"
 	// are the same for an answer that promised the work for later, or did nothing about a
 	// request to write, after no tool was called (plan item P53); "status"/"corrected" is an answer
-	// to "успя ли?" that says the work is done while no file of the user was changed (P54).
+	// to "успя ли?" that says the work is done while no file of the user was changed (P54);
+	// "extraction"/"noted" is a long answer that hands over an extraction of a source after no
+	// tool opened one (extraction_claim.go).
 	UserFileOps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "user_files_operations_total",
 		Help: "Operations of the file tools on the user's files, by operation and result.",

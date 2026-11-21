@@ -161,11 +161,51 @@ func NormalizeMemory(content string, importance int) (MemoryPayload, error) {
 	return MemoryPayload{Content: content, Importance: importance}, nil
 }
 
-// WritePayload is the stored form of a write_file proposal.
+// WritePayload is the stored form of a write_file proposal. OldRunes and KeptPercent are set
+// for a replacement of a file that has text: how long that text is now, and what share of its
+// lines the new text keeps. They are what lets the user, who confirms, see what a "replace"
+// costs: in the chat of 2026-11-21 a request to "keep adding to the file" was answered with
+// three replacements, and the third kept a third of the file.
 type WritePayload struct {
-	Mode    string `json:"mode"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
+	Mode        string `json:"mode"`
+	Name        string `json:"name"`
+	Content     string `json:"content"`
+	OldRunes    int    `json:"old_runes,omitempty"`
+	KeptPercent int    `json:"kept_percent,omitempty"`
+}
+
+// LossyKeptPercent is the share of the lines of a file that a replacement keeps, under which
+// it is shown as a loss: the user is warned, and so is the model.
+const LossyKeptPercent = 50
+
+// keptPercent is the share, in whole percent, of the non-empty lines of old that are lines of
+// next as well (compared with the white space at the ends cut off). 100 for a text with no
+// line at all.
+func keptPercent(old, next string) int {
+	lines := func(text string) []string {
+		var out []string
+		for _, line := range strings.Split(text, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
+	oldLines := lines(old)
+	if len(oldLines) == 0 {
+		return 100
+	}
+	inNext := map[string]bool{}
+	for _, line := range lines(next) {
+		inNext[line] = true
+	}
+	kept := 0
+	for _, line := range oldLines {
+		if inNext[line] {
+			kept++
+		}
+	}
+	return kept * 100 / len(oldLines)
 }
 
 // ApplyError: an approved proposal cannot be applied as it stands (the file it wanted to
@@ -194,6 +234,10 @@ type Proposal struct {
 	// FileName and FileMode are set for a file write; the text is in Content.
 	FileName string `json:"file_name,omitempty"`
 	FileMode string `json:"file_mode,omitempty"`
+	// OldRunes and KeptPercent are those of the payload of a replacement (WritePayload); not
+	// part of the contract, the summary says them to the user and the tool to the model.
+	OldRunes    int `json:"-"`
+	KeptPercent int `json:"-"`
 	// ExternalSources lists where untrusted text came from in the turn that made
 	// the proposal; empty means only the conversation.
 	ExternalSources []string  `json:"external_sources"`
@@ -241,6 +285,7 @@ func toProposal(row db.PendingAction) (Proposal, error) {
 			return Proposal{}, fmt.Errorf("proposal %d has an unreadable payload: %w", row.ID, err)
 		}
 		p.FileName, p.FileMode, p.Content = payload.Name, payload.Mode, payload.Content
+		p.OldRunes, p.KeptPercent = payload.OldRunes, payload.KeptPercent
 		p.Summary = writeSummary(payload)
 	default:
 		return Proposal{}, fmt.Errorf("proposal %d has an unknown kind %q", row.ID, row.Kind)
@@ -252,9 +297,20 @@ func toProposal(row db.PendingAction) (Proposal, error) {
 // the beginning of the text, so that the user can decide.
 func writeSummary(p WritePayload) string {
 	what := "Нов файл"
+	// size is what the line says of the text: its length, or for a replacement of a file that
+	// has text, what it costs (see WritePayload).
+	size := fmt.Sprintf(" (%d знака)", utf8.RuneCountInString(p.Content))
 	switch p.Mode {
 	case WriteReplace:
 		what = "Замяна на файла"
+		if p.OldRunes > 0 {
+			figures := fmt.Sprintf("сега %d знака, новият е %d", p.OldRunes, utf8.RuneCountInString(p.Content))
+			if p.KeptPercent < LossyKeptPercent {
+				size = fmt.Sprintf(" — ВНИМАНИЕ: губи се по-голямата част от сегашния текст (%s, запазва само %d %% от редовете му)", figures, p.KeptPercent)
+			} else {
+				size = fmt.Sprintf(" (%s, запазва %d %% от редовете му)", figures, p.KeptPercent)
+			}
+		}
 	case WriteAppend:
 		what = "Добавяне към файла"
 	}
@@ -262,7 +318,7 @@ func writeSummary(p WritePayload) string {
 	if utf8.RuneCountInString(text) > previewRunes {
 		text = string([]rune(text)[:previewRunes]) + "…"
 	}
-	return fmt.Sprintf("%s „%s“ (%d знака): %s", what, p.Name, utf8.RuneCountInString(p.Content), text)
+	return fmt.Sprintf("%s „%s“%s: %s", what, p.Name, size, text)
 }
 
 // Service stores and decides proposals.
@@ -311,7 +367,15 @@ func (s *Service) ProposeWrite(ctx context.Context, userID uuid.UUID, sessionID,
 	case mode != WriteCreate && statErr != nil:
 		return Proposal{}, userfiles.ErrNotFound
 	}
-	return s.propose(ctx, userID, sessionID, KindWriteFile, WritePayload{Mode: mode, Name: name, Content: content}, external)
+	payload := WritePayload{Mode: mode, Name: name, Content: content}
+	if mode == WriteReplace {
+		// Read, not trusted to be there: the text it replaces is only for the figures.
+		if old, _, err := s.files.Text(userID, name); err == nil && old != "" {
+			payload.OldRunes = utf8.RuneCountInString(old)
+			payload.KeptPercent = keptPercent(old, content)
+		}
+	}
+	return s.propose(ctx, userID, sessionID, KindWriteFile, payload, external)
 }
 
 // asInvalid turns the refusal of the file store into the one of this package, so that the

@@ -252,6 +252,20 @@ func (o *Orchestrator) generateGuarded(
 	if err != nil {
 		return content, reasoning, executed, err
 	}
+	// An "extraction" of a study that no tool opened is the model's own writing (see
+	// extraction_claim.go); the line under it says so. Not when another check has already put
+	// its correction there.
+	if note := unbackedExtraction(content, executed, strings.Contains(content, "⚠️")); note != "" {
+		slog.WarnContext(ctx, "the answer delivers an extraction of a source and the turn opened none; a note is added",
+			"answer_runes", utf8.RuneCountInString(content), "tools_called", len(executed))
+		metrics.UserFileOps.WithLabelValues("extraction", "noted").Inc()
+		content += "\n\n" + note
+		if onDelta != nil {
+			if err := onDelta("\n\n"+note, ""); err != nil {
+				return content, reasoning, executed, err
+			}
+		}
+	}
 	// The model was told which links were refused, and in the real runs it wrote that all of
 	// them were added over a link it had changed (plan item P53): the line is not left to it.
 	if report := turnFrom(ctx).libraryReport(); report != "" {

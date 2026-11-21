@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -78,12 +79,12 @@ func fileToolDefinitions() []openai.Tool {
 				"start_line": number("The first line to read (default 1)."),
 				"max_lines":  number(fmt.Sprintf("How many lines to read (default %d).", userfiles.DefaultReadLines)),
 			}, "name")),
-		tool(writeFileTool, "Create a text file in the user's files folder. If the file exists, the user must confirm replacing it. Say that it is saved only after the tool answers \"saved\".",
+		tool(writeFileTool, "Create a text file in the user's files folder. If the file exists, the user must confirm replacing it and its old text is lost: to ADD to a file that exists call "+appendFileTool+", never write the old text again with the new. Say that it is saved only after the tool answers \"saved\".",
 			object(map[string]any{
 				"name":    text("File name, e.g. notes.md."),
 				"content": text("The full text of the file."),
 			}, "name", "content")),
-		tool(appendFileTool, "Add text to the end of a file in the user's files folder.",
+		tool(appendFileTool, "Add text to the END of a file that exists in the user's files folder, keeping all of its text. Use it to continue a file part by part: send only the new part.",
 			object(map[string]any{
 				"name":    text("File name."),
 				"content": text("The text to add."),
@@ -337,6 +338,11 @@ func (r *DefaultToolRegistry) proposeWrite(ctx context.Context, userID uuid.UUID
 		result["message"] = "NOT saved yet. A file with this name exists, and replacing it needs the user's confirmation " +
 			"(the old text is kept as the previous version). Tell the user briefly what you propose and that they can confirm or reject it. " +
 			"Do not say that it is saved."
+		if p.OldRunes > 0 && p.KeptPercent < proposals.LossyKeptPercent {
+			result["message"] = fmt.Sprintf("%s WARNING: the new text keeps only %d%% of the lines the file has now (%d characters now, %d in your text). "+
+				"If the user wanted to ADD to the file, this is the wrong call: tell the user so, and call %s with only the new part.",
+				result["message"], p.KeptPercent, p.OldRunes, utf8.RuneCountInString(content), appendFileTool)
+		}
 	default:
 		result["message"] = "NOT saved yet. This write waits for the user to confirm it, because this message used text from outside. " +
 			"Tell the user briefly what you propose and that they can confirm or reject it. Do not say that it is saved."
