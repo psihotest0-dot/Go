@@ -26,6 +26,11 @@ type fakeBotAPI struct {
 	mu      sync.Mutex
 	pending []map[string]any
 	events  []string // "typing" and "message: <text>", in the order they arrived
+
+	// refuseHTML makes sendMessage with parse_mode=HTML fail the way Telegram does for markup
+	// it cannot read; every sendMessage, refused or not, leaves its parse_mode in modes.
+	refuseHTML bool
+	modes      []string
 }
 
 func newFakeBotAPI(t *testing.T, texts ...string) *fakeBotAPI {
@@ -72,9 +77,21 @@ func (f *fakeBotAPI) serve(w http.ResponseWriter, r *http.Request) {
 		f.mu.Unlock()
 		reply(true)
 	case "sendMessage":
+		mode := r.Form.Get("parse_mode")
 		f.mu.Lock()
-		f.events = append(f.events, "message: "+r.Form.Get("text"))
+		f.modes = append(f.modes, mode)
+		refuse := f.refuseHTML && mode == "HTML"
+		if !refuse {
+			f.events = append(f.events, "message: "+r.Form.Get("text"))
+		}
 		f.mu.Unlock()
+		if refuse {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok": false, "error_code": 400, "description": "Bad Request: can't parse entities: Unsupported start tag",
+			})
+			return
+		}
 		reply(map[string]any{"message_id": 100, "date": 0, "chat": map[string]any{"id": 42, "type": "private"}, "text": r.Form.Get("text")})
 	default:
 		http.NotFound(w, r)
@@ -148,6 +165,37 @@ func TestTheUpdateLoopAnswersQuickMessagesInOrderAndShowsTyping(t *testing.T) {
 	firstReply := indexOf(events, "message: reply to едно")
 	assert.Positive(t, firstReply, "typing came before the first reply: %v", events)
 	assert.Equal(t, []string{"typing"}, events[:firstReply], "one typing indicator while the first reply is awaited (it repeats only every few seconds): %v", events)
+}
+
+// The real library meets the real shape of Telegram's refusal: the error it returns is the one
+// refusedMarkup knows, so the answer is sent again as plain text instead of being lost.
+func TestTheRealClientTurnsTelegramsRefusalOfMarkupIntoPlainText(t *testing.T) {
+	api := newFakeBotAPI(t, "здравей")
+	api.refuseHTML = true
+	bot, err := newAPI("123:TEST-TOKEN", api.srv.URL+"/bot%s/%s")
+	require.NoError(t, err)
+	b := newBot(bot, &fakeProcessor{answer: "**важно** <b>"}, newFakeStore(), newFakeDesk(), []int64{42})
+	b.api = bot
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { b.Start(ctx); close(done) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("Start did not return after the cancel")
+		}
+	}()
+
+	require.Eventually(t, func() bool { return len(api.messages()) == 1 }, 10*time.Second, 20*time.Millisecond,
+		"the plain text arrives; got %v", api.log())
+
+	assert.Equal(t, []string{"**важно** <b>"}, api.messages(), "the answer as the model wrote it")
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	assert.Equal(t, []string{"HTML", ""}, api.modes, "the formatted try, then the plain one")
 }
 
 func indexOf(events []string, want string) int {

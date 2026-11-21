@@ -31,6 +31,11 @@ type fakeSender struct {
 	// network. Set them before the bot starts.
 	typingDelay  time.Duration
 	messageDelay time.Duration
+
+	// reject, when set, can make Send fail for a message; every try, failed or not, is in
+	// attempts, and only the ones that went through are in messages.
+	reject   func(tgbotapi.MessageConfig) error
+	attempts []tgbotapi.MessageConfig
 }
 
 func (s *fakeSender) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
@@ -41,6 +46,15 @@ func (s *fakeSender) Send(c tgbotapi.Chattable) (tgbotapi.Message, error) {
 		s.events = append(s.events, "typing")
 		s.mu.Unlock()
 	case tgbotapi.MessageConfig:
+		s.mu.Lock()
+		s.attempts = append(s.attempts, m)
+		reject := s.reject
+		s.mu.Unlock()
+		if reject != nil {
+			if err := reject(m); err != nil {
+				return tgbotapi.Message{}, err
+			}
+		}
 		s.mu.Lock()
 		s.messages = append(s.messages, m)
 		s.events = append(s.events, "message")
@@ -374,6 +388,129 @@ func TestABusyConversationIsSaidSoAndNotReportedAsAFailure(t *testing.T) {
 	require.Len(t, f.sender.texts(), 1)
 	assert.Contains(t, f.sender.texts()[0], "Разговорът още пише отговор")
 	assert.NotContains(t, f.sender.texts()[0], "Възникна грешка")
+}
+
+// The answer of the model is Markdown: it goes out as the HTML Telegram shows, and a text the
+// model wrote with markup characters of its own cannot become markup.
+func TestAnAnswerIsSentAsHTML(t *testing.T) {
+	f := newFixture(42)
+	f.processor.answer = "**Здравей** & <b>свят</b>\n- `код`"
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+	require.Len(t, f.sender.messages, 1)
+	assert.Equal(t, tgbotapi.ModeHTML, f.sender.messages[0].ParseMode)
+	assert.Equal(t, "<b>Здравей</b> &amp; &lt;b&gt;свят&lt;/b&gt;\n• <code>код</code>", f.sender.messages[0].Text)
+}
+
+// Telegram may still refuse a text it cannot parse: the same text goes again, as it is.
+func TestAnAnswerTelegramCannotParseIsSentAgainAsPlainText(t *testing.T) {
+	f := newFixture(42)
+	f.processor.answer = "**Здравей**"
+	f.sender.reject = func(m tgbotapi.MessageConfig) error {
+		if m.ParseMode == tgbotapi.ModeHTML {
+			return &tgbotapi.Error{Code: 400, Message: "Bad Request: can't parse entities: Unsupported start tag"}
+		}
+		return nil
+	}
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+	require.Len(t, f.sender.attempts, 2, "the formatted try and the plain one")
+	assert.Equal(t, tgbotapi.ModeHTML, f.sender.attempts[0].ParseMode)
+	require.Len(t, f.sender.messages, 1)
+	assert.Empty(t, f.sender.messages[0].ParseMode)
+	assert.Equal(t, "**Здравей**", f.sender.messages[0].Text)
+}
+
+// Any other failure is not repeated: the message may have arrived, and a second one would be
+// a duplicate.
+func TestOtherFailuresOfAnAnswerAreNotSentAgain(t *testing.T) {
+	failures := map[string]error{
+		"network":         errors.New("connection reset"),
+		"too long":        &tgbotapi.Error{Code: 400, Message: "Bad Request: message is too long"},
+		"blocked by user": &tgbotapi.Error{Code: 403, Message: "Forbidden: bot was blocked by the user"},
+		"parse in a 5xx":  &tgbotapi.Error{Code: 500, Message: "can't parse entities"},
+	}
+	for name, failure := range failures {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(42)
+			f.processor.answer = "**Здравей**"
+			f.sender.reject = func(tgbotapi.MessageConfig) error { return failure }
+
+			f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+			assert.Len(t, f.sender.attempts, 1, "one try only")
+		})
+	}
+}
+
+func TestRefusedMarkupIsRecognisedThroughWrapping(t *testing.T) {
+	parse := &tgbotapi.Error{Code: 400, Message: "Bad Request: can't parse entities: Can't find end of the entity"}
+	assert.True(t, refusedMarkup(parse))
+	assert.True(t, refusedMarkup(fmt.Errorf("send: %w", parse)))
+	assert.False(t, refusedMarkup(nil))
+	assert.False(t, refusedMarkup(errors.New("can't parse entities")), "only the answer of Telegram counts")
+	assert.False(t, refusedMarkup(&tgbotapi.Error{Code: 400, Message: "Bad Request: chat not found"}))
+}
+
+// A long answer goes out in pieces that each are a whole formatted message, and a code block
+// that a cut falls into is closed and opened again.
+func TestALongAnswerIsSentInFormattedPieces(t *testing.T) {
+	f := newFixture(42)
+	var code []string
+	for i := 0; i < 700; i++ {
+		code = append(code, fmt.Sprintf("line %d", i))
+	}
+	f.processor.answer = "**Начало**\n```\n" + strings.Join(code, "\n") + "\n```\nКрай"
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+	require.Greater(t, len(f.sender.messages), 1)
+	for _, m := range f.sender.messages {
+		assert.Equal(t, tgbotapi.ModeHTML, m.ParseMode)
+		assert.NoError(t, wellFormed(m.Text))
+		assert.LessOrEqual(t, utf8.RuneCountInString(m.Text), 4096)
+	}
+	assert.True(t, strings.HasPrefix(f.sender.messages[0].Text, "<b>Начало</b>\n<pre>line 0"))
+	assert.True(t, strings.HasSuffix(f.sender.messages[len(f.sender.messages)-1].Text, "</pre>\nКрай"))
+}
+
+// What the bot says itself is not an answer of the model and is not parsed: a "*" in it stays.
+// A text that converts to nothing (a bare code fence) is still said, as it was written.
+func TestAnAnswerThatConvertsToNothingIsStillSent(t *testing.T) {
+	f := newFixture(42)
+	f.processor.answer = "```\n```"
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+	require.Len(t, f.sender.messages, 1)
+	assert.Empty(t, f.sender.messages[0].ParseMode)
+	assert.Equal(t, "```\n```", f.sender.messages[0].Text)
+}
+
+// The notice about a proposal is the bot's own text, with a command in it: not formatted.
+func TestTheNoticeAboutAProposalIsPlainText(t *testing.T) {
+	f := newFixture(42)
+	f.processor.answer = "Предлагам правило."
+	f.processor.proposals = []proposals.Proposal{{ID: 7, Kind: "rule", Key: "стил_на_писане", Value: "по-кратко"}}
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Говори по-кратко"))
+
+	require.Len(t, f.sender.messages, 2)
+	assert.Equal(t, tgbotapi.ModeHTML, f.sender.messages[0].ParseMode, "the answer")
+	assert.Empty(t, f.sender.messages[1].ParseMode, "the notice")
+	assert.Contains(t, f.sender.messages[1].Text, "/approve 7")
+}
+
+func TestTheBotsOwnWordsAreSentAsPlainText(t *testing.T) {
+	f := newFixture(42)
+	f.processor.err = errors.New("boom")
+
+	f.bot.handleMessage(context.Background(), privateMessage(42, "Здравей"))
+
+	require.Len(t, f.sender.messages, 1)
+	assert.Empty(t, f.sender.messages[0].ParseMode)
 }
 
 func TestGroupAndMediaMessages(t *testing.T) {

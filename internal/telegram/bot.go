@@ -504,7 +504,7 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 	}
 
 	if strings.TrimSpace(answer) != "" {
-		b.sendReply(chatID, answer)
+		b.sendAnswer(chatID, answer)
 	}
 	if len(turn.Proposals) > 0 {
 		b.sendReply(chatID, proposalNotice(turn.Proposals))
@@ -769,6 +769,42 @@ func (b *Bot) sendReply(chatID int64, text string) {
 			runes = runes[1:]
 		}
 	}
+}
+
+// sendAnswer sends an answer of the model: its Markdown as the HTML Telegram shows (bold, italics,
+// code, links), in pieces that each convert on their own. When Telegram refuses a piece it
+// cannot parse, the piece is sent again as the plain text it was; any other failure is logged
+// and the piece is not repeated (it may have arrived).
+func (b *Bot) sendAnswer(chatID int64, text string) {
+	for _, piece := range splitReply(text, maxReplyRunes) {
+		if strings.TrimSpace(piece) == "" {
+			continue
+		}
+		formatted := markdownToHTML(piece)
+		if strings.TrimSpace(formatted) == "" {
+			b.send(chatID, piece)
+			continue
+		}
+		msg := tgbotapi.NewMessage(chatID, formatted)
+		msg.ParseMode = tgbotapi.ModeHTML
+		_, err := b.sender.Send(msg)
+		switch {
+		case err == nil:
+		case refusedMarkup(err):
+			slog.Warn("Telegram refused the formatted reply; sending it as plain text", slog.Int64("chat_id", chatID))
+			b.send(chatID, piece)
+		default:
+			slog.Error("Failed to send telegram reply", slog.Any("error", err), slog.Int64("chat_id", chatID))
+		}
+	}
+}
+
+// refusedMarkup reports whether Telegram answered "can't parse entities": the HTML of a message
+// was not accepted, and the same text without a parse mode would be.
+func refusedMarkup(err error) bool {
+	var apiErr *tgbotapi.Error
+	return errors.As(err, &apiErr) && apiErr.Code == http.StatusBadRequest &&
+		strings.Contains(strings.ToLower(apiErr.Message), "parse entities")
 }
 
 func (b *Bot) send(chatID int64, text string) {
