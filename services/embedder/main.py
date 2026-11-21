@@ -1,7 +1,6 @@
 import os
 import threading
 from contextlib import asynccontextmanager
-from typing import List
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -58,7 +57,7 @@ app = FastAPI(title="CPU Embedding Service", lifespan=lifespan)
 
 
 class EmbedRequest(BaseModel):
-    texts: List[str] = Field(
+    texts: list[str] = Field(
         ...,
         max_length=256,
         description="List of texts to embed. Maximum 256 texts."

@@ -35,7 +35,7 @@ func toMemoryDTO(m db.Memory) MemoryDTO {
 		dto.SourceMessageID = &m.SourceMessageID.UUID
 	}
 	if m.Metadata.Valid {
-		var rm json.RawMessage = m.Metadata.RawMessage
+		rm := m.Metadata.RawMessage
 		dto.Metadata = &rm
 	}
 	if m.CreatedAt.Valid {

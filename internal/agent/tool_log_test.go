@@ -95,10 +95,6 @@ func TestHistoryToolNoteIsOnlyForAnswersWithTools(t *testing.T) {
 	assert.True(t, strings.HasPrefix(note, "\n\n"+toolLogNotePrefix))
 	assert.Contains(t, note, `write_file "a.txt": saved; web_fetch x.org/a: failed (server error), nothing done.]`)
 	assert.True(t, strings.HasPrefix(toolLogNotePrefix, copiedToolRecord), "what the model reads is what is cut when it copies it")
-
-	noteAnswersWithoutTools = true
-	t.Cleanup(func() { noteAnswersWithoutTools = false })
-	assert.Contains(t, historyToolNote(""), "no tool was called")
 }
 
 func TestAnAnswerThatCopiesTheRecordIsCut(t *testing.T) {
@@ -223,4 +219,25 @@ func assistantMessages(t *testing.T, e *toolEnv, session string) []db.Message {
 		}
 	}
 	return out
+}
+
+// A web result is measured without the notice the server wraps it in: an empty page is not a page
+// read, in the record or as the evidence of a step of a plan.
+func TestAnEmptyWebResultIsNotAPageRead(t *testing.T) {
+	wrapped := func(result map[string]interface{}) map[string]interface{} {
+		return map[string]interface{}{"source": "web", "untrusted": true, "notice": webContentNotice, "result": result}
+	}
+	empty, page := wrapped(map[string]interface{}{}), wrapped(map[string]interface{}{"text": strings.Repeat("слово ", 400)})
+	args := map[string]interface{}{"url": "https://x.org/a", "query": "q"}
+
+	assert.Equal(t, "web_fetch x.org/a: empty, nothing read", toolLogLine("web_fetch", args, empty, 400))
+	assert.Equal(t, `web_search "q": nothing found`, toolLogLine("web_search", args, empty, 400))
+	assert.Contains(t, toolLogLine("web_fetch", args, page, 5000), "web_fetch x.org/a: page read (4.")
+
+	_, ok := planEvidence("web_fetch", args, empty, 400)
+	assert.False(t, ok, "an empty page is no evidence")
+	_, ok = planEvidence("web_search", args, empty, 400)
+	assert.False(t, ok)
+	_, ok = planEvidence("web_fetch", args, page, 5000)
+	assert.True(t, ok)
 }

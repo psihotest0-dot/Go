@@ -209,6 +209,7 @@ func (s *Service) query(ctx context.Context, req *Request, ev *Evaluation) (Answ
 			{Role: openai.ChatMessageRoleSystem, Content: system},
 			{Role: openai.ChatMessageRoleUser, Content: req.userMessage()},
 		},
+		//lint:ignore SA1019 llama-server and DeepSeek read max_tokens; max_completion_tokens is OpenAI's own name.
 		MaxTokens:   maxAnswerTokens,
 		Temperature: temperature,
 	}

@@ -103,15 +103,23 @@ func toolLogLine(tool string, args map[string]interface{}, res interface{}, size
 	}
 	switch tool {
 	case "web_search":
+		size = webResultBytes(res, size)
+		if size < minWebResultBytes {
+			return fmt.Sprintf("web_search %q: nothing found", toolLogArg(args, "query"))
+		}
 		return fmt.Sprintf("web_search %q: results read (%.1f KB)", toolLogArg(args, "query"), float64(size)/1024)
 	case "web_fetch":
+		size = webResultBytes(res, size)
+		if size < minWebResultBytes {
+			return fmt.Sprintf("web_fetch %s: empty, nothing read", linkArg(args))
+		}
 		line := fmt.Sprintf("web_fetch %s: page read (%.1f KB)", linkArg(args), float64(size)/1024)
 		if size < shortPageBytes {
 			line += ", short - maybe only a summary"
 		}
 		return line
 	case searchDocumentsTool, "search_knowledge_base":
-		if status == "skipped" {
+		if status == statusSkipped {
 			return fmt.Sprintf("search_documents %q: not searched", toolLogArg(args, "query", "text"))
 		}
 		return fmt.Sprintf("search_documents %q: %d passages", toolLogArg(args, "query", "text"), resultCount(res, "results"))
@@ -122,19 +130,19 @@ func toolLogLine(tool string, args map[string]interface{}, res interface{}, size
 	case listFilesTool:
 		return fmt.Sprintf("list_files: %d files", resultCount(res, "count"))
 	case readAttachmentTool, readFileTool:
-		if status == "not_found" {
+		if status == statusNotFound {
 			return named("not found")
 		}
 		return named("read")
 	case writeFileTool, appendFileTool:
 		switch status {
-		case "saved":
+		case statusSaved:
 			return named("saved")
-		case "appended":
+		case statusAppended:
 			return named("text added")
-		case "pending_approval":
+		case statusPendingApproval:
 			return named("NOT saved - waits for the user's confirmation")
-		case "not_found":
+		case statusNotFound:
 			return named("not found, nothing written")
 		}
 		return named("nothing written")
@@ -148,7 +156,7 @@ func toolLogLine(tool string, args map[string]interface{}, res interface{}, size
 	case "create_memory":
 		return "create_memory: saved"
 	case "save_global_rule", styleNoteTool:
-		if status == "pending_approval" {
+		if status == statusPendingApproval {
 			return tool + ": proposed - waits for the user's confirmation"
 		}
 		return tool + ": done"
@@ -200,19 +208,15 @@ func (t *turnState) storedToolLog() string {
 // (sanitizeAssistantText), so the model cannot write a record of its own.
 const toolLogNotePrefix = "[System record of the tools of this answer"
 
-// noteAnswersWithoutTools: an answer whose turn called no tool also gets a note that says so.
-// Off: measured against the note under answers with tools only (see the plan).
-var noteAnswersWithoutTools = false
-
 // historyToolNote is what the model reads after one of its answers in the history: what the tools
 // of that turn did. log is the stored record ("" when the turn called no tool). An answer stored
 // before the record existed has none (NULL) and gets no note: what its tools did is not known.
+// An answer without tools gets none either: a note "no tool was called" under every answer was
+// measured (2026-11-21) and helped one of six points, on a small sample, for the room of the
+// history it takes; the empty record is kept so that it can be shown later.
 func historyToolNote(log string) string {
 	log = strings.TrimSpace(log)
 	if log == "" {
-		if noteAnswersWithoutTools {
-			return "\n\n" + toolLogNotePrefix + ", not written by you and not seen by the user: no tool was called, nothing was read or saved.]"
-		}
 		return ""
 	}
 	return "\n\n" + toolLogNotePrefix + ", not written by you and not seen by the user: " + strings.Join(strings.Split(log, toolLogSeparator), "; ") + ".]"

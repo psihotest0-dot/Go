@@ -391,29 +391,28 @@ func asInvalid(err error) error {
 // ProposeRule leaves a save_global_rule proposal. external names the sources of
 // untrusted text the turn read.
 func (s *Service) ProposeRule(ctx context.Context, userID uuid.UUID, sessionID, key, value string, external []string) (Proposal, error) {
-	payload, err := NormalizeRule(key, value)
-	if err != nil {
-		return Proposal{}, err
-	}
-	// Fail now, while the model can still tell the user, instead of at approval.
-	if err := s.checkRuleRoom(ctx, userID, RuleKindRule, payload.Key); err != nil {
-		return Proposal{}, err
-	}
-	return s.propose(ctx, userID, sessionID, KindSaveRule, payload, external)
+	return s.proposeRuleOf(ctx, userID, sessionID, KindSaveRule, RuleKindRule, key, value, external)
 }
 
 // ProposeStyleNote leaves a save_style_note proposal: an observation of how the user
 // likes to be talked to. Like a rule it is in every prompt, so it waits for the
 // user's confirmation; a wrong generalisation would bend every conversation.
 func (s *Service) ProposeStyleNote(ctx context.Context, userID uuid.UUID, sessionID, key, value string, external []string) (Proposal, error) {
+	return s.proposeRuleOf(ctx, userID, sessionID, KindSaveStyleNote, RuleKindStyle, key, value, external)
+}
+
+// proposeRuleOf leaves a proposal of a line of global_rules of the kind ruleKind (a rule or a
+// note on how to talk): both are in every prompt, so both wait for the user.
+func (s *Service) proposeRuleOf(ctx context.Context, userID uuid.UUID, sessionID, kind, ruleKind, key, value string, external []string) (Proposal, error) {
 	payload, err := NormalizeRule(key, value)
 	if err != nil {
 		return Proposal{}, err
 	}
-	if err := s.checkRuleRoom(ctx, userID, RuleKindStyle, payload.Key); err != nil {
+	// Fail now, while the model can still tell the user, instead of at approval.
+	if err := s.checkRuleRoom(ctx, userID, ruleKind, payload.Key); err != nil {
 		return Proposal{}, err
 	}
-	return s.propose(ctx, userID, sessionID, KindSaveStyleNote, payload, external)
+	return s.propose(ctx, userID, sessionID, kind, payload, external)
 }
 
 // ProposeMemory leaves a create_memory proposal.

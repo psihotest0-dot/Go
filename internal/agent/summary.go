@@ -206,6 +206,7 @@ func (o *Orchestrator) generateSummary(key string, userID uuid.UUID, sessionID, 
 			{Role: openai.ChatMessageRoleSystem, Content: summaryInstructions},
 			{Role: openai.ChatMessageRoleUser, Content: summaryInput},
 		},
+		//lint:ignore SA1019 llama-server and DeepSeek read max_tokens; max_completion_tokens is OpenAI's own name.
 		MaxTokens: maxSummaryAnswerTokens,
 		// The digest is a plain rewrite. Thinking would spend the whole answer
 		// limit on reasoning and leave the summary empty.

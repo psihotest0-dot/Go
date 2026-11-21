@@ -78,9 +78,10 @@ type streamResult struct {
 func (o *Orchestrator) chatRequest(messages []openai.ChatCompletionMessage, tools []openai.Tool) openai.ChatCompletionRequest {
 	limits := o.limits()
 	return openai.ChatCompletionRequest{
-		Messages:  messages,
-		Stream:    true,
-		Tools:     tools,
+		Messages: messages,
+		Stream:   true,
+		Tools:    tools,
+		//lint:ignore SA1019 llama-server and DeepSeek read max_tokens; max_completion_tokens is OpenAI's own name.
 		MaxTokens: limits.answerTokens,
 		// A zero value is left out of the request (omitempty), so the server's own
 		// setting stays in force.

@@ -272,13 +272,15 @@ func planEvidence(tool string, args map[string]interface{}, res interface{}, siz
 	}
 	switch tool {
 	case "web_search":
-		return fmt.Sprintf("web_search %q -> %s", arg("query"), kb()), size > 200
+		size = webResultBytes(res, size)
+		return fmt.Sprintf("web_search %q -> %s", arg("query"), kb()), size >= minWebResultBytes
 	case "web_fetch":
+		size = webResultBytes(res, size)
 		gist := fmt.Sprintf("web_fetch %s -> %s", shortURL(arg("url")), kb())
 		if size < shortPageBytes {
 			gist += " (short: a summary?)"
 		}
-		return gist, size > 0
+		return gist, size >= minWebResultBytes
 	case addToLibraryTool:
 		m, ok := res.(map[string]interface{})
 		if !ok {
@@ -302,12 +304,12 @@ func planEvidence(tool string, args map[string]interface{}, res interface{}, siz
 	case searchDocumentsTool:
 		return fmt.Sprintf("search_documents %q -> %s", arg("query", "text"), kb()), size >= 100
 	case readAttachmentTool, readFileTool:
-		return fmt.Sprintf("%s %s -> %s", tool, arg("name"), kb()), status != "not_found"
+		return fmt.Sprintf("%s %s -> %s", tool, arg("name"), kb()), status != statusNotFound
 	case writeFileTool, appendFileTool:
 		switch status {
-		case "saved", "appended":
+		case statusSaved, statusAppended:
 			return fmt.Sprintf("%s %s: %s", tool, arg("name"), status), true
-		case "pending_approval":
+		case statusPendingApproval:
 			return fmt.Sprintf("%s %s: waiting for the user's confirmation", tool, arg("name")), true
 		}
 		return "", false

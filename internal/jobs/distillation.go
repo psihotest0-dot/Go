@@ -334,6 +334,7 @@ Constraints:
 				{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
 				{Role: openai.ChatMessageRoleUser, Content: textContent},
 			},
+			//lint:ignore SA1019 llama-server and DeepSeek read max_tokens; max_completion_tokens is OpenAI's own name.
 			MaxTokens:   800,
 			Temperature: 0.2,
 		}

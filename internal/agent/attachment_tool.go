@@ -70,7 +70,7 @@ func (r *DefaultToolRegistry) executeReadAttachment(ctx context.Context, userID 
 	case errors.Is(err, attachments.ErrNotFound), errors.Is(err, attachments.ErrAmbiguous):
 		// The server is fine and the model can fix the call: tell it which files there are.
 		return map[string]interface{}{
-			"status":  "not_found",
+			"status":  statusNotFound,
 			"message": err.Error() + ". Attached files: " + r.attachedNames(ctx, userID, sessionID),
 		}, nil
 	default:

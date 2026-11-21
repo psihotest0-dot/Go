@@ -102,13 +102,6 @@ func (s *sessionLocks) lock(ctx context.Context, userID uuid.UUID, sessionID str
 	}
 }
 
-// size is the number of conversations that are held or waited for (for tests).
-func (s *sessionLocks) size() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.m)
-}
-
 // beginQueuedStream starts the event stream with the frame "queued" for a client that asked to
 // be told it has to wait (queue_events). It reports whether the stream has begun: from then on
 // a failure cannot be an HTTP status, only an "error" frame (see chatFailure).

@@ -183,3 +183,9 @@ func TestLoadContextStillFindsAMemoryOutsideTheProfile(t *testing.T) {
 	assert.Zero(t, chatCtx.Sources[1].Score, "a memory has no distance to show")
 	assert.Empty(t, chatCtx.Sources[1].ScoreType)
 }
+
+// loadContext is loadContextWithLimits with the budgets of the configuration.
+// Kept for the tests only (the server does not call it).
+func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req ChatRequest) (chatContext, []string, error) {
+	return o.loadContextWithLimits(ctx, userID, req, o.limits())
+}

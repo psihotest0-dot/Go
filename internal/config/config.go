@@ -292,16 +292,10 @@ func Load() *Config {
 	}
 
 	adaptiveSkipStr := os.Getenv("ENABLE_ADAPTIVE_SKIP")
-	adaptiveSkip := true
-	if adaptiveSkipStr == "false" || adaptiveSkipStr == "0" {
-		adaptiveSkip = false
-	}
+	adaptiveSkip := adaptiveSkipStr != "false" && adaptiveSkipStr != "0"
 
 	distillationStr := os.Getenv("ENABLE_DISTILLATION")
-	distillation := true
-	if distillationStr == "false" || distillationStr == "0" {
-		distillation = false
-	}
+	distillation := distillationStr != "false" && distillationStr != "0"
 
 	listenAddr := strings.TrimSpace(os.Getenv("LISTEN_ADDR"))
 	if listenAddr == "" {

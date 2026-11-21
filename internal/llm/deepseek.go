@@ -49,15 +49,6 @@ const (
 	DialectDeepSeek
 )
 
-// NewDeepSeekClient returns a client of the DeepSeek API for the model (empty: the cheap
-// one). The key is sent only in the Authorization header and is never logged.
-//
-// dailyUSD is the most the client may cost in a day (at the peak prices); at it the client
-// refuses requests with ErrSpendCap. The guard is client.Spend().
-func NewDeepSeekClient(apiKey, model string, dailyUSD float64) *LemonadeClient {
-	return NewLemonadeClientWithOptions(deepSeekOptions(apiKey, model, NewSpendGuard(dailyUSD)))
-}
-
 // deepSeekOptions are the options of a client of DeepSeek; the guard may be shared with
 // other clients of the same account (see Paid).
 func deepSeekOptions(apiKey, model string, guard *SpendGuard) Options {

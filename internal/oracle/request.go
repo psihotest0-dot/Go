@@ -43,18 +43,9 @@ func invalid(format string, args ...any) error {
 	return &InvalidRequestError{Reason: fmt.Sprintf(format, args...)}
 }
 
-// Decode reads exactly one JSON value from r and checks it. A body that is not
-// JSON, has data after the value, or fails the checks is an InvalidRequestError; a
-// failing reader (for example a body over the size limit) is returned as it is.
-func Decode(r io.Reader) (*Request, error) {
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-	return DecodeBytes(raw)
-}
-
-// DecodeBytes is Decode for a body that is already read.
+// DecodeBytes reads exactly one JSON value from a body that is already read (the handler reads
+// it within MaxBodyBytes) and checks it. A body that is not JSON, has data after the value, or
+// fails the checks is an InvalidRequestError.
 func DecodeBytes(raw []byte) (*Request, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber() // numbers reach the model as the bot wrote them

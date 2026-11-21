@@ -112,6 +112,24 @@ func webSearchQuery(query string) error {
 	return nil
 }
 
+// webResultBytes is the size of what a web tool brought - the page, the results - without the
+// notice the server wraps it in (callWebTool), which is there even when the page is empty. size is
+// the whole result, used for anything that is not such a wrapper.
+func webResultBytes(res interface{}, size int) int {
+	if m, ok := res.(map[string]interface{}); ok {
+		if inner, ok := m["result"]; ok {
+			if raw, err := json.Marshal(inner); err == nil {
+				return len(raw)
+			}
+		}
+	}
+	return size
+}
+
+// minWebResultBytes: a web result smaller than this brought nothing ({}, an empty list, an error
+// object), and is no evidence that a page or a search was read.
+const minWebResultBytes = 64
+
 // callWebTool posts body to one of the paid web endpoints and returns the decoded
 // answer wrapped with a notice that its text is untrusted. The error messages
 // carry the status and a short excerpt, never the whole response.

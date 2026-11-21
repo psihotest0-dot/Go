@@ -195,7 +195,7 @@ func (r *DefaultToolRegistry) executeReadFile(ctx context.Context, userID uuid.U
 	case errors.Is(err, userfiles.ErrNotFound):
 		fileOp("read", "not_found")
 		return map[string]interface{}{
-			"status":  "not_found",
+			"status":  statusNotFound,
 			"message": "No file with this name. Files: " + r.fileNames(userID),
 		}, nil
 	default:
@@ -265,7 +265,7 @@ func (r *DefaultToolRegistry) executeWriteFile(ctx context.Context, userID uuid.
 	turn.noteFileWrite()
 	slog.InfoContext(ctx, "a file was saved", "user_id", userID, "name", info.Name, "size_bytes", info.Size)
 	return map[string]interface{}{
-		"status":     "saved",
+		"status":     statusSaved,
 		"name":       info.Name,
 		"size_bytes": info.Size,
 		"message":    "The file is saved. Tell the user its name.",
@@ -293,7 +293,7 @@ func (r *DefaultToolRegistry) executeAppendFile(ctx context.Context, userID uuid
 	case errors.Is(err, userfiles.ErrNotFound):
 		fileOp("append", "not_found")
 		return map[string]interface{}{
-			"status":  "not_found",
+			"status":  statusNotFound,
 			"message": "No file with this name. Create it with " + writeFileTool + ". Files: " + r.fileNames(userID),
 		}, nil
 	default:
@@ -304,7 +304,7 @@ func (r *DefaultToolRegistry) executeAppendFile(ctx context.Context, userID uuid
 	turnFrom(ctx).noteFileWrite()
 	slog.InfoContext(ctx, "text was added to a file", "user_id", userID, "name", info.Name, "size_bytes", info.Size)
 	return map[string]interface{}{
-		"status":     "appended",
+		"status":     statusAppended,
 		"name":       info.Name,
 		"size_bytes": info.Size,
 		"message":    "The text is added. Tell the user.",
@@ -320,7 +320,7 @@ func (r *DefaultToolRegistry) proposeWrite(ctx context.Context, userID uuid.UUID
 	case errors.Is(err, userfiles.ErrNotFound):
 		fileOp("propose", "not_found")
 		return map[string]interface{}{
-			"status":  "not_found",
+			"status":  statusNotFound,
 			"message": "No file with this name. Create it with " + writeFileTool + ". Files: " + r.fileNames(userID),
 		}, nil
 	case errors.Is(err, userfiles.ErrExists):

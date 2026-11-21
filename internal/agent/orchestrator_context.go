@@ -196,11 +196,8 @@ func withoutProfileMemories(retrieved []retrieval.SearchResult, profile []db.Mem
 	return kept
 }
 
-func (o *Orchestrator) loadContext(ctx context.Context, userID uuid.UUID, req ChatRequest) (chatContext, []string, error) {
-	return o.loadContextWithLimits(ctx, userID, req, o.limits())
-}
-
-// loadContextWithLimits is loadContext with the token budgets given: a turn with
+// loadContextWithLimits gathers what the prompt of a turn holds (memories, profile, rules, notes,
+// history, concepts) within the token budgets given: a turn with
 // attached files has less room for the history and the retrieved context (see
 // planAttachments).
 func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UUID, req ChatRequest, lim budgets) (chatContext, []string, error) {

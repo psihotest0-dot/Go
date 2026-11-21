@@ -159,20 +159,8 @@ func (t *turnState) setUserURLs(keys map[string]string) {
 	t.userURLs = keys
 }
 
-// wroteURL tells whether the person wrote this address in the conversation.
-func (t *turnState) wroteURL(raw string) bool {
-	if t == nil {
-		return false
-	}
-	key := urlKey(trimURLEnd(strings.TrimSpace(raw)))
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	_, ok := t.userURLs[key]
-	return key != "" && ok
-}
-
-// resolveURL maps a link the model sent to the link the person wrote: the same address (as
-// wroteURL says), or the one link of the person that it differs from by a few characters.
+// resolveURL maps a link the model sent to the link the person wrote: the same address (the
+// same key, urlKey), or the one link of the person that it differs from by a few characters.
 // A model that copies 21 long links by hand drops a character now and then (in the live runs
 // of 2026-11-20 it dropped "i:2" from one in 4 of 6 runs); the link it meant is a link the
 // person wrote, so fetching that one gives away nothing. corrected tells that it was not the

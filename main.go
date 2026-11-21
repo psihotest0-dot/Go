@@ -267,29 +267,9 @@ func run() error {
 	protectedMux.HandleFunc("/chat/stream", orchestrator.HandleStreamChat)
 	protectedMux.HandleFunc("/chat/regenerate", orchestrator.HandleRegenerate)
 
-	protectedMux.HandleFunc("/messages", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			apiService.CreateMessageHandler(w, r)
-		case http.MethodGet:
-			apiService.GetMessagesHandler(w, r)
-		default:
-			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	protectedMux.HandleFunc("/messages", getOrPost(apiService.GetMessagesHandler, apiService.CreateMessageHandler))
 
-	protectedMux.HandleFunc("/memories", func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost:
-			apiService.CreateMemoryHandler(w, r)
-		case http.MethodGet:
-			apiService.GetMemoriesHandler(w, r)
-		default:
-			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	})
+	protectedMux.HandleFunc("/memories", getOrPost(apiService.GetMemoriesHandler, apiService.CreateMemoryHandler))
 
 	protectedMux.HandleFunc("/memories/", apiService.MemoryByIDHandler)
 
@@ -438,6 +418,21 @@ func run() error {
 
 // absPath is the absolute form of a path for the log; the path itself when it
 // cannot be resolved.
+// getOrPost serves GET with get and POST with post; any other method is a 405.
+func getOrPost(get, post http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			get(w, r)
+		case http.MethodPost:
+			post(w, r)
+		default:
+			slog.WarnContext(r.Context(), "method not allowed", slog.String("method", r.Method), slog.String("path", r.URL.Path))
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
 func absPath(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {

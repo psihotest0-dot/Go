@@ -393,12 +393,6 @@ func parseCommand(text string) (command, args string) {
 	return command, strings.TrimSpace(rest)
 }
 
-// handleMessage serves one message. The chat's queue place is taken here; the
-// update loop takes it earlier (dispatch) so that the order of arrival counts.
-func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
-	b.handleMessageIn(ctx, msg, b.reserveTurn(msg))
-}
-
 // handleMessageIn serves one message in the place t that reserveTurn gave it
 // (nil for a message that needs no place: /id and chats that are not allowed).
 func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *turn) {

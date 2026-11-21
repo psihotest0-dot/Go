@@ -1,7 +1,6 @@
 package oracle
 
 import (
-	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -228,10 +227,4 @@ func TestOnlyTheNewestBarsAreKept(t *testing.T) {
 
 	require.Len(t, req.RecentBars, maxRecentBars)
 	assert.Equal(t, "39", req.RecentBars[len(req.RecentBars)-1]["n"].(interface{ String() string }).String())
-}
-
-func TestDecodeReadsFromAReader(t *testing.T) {
-	req, err := Decode(bytes.NewReader(marshal(t, validRequest())))
-	require.NoError(t, err)
-	assert.Equal(t, "AAPL", req.Signal.Symbol)
 }

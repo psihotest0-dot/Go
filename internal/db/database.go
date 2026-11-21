@@ -32,7 +32,11 @@ func Connect(ctx context.Context, connString string) (*Database, error) {
 	}
 
 	config.MaxConns = 50
-	config.MinConns = 10
+	// No connections are held open for nothing (pgx's default, 0). One person uses the server
+	// and the database is on this machine, so a new connection costs milliseconds; the ten that
+	// were kept warm bought nothing, and in the tests, where every test opens a pool of its own,
+	// they left thousands of sockets in TIME_WAIT until a run could not open one more ("Only one
+	// usage of each socket address", 2026-11-21).
 	config.MaxConnLifetime = time.Hour
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)

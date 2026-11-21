@@ -901,3 +901,10 @@ func TestAFailedLookupOfTheLinkRepeatsNothing(t *testing.T) {
 
 	assert.Empty(t, f.sender.attempts)
 }
+
+// Kept for the tests only (the server does not call it).
+// handleMessage serves one message. The chat's queue place is taken here; the
+// update loop takes it earlier (dispatch) so that the order of arrival counts.
+func (b *Bot) handleMessage(ctx context.Context, msg *tgbotapi.Message) {
+	b.handleMessageIn(ctx, msg, b.reserveTurn(msg))
+}

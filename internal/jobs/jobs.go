@@ -295,6 +295,7 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, content 
 				Content: content,
 			},
 		},
+		//lint:ignore SA1019 llama-server and DeepSeek read max_tokens; max_completion_tokens is OpenAI's own name.
 		MaxTokens:   500,
 		Temperature: 0.1,
 	}

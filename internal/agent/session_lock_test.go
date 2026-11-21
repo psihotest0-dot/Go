@@ -688,3 +688,10 @@ func TestEveryWayOutOfATurnFreesTheConversation(t *testing.T) {
 		freeAfterwards(t, "s-late")
 	})
 }
+
+// size is the number of conversations that are held or waited for (for tests).
+func (s *sessionLocks) size() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.m)
+}

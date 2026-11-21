@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -226,4 +228,22 @@ func TestConsoleShowsTheWarningAboutListeningBeyondLoopback(t *testing.T) {
 	assert.NotContains(t, console.String(), "some other warning")
 	assert.Contains(t, console.String(), api.BeyondLoopbackWarning)
 	assert.Contains(t, console.String(), "0.0.0.0:8080")
+}
+
+func TestGetOrPostServesTheTwoMethodsAndRefusesTheRest(t *testing.T) {
+	served := ""
+	h := getOrPost(
+		func(w http.ResponseWriter, r *http.Request) { served = "get" },
+		func(w http.ResponseWriter, r *http.Request) { served = "post" },
+	)
+	for method, want := range map[string]string{http.MethodGet: "get", http.MethodPost: "post"} {
+		served = ""
+		h(httptest.NewRecorder(), httptest.NewRequest(method, "/memories", nil))
+		assert.Equal(t, want, served, method)
+	}
+	served = ""
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodDelete, "/memories", nil))
+	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
+	assert.Empty(t, served)
 }

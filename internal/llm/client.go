@@ -347,8 +347,9 @@ func (c *LemonadeClient) ChatWithJSONSchema(ctx context.Context, req openai.Chat
 	c.setModel(ctx, &req)
 
 	bodyMap := map[string]interface{}{
-		"model":       req.Model,
-		"messages":    req.Messages,
+		"model":    req.Model,
+		"messages": req.Messages,
+		//lint:ignore SA1019 llama-server and DeepSeek read max_tokens; max_completion_tokens is OpenAI's own name.
 		"max_tokens":  req.MaxTokens,
 		"temperature": req.Temperature,
 		"chat_template_kwargs": map[string]interface{}{

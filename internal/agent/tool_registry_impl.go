@@ -282,11 +282,22 @@ func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[stri
 	return result, nil
 }
 
+// The statuses of the tool results that the server reads back (the record of the tools,
+// tool_log.go, and the evidence of a plan, plan_tool.go): a word changed where a result is
+// made must change where it is read.
+const (
+	statusNotFound        = "not_found"
+	statusSaved           = "saved"
+	statusAppended        = "appended"
+	statusPendingApproval = "pending_approval"
+	statusSkipped         = "skipped"
+)
+
 // pendingApprovalResult is what the model is told when a write was turned into a
 // proposal: it must not claim the thing is saved.
 func pendingApprovalResult(p proposals.Proposal) map[string]interface{} {
 	return map[string]interface{}{
-		"status":      "pending_approval",
+		"status":      statusPendingApproval,
 		"proposal_id": p.ID,
 		"proposal":    p.Summary,
 		"message": "NOT saved yet. This is only a proposal and it waits for the user to confirm it. " +
@@ -465,7 +476,7 @@ func (r *DefaultToolRegistry) executeSearchMemories(ctx context.Context, userID 
 
 	if shouldSkipRetrieval(query) {
 		return map[string]interface{}{
-			"status":  "skipped",
+			"status":  statusSkipped,
 			"reason":  "query is conversational filler",
 			"results": []interface{}{},
 		}, nil
@@ -546,7 +557,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	// 2026-11-15). When the question names a file, the query is the file and is searched.
 	if !scoped && shouldSkipRetrieval(query) {
 		return map[string]interface{}{
-			"status":  "skipped",
+			"status":  statusSkipped,
 			"reason":  "query is conversational filler",
 			"results": []interface{}{},
 		}, nil

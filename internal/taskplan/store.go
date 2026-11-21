@@ -42,19 +42,16 @@ func toPlan(row db.TaskPlan) (*Plan, error) {
 
 // Active returns the plan of the conversation that is in progress, or nil when there is none.
 func (s *Store) Active(ctx context.Context, userID uuid.UUID, session string) (*Plan, error) {
-	row, err := s.q.GetActiveTaskPlan(ctx, db.GetActiveTaskPlanParams{UserID: userID, SessionID: session})
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read the plan: %w", err)
-	}
-	return toPlan(row)
+	return planOrNil(s.q.GetActiveTaskPlan(ctx, db.GetActiveTaskPlanParams{UserID: userID, SessionID: session}))
 }
 
 // Latest returns the newest plan of the conversation, whatever became of it, or nil.
 func (s *Store) Latest(ctx context.Context, userID uuid.UUID, session string) (*Plan, error) {
-	row, err := s.q.GetLatestTaskPlan(ctx, db.GetLatestTaskPlanParams{UserID: userID, SessionID: session})
+	return planOrNil(s.q.GetLatestTaskPlan(ctx, db.GetLatestTaskPlanParams{UserID: userID, SessionID: session}))
+}
+
+// planOrNil is the plan of a row that was read, or nil when there was no row.
+func planOrNil(row db.TaskPlan, err error) (*Plan, error) {
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

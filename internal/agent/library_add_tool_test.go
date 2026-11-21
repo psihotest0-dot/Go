@@ -470,15 +470,21 @@ func TestTheReportIsAddedWithoutTheFileGroupToo(t *testing.T) {
 
 func TestWhatCountsAsALinkTheUserWrote(t *testing.T) {
 	_, turn := libraryAddCtx(t, "виж https://a.org/one.pdf")
+	// wrote: the same address the person wrote, not one mended from a near spelling.
+	wrote := func(turn *turnState, raw string) bool {
+		_, corrected, ok := turn.resolveURL(raw)
+		return ok && !corrected
+	}
 
-	assert.True(t, turn.wroteURL("https://a.org/one.pdf"))
-	assert.True(t, turn.wroteURL("  http://A.org/one.pdf/  "))
+	assert.True(t, wrote(turn, "https://a.org/one.pdf"))
+	assert.True(t, wrote(turn, "  http://A.org/one.pdf/  "))
 	for _, not := range []string{"", "   ", "not a link", "https://", "https://b.org/one.pdf", "https://a.org/two.pdf"} {
-		assert.False(t, turn.wroteURL(not), "%q", not)
+		_, _, ok := turn.resolveURL(not)
+		assert.False(t, ok, "%q", not)
 	}
 	var none *turnState
-	assert.False(t, none.wroteURL("https://a.org/one.pdf"), "outside a turn nothing is written by the user")
-	assert.False(t, (&turnState{}).wroteURL(""), "an empty address is no address, whatever the set holds")
+	assert.False(t, wrote(none, "https://a.org/one.pdf"), "outside a turn nothing is written by the user")
+	assert.False(t, wrote(&turnState{}, ""), "an empty address is no address, whatever the set holds")
 }
 
 // The live runs of 2026-11-20: the model copied 21 long links and dropped "i:2" from one in
