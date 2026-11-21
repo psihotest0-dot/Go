@@ -816,3 +816,88 @@ func TestLocalOnlyBecomesTheChoiceOfTheLocalModel(t *testing.T) {
 	require.NotNil(t, choice)
 	assert.False(t, *choice)
 }
+
+// ---------------------------------------------------- the answers given in the app
+func mirrorFixture(chatID int64, user uuid.UUID) *fixture {
+	f := newFixture(chatID)
+	f.store.linked[chatID] = user
+	return f
+}
+
+func TestAnAnswerGivenInTheAppIsRepeatedInTheLinkedChat(t *testing.T) {
+	user := uuid.New()
+	f := mirrorFixture(42, user)
+
+	f.bot.Mirror(context.Background(), user, "tg-42", "Какво правиш?", "**Чета** книга", false)
+
+	require.Len(t, f.sender.messages, 2)
+	assert.Equal(t, int64(42), f.sender.messages[0].ChatID)
+	assert.Equal(t, "📱 Ти (в приложението):\nКакво правиш?", f.sender.messages[0].Text)
+	assert.Empty(t, f.sender.messages[0].ParseMode, "what the bot says itself is plain text")
+	assert.Equal(t, "<b>Чета</b> книга", f.sender.messages[1].Text)
+	assert.Equal(t, tgbotapi.ModeHTML, f.sender.messages[1].ParseMode, "the answer looks as any other answer")
+}
+
+func TestARegeneratedAnswerSaysSoAndDoesNotRepeatTheQuestion(t *testing.T) {
+	user := uuid.New()
+	f := mirrorFixture(42, user)
+
+	f.bot.Mirror(context.Background(), user, "tg-42", "Въпрос", "Нов отговор", true)
+
+	require.Len(t, f.sender.messages, 2)
+	assert.Contains(t, f.sender.messages[0].Text, "Нов отговор на последния въпрос")
+	assert.NotContains(t, f.sender.messages[0].Text, "Въпрос\n")
+	assert.Equal(t, "Нов отговор", f.sender.messages[1].Text)
+}
+
+func TestALongQuestionIsCutInTheRepeat(t *testing.T) {
+	user := uuid.New()
+	f := mirrorFixture(42, user)
+
+	f.bot.Mirror(context.Background(), user, "tg-42", strings.Repeat("я", 3000), "Отговор", false)
+
+	require.Len(t, f.sender.messages, 2)
+	assert.LessOrEqual(t, utf8.RuneCountInString(f.sender.messages[0].Text), 600)
+	assert.True(t, strings.HasSuffix(f.sender.messages[0].Text, "…"))
+}
+
+// "tg-<number>" comes from a request: it must not be a way to write to a chat that is not the
+// user's, or one the bot may not talk to.
+func TestNothingIsRepeatedWhereItDoesNotBelong(t *testing.T) {
+	user, stranger := uuid.New(), uuid.New()
+	tests := []struct {
+		name    string
+		user    uuid.UUID
+		session string
+		allowed []int64
+		linked  map[int64]uuid.UUID
+	}{
+		{"a chat the bot may not talk to", user, "tg-42", []int64{7}, map[int64]uuid.UUID{42: user}},
+		{"a chat linked to another user", stranger, "tg-42", []int64{42}, map[int64]uuid.UUID{42: user}},
+		{"a chat that is not linked", user, "tg-42", []int64{42}, map[int64]uuid.UUID{}},
+		{"a session that is not Telegram's", user, "5f3a9c1e-7b2d-4c8a-9e61-0d4b7a2c8f13", []int64{42}, map[int64]uuid.UUID{42: user}},
+		{"a session id that only looks like one", user, "tg-42abc", []int64{42}, map[int64]uuid.UUID{42: user}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(tc.allowed...)
+			for chat, owner := range tc.linked {
+				f.store.linked[chat] = owner
+			}
+
+			f.bot.Mirror(context.Background(), tc.user, tc.session, "Въпрос", "Отговор", false)
+
+			assert.Empty(t, f.sender.attempts)
+		})
+	}
+}
+
+func TestAFailedLookupOfTheLinkRepeatsNothing(t *testing.T) {
+	user := uuid.New()
+	f := mirrorFixture(42, user)
+	f.store.lookupErr = errors.New("db down")
+
+	f.bot.Mirror(context.Background(), user, "tg-42", "Въпрос", "Отговор", false)
+
+	assert.Empty(t, f.sender.attempts)
+}

@@ -22,6 +22,7 @@ import (
 	"go-monolith/internal/agent"
 	"go-monolith/internal/api"
 	"go-monolith/internal/proposals"
+	"go-monolith/metrics"
 )
 
 const (
@@ -238,6 +239,10 @@ func Run(ctx context.Context, token string, allowedChatIDs []int64, orch *agent.
 	for {
 		bot, err := NewBot(token, allowedChatIDs, orch, pool, desk, localOnly)
 		if err == nil {
+			// What is answered in the app to a conversation shared with this bot is repeated
+			// here; the repeat stops with the bot.
+			orch.SetReplyMirror(bot.Mirror)
+			defer orch.SetReplyMirror(nil)
 			bot.Start(ctx)
 			return
 		}
@@ -769,6 +774,53 @@ func (b *Bot) sendReply(chatID int64, text string) {
 			runes = runes[1:]
 		}
 	}
+}
+
+// maxMirroredQuestionRunes cuts the question that is repeated in the chat: it is there to say what
+// the answer is about, and a pasted page of text would fill the screen.
+const maxMirroredQuestionRunes = 500
+
+// Mirror repeats in the Telegram chat an answer that was given in the app to the conversation
+// shared with that chat ("tg-<chat id>"): what the person wrote there, then the answer as any
+// other answer of the bot. Without it the Telegram side of the conversation would have gaps -
+// only what was written in Telegram - while the app shows everything. agent.ReplyMirror.
+//
+// Nothing is sent to a chat the bot may not talk to, or that is not linked to this user: the
+// session id comes from a request, and "tg-<any number>" must not be a way to write to a
+// stranger's chat.
+func (b *Bot) Mirror(ctx context.Context, userID uuid.UUID, sessionID, question, answer string, regenerated bool) {
+	chatID, ok := api.ParseTelegramSession(sessionID)
+	if !ok || !b.isAllowed(chatID) {
+		metrics.TelegramMirror.WithLabelValues("not_allowed").Inc()
+		return
+	}
+	linked, isLinked, err := b.store.LinkedUser(ctx, chatID)
+	if err != nil {
+		metrics.TelegramMirror.WithLabelValues("failed").Inc()
+		slog.Error("Failed to look up the telegram link for a mirrored answer", slog.Any("error", err), slog.Int64("chat_id", chatID))
+		return
+	}
+	if !isLinked || linked != userID {
+		metrics.TelegramMirror.WithLabelValues("not_linked").Inc()
+		return
+	}
+
+	if regenerated {
+		b.sendReply(chatID, "🔄 Нов отговор на последния въпрос (от приложението):")
+	} else {
+		b.sendReply(chatID, "📱 Ти (в приложението):\n"+cutRunes(question, maxMirroredQuestionRunes))
+	}
+	b.sendAnswer(chatID, answer)
+	metrics.TelegramMirror.WithLabelValues("sent").Inc()
+}
+
+// cutRunes cuts s to at most n characters, with an ellipsis when it cut.
+func cutRunes(s string, n int) string {
+	runes := []rune(strings.TrimSpace(s))
+	if len(runes) <= n {
+		return string(runes)
+	}
+	return string(runes[:n]) + "…"
 }
 
 // sendAnswer sends an answer of the model: its Markdown as the HTML Telegram shows (bold, italics,

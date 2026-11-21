@@ -491,7 +491,11 @@ paths:
         `/chat/regenerate` or the Telegram bot: a request that finds the
         conversation busy waits for its turn, in the order requests came, and
         the wait counts in the time of the request (5 minutes). Nothing of it is
-        stored until its turn comes. Frames, in the order they arrive:
+        stored until its turn comes. When the session is a conversation shared
+        with a Telegram chat (`tg-<chat id>`, see `/telegram/sessions`), the bot
+        repeats the question and the answer in that chat once the answer is
+        complete; nothing in the response shows it. Frames, in the order they
+        arrive:
 
 
         * `event: queued` with `{}` - only when the request has `queue_events`

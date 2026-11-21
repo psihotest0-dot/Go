@@ -164,6 +164,16 @@ var (
 		Buckets: []float64{0.5, 2, 5, 15, 30, 60, 120, 180, 300},
 	})
 
+	// TelegramMirror counts the answers given in the app to a conversation shared with Telegram
+	// that the bot was asked to repeat in the Telegram chat: "sent" (handed to Telegram),
+	// "not_allowed" (the chat is not on TELEGRAM_ALLOWED_CHAT_IDS), "not_linked" (the chat is not
+	// linked to this user - nothing is sent to a chat that is not the user's) and "failed" (the
+	// link could not be read).
+	TelegramMirror = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "telegram_mirror_total",
+		Help: "Answers given in the app that were repeated in the Telegram chat of the conversation.",
+	}, []string{"result"}) // result: sent, not_allowed, not_linked, failed
+
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_web_tool_requests_total",

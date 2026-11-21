@@ -35,10 +35,32 @@ func (a *API) RegisterSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /telegram/sessions", a.ListTelegramSessionsHandler)
 }
 
+// TelegramSessionPrefix begins the session id of a conversation with a Telegram chat.
+const TelegramSessionPrefix = "tg-"
+
 // TelegramSessionID is the session id of the conversation with a Telegram chat. The bot writes to
 // it and the app opens it, so both take the id from here.
 func TelegramSessionID(chatID int64) string {
-	return "tg-" + strconv.FormatInt(chatID, 10)
+	return TelegramSessionPrefix + strconv.FormatInt(chatID, 10)
+}
+
+// IsTelegramSession reports whether sessionID names a conversation with a Telegram chat.
+func IsTelegramSession(sessionID string) bool {
+	return strings.HasPrefix(sessionID, TelegramSessionPrefix)
+}
+
+// ParseTelegramSession is the reverse of TelegramSessionID: the chat id of "tg-<chat id>", and
+// false for any other text (including "tg-" with something else than a number after it).
+func ParseTelegramSession(sessionID string) (int64, bool) {
+	rest, ok := strings.CutPrefix(sessionID, TelegramSessionPrefix)
+	if !ok {
+		return 0, false
+	}
+	chatID, err := strconv.ParseInt(rest, 10, 64)
+	if err != nil || TelegramSessionID(chatID) != sessionID {
+		return 0, false // "+5", "05", " 5" and the like are not what the bot writes
+	}
+	return chatID, true
 }
 
 // TelegramSessionDTO is one Telegram conversation as the app lists it.

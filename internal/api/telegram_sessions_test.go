@@ -101,3 +101,37 @@ func TestTelegramSessionsNeedAUserAndOnlyAnswerGet(t *testing.T) {
 	mux.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "the list is read only")
 }
+
+func TestTheChatIdOfASessionIsReadBackOnlyFromWhatTheBotWrites(t *testing.T) {
+	tests := []struct {
+		session string
+		chat    int64
+		ok      bool
+	}{
+		{"tg-1607252727", 1607252727, true},
+		{"tg--1001234567890", -1001234567890, true},
+		{"tg-0", 0, true},
+		{"tg-", 0, false},
+		{"tg-abc", 0, false},
+		{"tg-+5", 0, false},
+		{"tg-05", 0, false},
+		{"tg- 5", 0, false},
+		{"tg-5 ", 0, false},
+		{"tg-5.0", 0, false},
+		{"tg-99999999999999999999", 0, false},
+		{"TG-5", 0, false},
+		{"xtg-5", 0, false},
+		{"5", 0, false},
+		{"", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.session, func(t *testing.T) {
+			chat, ok := api.ParseTelegramSession(tc.session)
+			assert.Equal(t, tc.ok, ok)
+			assert.Equal(t, tc.chat, chat)
+		})
+	}
+	assert.True(t, api.IsTelegramSession("tg-1"))
+	assert.False(t, api.IsTelegramSession("5f3a9c1e-7b2d-4c8a-9e61-0d4b7a2c8f13"))
+	assert.False(t, api.IsTelegramSession(""))
+}

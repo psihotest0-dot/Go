@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -48,6 +49,9 @@ type Orchestrator struct {
 	windows historyWindows
 	// sessions gives each conversation one turn at a time (see sessionLocks).
 	sessions sessionLocks
+	// mirror repeats the answers given in the app to a conversation shared with Telegram in the
+	// Telegram chat (see ReplyMirror); nothing while it is not set.
+	mirror atomic.Pointer[ReplyMirror]
 	// budgets are the token limits requests are built with; the zero value
 	// means the built-in ones (see limits).
 	budgets budgets
@@ -227,6 +231,9 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
+
+	// A conversation shared with Telegram: the question and the answer are repeated in the chat.
+	o.mirrorReply(ctx, userID, req.SessionID, req.Content, assistantContent, false)
 }
 
 type RegenerateRequest struct {
@@ -368,6 +375,9 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(assistantContent),
 	})
+
+	// The new answer of a conversation shared with Telegram is repeated in the chat too.
+	o.mirrorReply(ctx, userID, req.SessionID, lastUserContent, assistantContent, true)
 }
 
 // refuseBusy answers a request that waited for its conversation and ran out of time. A client
