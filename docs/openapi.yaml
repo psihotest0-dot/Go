@@ -1835,11 +1835,11 @@ components:
       properties:
         session_id:
           type: string
-          description: The session the bot writes to, 	g-<chat id>.
+          description: The session the bot writes to, `tg-<chat id>`.
           example: tg-1607252727
         name:
           type: string
-          description: What the app calls the conversation (Telegram, Telegram 2, ...).
+          description: What the app calls the conversation (`Telegram`, `Telegram 2`, ...).
           example: Telegram
     TelegramSessionList:
       type: object
