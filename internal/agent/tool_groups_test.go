@@ -60,7 +60,7 @@ func TestGenerateResponseUnlocksTheFileToolsWhenTheModelAsks(t *testing.T) {
 	o := newGroupOrchestrator(mock, e.reg)
 	before := counterValue(t, metrics.ToolGroupUnlocks.WithLabelValues("files"))
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши ми това във файл бележки.md"}},
 		o.turnTools(), nil)
 
@@ -104,7 +104,7 @@ func TestUnlockingDoesNotUseUpARoundForTools(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -124,7 +124,7 @@ func TestAGroupUnlocksOnce(t *testing.T) {
 	o := newGroupOrchestrator(mock, e.reg)
 	before := counterValue(t, metrics.ToolGroupUnlocks.WithLabelValues("files"))
 
-	_, _, _, err := o.generateResponse(ctx,
+	_, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -143,7 +143,7 @@ func TestFreeUnlockRoundsAreBoundedEvenIfTheStubStays(t *testing.T) {
 	}}
 	o := &Orchestrator{llmClient: mock, tools: &fakeToolRegistry{result: "ok"}, groups: []toolGroup{stuck}}
 
-	_, _, _, err := o.generateResponse(t.Context(),
+	_, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestAfterReadingAFileTheWebIsNotOffered(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	_, _, _, err = o.generateResponse(ctx,
+	_, _, err = o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Прочети plan.txt"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestAfterTheWebReadFileIsNotOffered(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	_, _, _, err := o.generateResponse(ctx,
+	_, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Какво е времето и запиши го"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -211,7 +211,7 @@ func TestTheRoundAfterAnUnlockMustCallOneOfTheNewTools(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestTheForcedRoundOffersOnlyWhatMayBeUsed(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	_, _, _, err := o.generateResponse(ctx,
+	_, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Времето и го запиши"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -255,7 +255,7 @@ func TestAGroupDoesNotChangeTheForcedFirstRound(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{result: map[string]string{"status": "ok"}})
 
-	_, _, _, err := o.generateResponse(t.Context(),
+	_, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Имаш ли книгата за готвене на баба?"}},
 		o.turnTools(), nil)
 

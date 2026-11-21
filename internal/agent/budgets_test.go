@@ -185,7 +185,7 @@ func TestGenerateResponseSendsAnswerLimitAndThinkingSwitch(t *testing.T) {
 		o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
 		o.budgets = newBudgets(&config.Config{LLMContextTokens: 16384, LLMEnableThinking: thinking})
 
-		_, _, _, err := o.generateResponse(context.Background(),
+		_, _, err := o.generateResponse(context.Background(),
 			[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 		require.NoError(t, err)
 
@@ -212,7 +212,7 @@ func TestGenerateResponseSendsTheSamplingSettings(t *testing.T) {
 			tt.cfg.LLMContextTokens = 16384
 			o.budgets = newBudgets(&tt.cfg)
 
-			_, _, _, err := o.generateResponse(context.Background(),
+			_, _, err := o.generateResponse(context.Background(),
 				[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 			require.NoError(t, err)
 
@@ -229,7 +229,7 @@ func TestGenerateResponseWithoutKnownWindowSendsNoAnswerLimit(t *testing.T) {
 	mock := &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("ok")}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
 
-	_, _, _, err := o.generateResponse(context.Background(),
+	_, _, err := o.generateResponse(context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 	require.NoError(t, err)
 
@@ -267,7 +267,7 @@ func TestToolRoundsStayInsideTheWindow(t *testing.T) {
 	system := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleSystem, Content: strings.Repeat("s", 4*fixedPromptTokens)}
 	user := openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: strings.Repeat("в", 4*2550)}
 
-	content, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{system, user}, toolDefinitions(), nil)
+	content, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{system, user}, toolDefinitions(), nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Отговор", content)
@@ -303,7 +303,7 @@ func TestStreamOnceLogsRealUsageAndWarnsWhenTheAnswerWasCut(t *testing.T) {
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
 	o.budgets = newBudgets(&config.Config{LLMContextTokens: 16384, LLMEnableThinking: true})
 
-	_, _, _, err := o.generateResponse(context.Background(),
+	_, _, err := o.generateResponse(context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 	require.NoError(t, err)
 

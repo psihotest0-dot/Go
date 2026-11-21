@@ -105,7 +105,7 @@ func thinkingOff(model llm.LLMClient) *Orchestrator {
 
 func generate(t *testing.T, o *Orchestrator) (string, error) {
 	t.Helper()
-	answer, _, _, err := o.generateResponse(context.Background(),
+	answer, _, err := o.generateResponse(context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Здравей"}}, nil, nil)
 	return answer, err
 }
@@ -196,7 +196,7 @@ func TestEmptyChunksDoNotKeepTheStreamAlive(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	answer, _, _, err := o.generateResponse(ctx,
+	answer, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Здравей"}}, nil, nil)
 
 	require.NoError(t, err)
@@ -236,7 +236,7 @@ func TestACancelledRequestIsNotRetried(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(10*time.Millisecond, cancel)
 
-	_, _, _, err := o.generateResponse(ctx,
+	_, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Здравей"}}, nil, nil)
 
 	require.ErrorIs(t, err, context.Canceled)

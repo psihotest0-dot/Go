@@ -95,7 +95,7 @@ func TestTheNoteGoesUnderAnExtractionNothingOpened(t *testing.T) {
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 	var streamed strings.Builder
 
-	content, _, executed, err := o.generateResponse(t.Context(),
+	content, executed, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "извлечи данните от първия източник"}}, o.turnTools(),
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
@@ -114,7 +114,7 @@ func TestNoNoteForAnAnswerAfterReadingTheLibrary(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, executed, err := o.generateResponse(t.Context(),
+	content, executed, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "какво пише в източника"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func TestNoSecondLineUnderAnAnswerThatHasACorrection(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запиши го във файла source.md"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)

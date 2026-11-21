@@ -220,7 +220,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		o.storeAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources))
 	}
 
-	assistantContent, _, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, store)
+	assistantContent, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, store)
 	if err != nil {
 		// The response is already committed and the reason has been sent to the
 		// client as an SSE error frame, so only log it here; a partial answer is
@@ -365,7 +365,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	assistantContent, _, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, replace)
+	assistantContent, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, replace)
 	if err != nil {
 		// The previous answer is untouched, so a failed regeneration leaves the
 		// session as it was instead of losing the reply it replaced.
@@ -442,7 +442,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	}
 	ctx = prep.ctx
 
-	assistantContent, _, toolCalls, err := o.generateResponse(ctx, prep.messages, prep.tools, nil)
+	assistantContent, toolCalls, err := o.generateResponse(ctx, prep.messages, prep.tools, nil)
 	if err != nil {
 		return ChatTurn{}, err
 	}

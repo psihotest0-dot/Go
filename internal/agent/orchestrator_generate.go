@@ -70,7 +70,6 @@ type deltaFunc func(content, reasoning string) error
 // streamResult is the accumulated output of a single streaming completion.
 type streamResult struct {
 	content   string
-	reasoning string
 	toolCalls []openai.ToolCall
 }
 
@@ -167,7 +166,7 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 		watchdog.Reset(silentStreamTimeout)
 	}
 
-	var content, reasoning strings.Builder
+	var content strings.Builder
 	var toolCalls []openai.ToolCall
 	var usage *openai.Usage
 	var finishReason openai.FinishReason
@@ -175,7 +174,6 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 	snapshot := func() streamResult {
 		return streamResult{
 			content:   content.String(),
-			reasoning: reasoning.String(),
 			toolCalls: toolCalls,
 		}
 	}
@@ -210,10 +208,6 @@ func (o *Orchestrator) streamOnce(ctx context.Context, req openai.ChatCompletion
 		}
 
 		delta := resp.Choices[0].Delta
-		if delta.ReasoningContent != "" {
-			reasoning.WriteString(delta.ReasoningContent)
-		}
-
 		mergeToolCallDeltas(&toolCalls, delta.ToolCalls)
 
 		chunk := delta.Content
@@ -443,7 +437,7 @@ func (o *Orchestrator) generateRounds(
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
 	onDelta deltaFunc,
-) (string, string, []openai.ToolCall, error) {
+) (string, []openai.ToolCall, error) {
 	return o.runRounds(ctx, finalMessages, tools, onDelta, nil)
 }
 
@@ -457,12 +451,12 @@ func (o *Orchestrator) runRounds(
 	tools []openai.Tool,
 	onDelta deltaFunc,
 	require []openai.Tool,
-) (string, string, []openai.ToolCall, error) {
+) (string, []openai.ToolCall, error) {
 	// The caller's slice is copied because tool rounds append to it and the
 	// caller may still use its own view (e.g. for tracing).
 	messages := slices.Clone(finalMessages)
 
-	var assistantContent, reasoningContent strings.Builder
+	var assistantContent strings.Builder
 	var executed []openai.ToolCall
 
 	// Two kinds of question are not left to the model's choice, which is not to look:
@@ -508,13 +502,12 @@ func (o *Orchestrator) runRounds(
 		asked = nil
 		result, err := o.streamWithRescue(ctx, req, onDelta)
 		assistantContent.WriteString(result.content)
-		reasoningContent.WriteString(result.reasoning)
 		if err != nil {
-			return assistantContent.String(), reasoningContent.String(), executed, err
+			return assistantContent.String(), executed, err
 		}
 
 		if len(result.toolCalls) == 0 {
-			return assistantContent.String(), reasoningContent.String(), executed, nil
+			return assistantContent.String(), executed, nil
 		}
 
 		// A round that only unlocks a group does nothing for the user; it does not use up
@@ -571,9 +564,8 @@ func (o *Orchestrator) runRounds(
 		last := append(slices.Clone(messages), openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: roundsOverNote})
 		result, err := o.streamWithRescue(ctx, o.chatRequest(last, nil), onDelta)
 		assistantContent.WriteString(result.content)
-		reasoningContent.WriteString(result.reasoning)
 		if err != nil {
-			return assistantContent.String(), reasoningContent.String(), executed, err
+			return assistantContent.String(), executed, err
 		}
 	}
 
@@ -584,10 +576,10 @@ func (o *Orchestrator) runRounds(
 		assistantContent.WriteString(stuckAnswer)
 		if onDelta != nil {
 			if err := onDelta(stuckAnswer, ""); err != nil {
-				return assistantContent.String(), reasoningContent.String(), executed, err
+				return assistantContent.String(), executed, err
 			}
 		}
 	}
 
-	return assistantContent.String(), reasoningContent.String(), executed, nil
+	return assistantContent.String(), executed, nil
 }

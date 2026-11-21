@@ -200,7 +200,7 @@ func TestGenerateResponseRequiresASearchForAQuestionToTheBooks(t *testing.T) {
 			{textChunk("Според книгата...")},
 		}}
 		o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: map[string]interface{}{"status": "success"}})
-		_, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
+		_, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
 			{Role: openai.ChatMessageRoleSystem, Content: "system"},
 			{Role: openai.ChatMessageRoleUser, Content: question},
 		}, toolDefinitions(), nil)
@@ -220,7 +220,7 @@ func TestGenerateResponseRequiresASearchForAQuestionToTheBooks(t *testing.T) {
 	// Small talk is left to the model: no tool is required.
 	mock = &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("Радвам се.")}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
-	_, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
+	_, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
 		{Role: openai.ChatMessageRoleUser, Content: "❤️🙂 хареса ми отговора"},
 	}, toolDefinitions(), nil)
 	require.NoError(t, err)

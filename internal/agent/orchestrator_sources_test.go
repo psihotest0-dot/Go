@@ -125,7 +125,7 @@ func streamedFrames(t *testing.T, mock *llm.MockLLM, tools ToolRegistry, promptS
 	ctx, _ := withTurn(req.Context(), "s", false)
 	rec := httptest.NewRecorder()
 
-	_, _, err := o.streamResponse(rec, req.WithContext(ctx), "s",
+	_, err := o.streamResponse(rec, req.WithContext(ctx), "s",
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "какво пише в книгата"}},
 		toolDefinitions(), promptSources, nil)
 

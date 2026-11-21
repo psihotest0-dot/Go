@@ -32,7 +32,7 @@ func newEnv(t *testing.T) *env {
 	user, err := database.Queries.CreateUser(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { dbtest.DeleteUser(t, database.Pool, user.ID) })
-	return &env{store: NewStore(database.Queries), db: database, user: user.ID, ctx: ctx}
+	return &env{store: NewStore(database), db: database, user: user.ID, ctx: ctx}
 }
 
 func (e *env) count(t *testing.T, session, status string) int {

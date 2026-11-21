@@ -104,7 +104,7 @@ func TestGenerateResponseRunsToolRoundThenAnswers(t *testing.T) {
 	orchestrator := newGenerateOrchestrator(mock, tools)
 
 	initial := []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: "system"}}
-	content, _, toolCalls, err := orchestrator.generateResponse(context.Background(), initial, nil, nil)
+	content, toolCalls, err := orchestrator.generateResponse(context.Background(), initial, nil, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Готово!", content)
@@ -154,7 +154,7 @@ func TestGenerateResponseDoesNotReplayBrokenToolArguments(t *testing.T) {
 			}
 			orchestrator := newGenerateOrchestrator(mock, tools)
 
-			_, _, executed, err := orchestrator.generateResponse(context.Background(),
+			_, executed, err := orchestrator.generateResponse(context.Background(),
 				[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 
 			require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestGenerateResponseReplaysValidToolArgumentsUnchanged(t *testing.T) {
 	}
 	orchestrator := newGenerateOrchestrator(mock, tools)
 
-	_, _, _, err := orchestrator.generateResponse(context.Background(),
+	_, _, err := orchestrator.generateResponse(context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 
 	require.NoError(t, err)
@@ -205,7 +205,7 @@ func TestGenerateResponsePropagatesSecondStreamError(t *testing.T) {
 	}
 	orchestrator := newGenerateOrchestrator(mock, tools)
 
-	content, _, toolCalls, err := orchestrator.generateResponse(
+	content, toolCalls, err := orchestrator.generateResponse(
 		context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}},
 		nil,
@@ -222,7 +222,7 @@ func TestGenerateResponsePropagatesDeltaCallbackError(t *testing.T) {
 	orchestrator := newGenerateOrchestrator(mock, &fakeToolRegistry{})
 
 	clientGone := errors.New("client disconnected")
-	_, _, _, err := orchestrator.generateResponse(
+	_, _, err := orchestrator.generateResponse(
 		context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}},
 		nil,
@@ -242,7 +242,7 @@ func TestGenerateResponseStopsAfterToolRoundLimit(t *testing.T) {
 	}
 	orchestrator := newGenerateOrchestrator(mock, tools)
 
-	content, _, toolCalls, err := orchestrator.generateResponse(
+	content, toolCalls, err := orchestrator.generateResponse(
 		context.Background(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}},
 		[]openai.Tool{{Type: openai.ToolTypeFunction}},

@@ -28,7 +28,7 @@ func TestAnUnlockedGroupGetsRoomForThreeSteps(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши мляко в a.txt, сирене в b.txt и добави хляб в a.txt"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -50,7 +50,7 @@ func TestTheRoomOfAGroupHasAnEnd(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: steps}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Покажи файловете"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestATurnWithoutAGroupKeepsTwoRoundsForTools(t *testing.T) {
 	}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: "ok"})
 
-	_, _, executed, err := o.generateResponse(t.Context(),
+	_, executed, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, []openai.Tool{{Type: openai.ToolTypeFunction}}, nil)
 
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestAnAnswerThatIsOnlyAToolCallWrittenAsTextIsReplacedByAnHonestOne(t *test
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: "ok"})
 	var streamed strings.Builder
 
-	content, _, executed, err := o.generateResponse(t.Context(),
+	content, executed, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, []openai.Tool{{Type: openai.ToolTypeFunction}},
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
@@ -108,7 +108,7 @@ func TestADeepSeekCallAsTheLastAnswerIsReplacedByAnHonestOne(t *testing.T) {
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: "ok"})
 	var streamed strings.Builder
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, []openai.Tool{{Type: openai.ToolTypeFunction}},
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
@@ -127,7 +127,7 @@ func TestAnAnswerWithWordsIsLeftAloneAfterTools(t *testing.T) {
 	}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: "ok"})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, []openai.Tool{{Type: openai.ToolTypeFunction}}, nil)
 
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestNothingIsAddedWhenNoToolWasUsed(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk("")}}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
 
 	require.NoError(t, err)

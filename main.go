@@ -242,7 +242,7 @@ func run() error {
 	// The plan of a task (package taskplan): off unless TASK_PLAN_ENABLED. The server keeps the
 	// plan of a conversation and checks that a step is done before it is marked so.
 	if cfg.TaskPlanEnabled {
-		plans := taskplan.NewStore(database.Queries)
+		plans := taskplan.NewStore(database)
 		toolRegistry.WithPlans(plans)
 		orchestrator.WithTaskPlans(plans)
 		logger.Info("the plan of a task is on")

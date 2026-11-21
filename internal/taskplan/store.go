@@ -20,11 +20,12 @@ const keepPlans = 5
 // callers hold the lock of the conversation (agent.sessionLocks), so a read and a write of a
 // plan do not interleave.
 type Store struct {
+	d *db.Database
 	q *db.Queries
 }
 
-// NewStore returns the plans stored through q.
-func NewStore(q *db.Queries) *Store { return &Store{q: q} }
+// NewStore returns the plans stored in d.
+func NewStore(d *db.Database) *Store { return &Store{d: d, q: d.Queries} }
 
 func toPlan(row db.TaskPlan) (*Plan, error) {
 	p := &Plan{ID: row.ID, Goal: row.Goal, Status: row.Status, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
@@ -64,7 +65,9 @@ func (s *Store) Latest(ctx context.Context, userID uuid.UUID, session string) (*
 }
 
 // Set makes a new plan for the conversation; the plan in progress, if any, is cancelled. The
-// error is an *InvalidError when the model gave a bad goal or steps.
+// error is an *InvalidError when the model gave a bad goal or steps. The cancel, the new plan
+// and the trim are one transaction: a failure leaves the plan in progress as it was, and the
+// model is never told that a plan failed which is in fact there.
 func (s *Store) Set(ctx context.Context, userID uuid.UUID, session, goal string, inputs []StepInput) (*Plan, error) {
 	p, err := New(goal, inputs)
 	if err != nil {
@@ -74,18 +77,27 @@ func (s *Store) Set(ctx context.Context, userID uuid.UUID, session, goal string,
 	if err != nil {
 		return nil, fmt.Errorf("encode the steps: %w", err)
 	}
-	if err := s.q.CancelActiveTaskPlan(ctx, db.CancelActiveTaskPlanParams{UserID: userID, SessionID: session}); err != nil {
+	tx, err := s.d.SqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // a no-op after Commit
+	q := s.q.WithTx(tx)
+	if err := q.CancelActiveTaskPlan(ctx, db.CancelActiveTaskPlanParams{UserID: userID, SessionID: session}); err != nil {
 		return nil, fmt.Errorf("cancel the plan in progress: %w", err)
 	}
-	row, err := s.q.CreateTaskPlan(ctx, db.CreateTaskPlanParams{
+	row, err := q.CreateTaskPlan(ctx, db.CreateTaskPlanParams{
 		UserID: userID, SessionID: session, Goal: p.Goal, Steps: steps, Ledger: json.RawMessage("[]"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("make the plan: %w", err)
 	}
 	// The old ones are only for reading; they do not pile up.
-	if err := s.q.TrimTaskPlans(ctx, db.TrimTaskPlansParams{UserID: userID, SessionID: session, KeepCount: keepPlans}); err != nil {
+	if err := q.TrimTaskPlans(ctx, db.TrimTaskPlansParams{UserID: userID, SessionID: session, KeepCount: keepPlans}); err != nil {
 		return nil, fmt.Errorf("trim the plans: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit the plan: %w", err)
 	}
 	made, err := toPlan(row)
 	if err != nil {

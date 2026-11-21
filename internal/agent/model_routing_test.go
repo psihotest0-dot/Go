@@ -40,7 +40,7 @@ func say(text string) *llm.MockLLM {
 func ask(t *testing.T, o *Orchestrator, ctx context.Context, question string) (string, answeredBy, error) {
 	t.Helper()
 	ctx, _ = withTurn(ctx, "s", false)
-	content, _, _, err := o.generateResponse(ctx, []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: question}}, toolDefinitions(), nil)
+	content, _, err := o.generateResponse(ctx, []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: question}}, toolDefinitions(), nil)
 	return content, turnFrom(ctx).answeredByWhom(), err
 }
 
@@ -184,7 +184,7 @@ func TestTheStreamTellsWhoAnswered(t *testing.T) {
 	req = req.WithContext(ctx)
 	rec := httptest.NewRecorder()
 
-	_, _, err := o.streamResponse(rec, req, "s",
+	_, err := o.streamResponse(rec, req, "s",
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: libraryQuestion}}, toolDefinitions(), nil, nil)
 
 	require.NoError(t, err)
@@ -199,7 +199,7 @@ func TestWithoutAPaidModelTheStreamIsWhatItAlwaysWas(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/chat/stream", nil)
 	rec := httptest.NewRecorder()
 
-	_, _, err := o.streamResponse(rec, req, "s",
+	_, err := o.streamResponse(rec, req, "s",
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil, nil)
 
 	require.NoError(t, err)

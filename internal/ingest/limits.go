@@ -155,6 +155,4 @@ func (b *textBuilder) Paragraph() error {
 	return b.WriteString(strings.Repeat("\n", 2-b.trailing))
 }
 
-func (b *textBuilder) Len() int { return b.sb.Len() }
-
 func (b *textBuilder) String() string { return b.sb.String() }

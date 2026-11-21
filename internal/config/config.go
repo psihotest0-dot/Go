@@ -220,32 +220,22 @@ func parseChatIDs(raw string) []int64 {
 	return ids
 }
 
-// positiveIntEnv reads a positive integer from the environment. An unset
-// variable gives def silently; an invalid or non-positive one gives def with a
-// warning.
-func positiveIntEnv(name string, def int) int {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return def
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 {
-		slog.Warn("ignoring invalid "+name, slog.String("value", raw), slog.Int("using", def))
-		return def
-	}
-	return n
-}
+// positiveIntEnv reads a positive integer from the environment (see intEnvFrom).
+func positiveIntEnv(name string, def int) int { return intEnvFrom(name, def, 1) }
 
 // nonNegativeIntEnv reads a whole number from 0 up from the environment, where 0 is a
-// meaningful value (a switch put off). An unset variable gives def silently; an unparsable
-// or negative one gives def with a warning.
-func nonNegativeIntEnv(name string, def int) int {
+// meaningful value (a switch put off); see intEnvFrom.
+func nonNegativeIntEnv(name string, def int) int { return intEnvFrom(name, def, 0) }
+
+// intEnvFrom reads an integer of at least least from the environment. An unset variable
+// gives def silently; an unparsable or smaller one gives def with a warning.
+func intEnvFrom(name string, def, least int) int {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return def
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 0 {
+	if err != nil || n < least {
 		slog.Warn("ignoring invalid "+name, slog.String("value", raw), slog.Int("using", def))
 		return def
 	}

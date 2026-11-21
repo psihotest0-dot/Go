@@ -87,7 +87,7 @@ func TestTheNoteIsOnTheRequestToTheModelAndNowhereElse(t *testing.T) {
 		{Role: openai.ChatMessageRoleUser, Content: "Изтрий файла mood_log.txt"},
 	}
 
-	content, _, _, err := o.generateResponse(t.Context(), history, o.turnTools(), nil)
+	content, _, err := o.generateResponse(t.Context(), history, o.turnTools(), nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Нямам инструмент за изтриване.", content, "an honest answer is left alone")
@@ -102,7 +102,7 @@ func TestAnOrdinaryRequestGetsNoNote(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk("Здравей")}}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	_, _, _, err := o.generateResponse(t.Context(),
+	_, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши ми това във файл бележки.md"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestAnAnswerThatClaimsARemovalGetsACorrectionUnderIt(t *testing.T) {
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 	var streamed strings.Builder
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "кажи нещо"}}, o.turnTools(),
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
@@ -135,7 +135,7 @@ func TestAWriteClaimWithoutAWriteIsCorrected(t *testing.T) {
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
 	// onDelta is nil for Telegram: the correction is in the returned text.
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "добави във същия файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestAWriteClaimAfterARealWriteIsLeftAlone(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши мляко във файл бележки.md"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestAnAppendCountsAsAWrite(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Добави хляб в list.txt"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestAProposalIsNotAWriteForTheGuard(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, e.reg)
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Запиши наново plan.md"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -206,7 +206,7 @@ func TestWithoutTheFileGroupNothingIsChecked(t *testing.T) {
 	}}
 	o := &Orchestrator{llmClient: mock, tools: &fakeToolRegistry{}}
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Изтрий файла notes.txt"}}, toolDefinitions(), nil)
 
 	require.NoError(t, err)
@@ -221,7 +221,7 @@ func TestAFailedGenerationAddsNothing(t *testing.T) {
 	}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "x"}}, o.turnTools(), nil)
 
 	require.Error(t, err)
@@ -244,7 +244,7 @@ func TestAWriteClaimWithoutAToolIsAskedAgainWithTheFileTools(t *testing.T) {
 	var streamed strings.Builder
 	history := []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "допиши във същия файл нещо"}}
 
-	content, _, executed, err := o.generateResponse(ctx, history, o.turnTools(),
+	content, executed, err := o.generateResponse(ctx, history, o.turnTools(),
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
 	require.NoError(t, err)
@@ -275,7 +275,7 @@ func TestARetryForANewFileOffersWriteFile(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	_, _, _, err := o.generateResponse(t.Context(),
+	_, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "създай файл ideas.txt и добави първата идея"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -309,7 +309,7 @@ func TestARetryThatStillWritesNothingIsCorrected(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "добави във същия файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -327,7 +327,7 @@ func TestTheRetryKeepsTheRuleOfFilesAndWeb(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	_, _, _, err := o.generateResponse(ctx,
+	_, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запиши го във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -342,7 +342,7 @@ func TestARemovalClaimIsNotRetried(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "кажи нещо"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -354,7 +354,7 @@ func TestAnHonestAnswerIsNotRetried(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk("Добре, кажи ми името на файла.")}}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	_, _, _, err := o.generateResponse(t.Context(),
+	_, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запиши нещо във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestAClaimThatNamesNoFileIsRetriedWhenTheMessageNamedOne(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "добави във същият файл - не се предавам"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -393,7 +393,7 @@ func TestAClaimAfterAnotherToolIsNotTakenForAFile(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запомни, че този файл ми е важен"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)

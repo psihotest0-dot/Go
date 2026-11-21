@@ -76,7 +76,7 @@ func TestGenerateResponseRequiresTheLibraryListForAQuestionAboutBooks(t *testing
 		}}
 		reg := &fakeToolRegistry{result: map[string]interface{}{"status": "success"}}
 		o := newGenerateOrchestrator(mock, reg)
-		_, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
+		_, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
 			{Role: openai.ChatMessageRoleSystem, Content: "system"},
 			{Role: openai.ChatMessageRoleUser, Content: question},
 		}, toolDefinitions(), nil)
@@ -107,7 +107,7 @@ func TestGenerateResponseDoesNotRequireAToolThatIsNotOffered(t *testing.T) {
 	mock := &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("Да.")}}
 	o := newGenerateOrchestrator(mock, &fakeToolRegistry{})
 
-	_, _, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
+	_, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{
 		{Role: openai.ChatMessageRoleUser, Content: "имаш ли книгата Принципи на психологията"},
 	}, nil, nil)
 	require.NoError(t, err)

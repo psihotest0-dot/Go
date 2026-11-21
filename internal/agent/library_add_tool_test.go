@@ -423,7 +423,7 @@ func TestTheAnswerCarriesTheLinksThatWereNotAddedWhateverTheModelSays(t *testing
 	o := newGroupOrchestrator(mock, reg)
 	var streamed strings.Builder
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "добави ги в библиотеката"}}, append(o.turnTools(), addToLibraryDefinition()),
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
@@ -444,7 +444,7 @@ func TestAnAnswerAfterLinksThatWereAllAddedGetsNoReport(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, reg)
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "добави го в библиотеката"}}, append(o.turnTools(), addToLibraryDefinition()), nil)
 
 	require.NoError(t, err)
@@ -461,7 +461,7 @@ func TestTheReportIsAddedWithoutTheFileGroupToo(t *testing.T) {
 	}}
 	o := &Orchestrator{llmClient: mock, tools: reg}
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "добави го"}}, append(toolDefinitions(), addToLibraryDefinition()), nil)
 
 	require.NoError(t, err)

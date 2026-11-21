@@ -106,7 +106,7 @@ func askStatus(t *testing.T, reg ToolRegistry, answer, question string) (string,
 	t.Helper()
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(answer)}}}
 	o := newGroupOrchestrator(mock, reg)
-	content, _, _, err := o.generateResponse(statusCtx(t),
+	content, _, err := o.generateResponse(statusCtx(t),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: question}}, o.turnTools(), nil)
 	require.NoError(t, err)
 	return content, mock
@@ -177,7 +177,7 @@ func TestTheStatusCheckNeedsToKnowSinceWhenAndWhoseFiles(t *testing.T) {
 	// no time recorded: the turn does not know what to compare with
 	ctx, _ := withTurn(context.WithValue(t.Context(), api.ParsedUserIDKey, uuid.New()), "s", false)
 	o := newGroupOrchestrator(mock(), &statusRegistry{changed: false})
-	content, _, _, err := o.generateResponse(ctx, msg, o.turnTools(), nil)
+	content, _, err := o.generateResponse(ctx, msg, o.turnTools(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, answer, content, "no time")
 
@@ -185,20 +185,20 @@ func TestTheStatusCheckNeedsToKnowSinceWhenAndWhoseFiles(t *testing.T) {
 	ctx, turn := withTurn(t.Context(), "s", false)
 	turn.setRequestSince(time.Now().Add(-time.Hour))
 	o = newGroupOrchestrator(mock(), &statusRegistry{changed: false})
-	content, _, _, err = o.generateResponse(ctx, msg, o.turnTools(), nil)
+	content, _, err = o.generateResponse(ctx, msg, o.turnTools(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, answer, content, "no user")
 
 	// a registry that cannot tell
 	o = newGroupOrchestrator(mock(), &fakeToolRegistry{})
-	content, _, _, err = o.generateResponse(statusCtx(t), msg, o.turnTools(), nil)
+	content, _, err = o.generateResponse(statusCtx(t), msg, o.turnTools(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, answer, content, "no checker")
 
 	// the folder cannot be read: no accusation
 	reg := &statusRegistry{changed: false, err: assert.AnError}
 	o = newGroupOrchestrator(mock(), reg)
-	content, _, _, err = o.generateResponse(statusCtx(t), msg, o.turnTools(), nil)
+	content, _, err = o.generateResponse(statusCtx(t), msg, o.turnTools(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, answer, content, "a failure to look is not a finding")
 }
@@ -212,7 +212,7 @@ func TestAStatusAnswerAfterAToolCallIsLeftAlone(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, reg)
 
-	content, _, _, err := o.generateResponse(statusCtx(t),
+	content, _, err := o.generateResponse(statusCtx(t),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "успя ли ?"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)

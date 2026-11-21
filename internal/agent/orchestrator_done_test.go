@@ -124,7 +124,7 @@ func TestStreamResponseSendsAnEmptyListOfSourcesNotNull(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/chat/stream", nil)
 	rec := httptest.NewRecorder()
 
-	_, _, err := o.streamResponse(rec, req, "s", nil, nil, nil, nil)
+	_, err := o.streamResponse(rec, req, "s", nil, nil, nil, nil)
 
 	require.NoError(t, err)
 	first := strings.SplitN(rec.Body.String(), "\n\n", 2)[0]

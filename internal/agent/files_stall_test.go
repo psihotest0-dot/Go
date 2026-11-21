@@ -92,7 +92,7 @@ func TestAPromiseOfWorkLaterIsAskedAgainWithTheFileTools(t *testing.T) {
 	var streamed strings.Builder
 	history := []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "опитай да запишеш цялата статия"}}
 
-	content, _, executed, err := o.generateResponse(ctx, history, o.turnTools(),
+	content, executed, err := o.generateResponse(ctx, history, o.turnTools(),
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestAnAnswerToAStatusQuestionThatPromisesIsCorrectedNotRetried(t *testing.T
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 	var streamed strings.Builder
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "успя ли ?"}}, o.turnTools(),
 		func(delta, _ string) error { streamed.WriteString(delta); return nil })
 
@@ -135,7 +135,7 @@ func TestAPromiseAboutNoFileIsOnlyCorrected(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "разкажи ми приказка за лисицата"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -150,7 +150,7 @@ func TestARetryThatStillPromisesIsCorrected(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запиши цялата статия"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestAPromiseAfterAToolCallIsLeftAlone(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запомни, че пиша статия"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -179,7 +179,7 @@ func TestAnAnswerThatAsksTheUserIsNotAPromise(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(answer)}}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запиши първия източник във файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -191,7 +191,7 @@ func TestWithoutTheFileGroupAPromiseIsNotChecked(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(realProcess)}}}
 	o := &Orchestrator{llmClient: mock, tools: &fakeToolRegistry{}}
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "успя ли ?"}}, toolDefinitions(), nil)
 
 	require.NoError(t, err)
@@ -249,7 +249,7 @@ func TestAnAnswerThatLeavesAWriteRequestUndoneIsAskedAgain(t *testing.T) {
 		mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(answer)}, {textChunk("Записах го.")}}}
 		o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-		_, _, _, err := o.generateResponse(t.Context(),
+		_, _, err := o.generateResponse(t.Context(),
 			[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "опитай да запишеш цялата статия"}}, o.turnTools(), nil)
 
 		require.NoError(t, err)
@@ -267,7 +267,7 @@ func TestAnAnswerThatAsksOrRefusesIsNotRetried(t *testing.T) {
 		mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(answer)}}}
 		o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-		content, _, _, err := o.generateResponse(t.Context(),
+		content, _, err := o.generateResponse(t.Context(),
 			[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "опитай да запишеш цялата статия"}}, o.turnTools(), nil)
 
 		require.NoError(t, err)
@@ -284,7 +284,7 @@ func TestARetryThatStillLeavesTheWorkIsCorrected(t *testing.T) {
 	}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "запиши цялата статия"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestAClaimOfACreatedFileWithoutACallIsAskedAgain(t *testing.T) {
 		mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(answer)}, {textChunk("Ето.")}}}
 		o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-		_, _, _, err := o.generateResponse(t.Context(),
+		_, _, err := o.generateResponse(t.Context(),
 			[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "първо създай файла за да видя как изглежда"}}, o.turnTools(), nil)
 
 		require.NoError(t, err)
@@ -331,7 +331,7 @@ func TestAStatusQuestionThatNamesTheWritingIsNotRetried(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(answer)}}}
 	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
 
-	content, _, _, err := o.generateResponse(t.Context(),
+	content, _, err := o.generateResponse(t.Context(),
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "успя ли да запишеш статията във файла?"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)

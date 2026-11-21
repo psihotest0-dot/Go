@@ -176,9 +176,9 @@ func (p *Plan) AddEvidence(tool, gist string) {
 	}
 }
 
-// accepts tells whether a call of tool is evidence for a step that names stepTool: the same
+// Accepts tells whether a call of tool is evidence for a step that names stepTool: the same
 // tool, and for a write either of the two ways of writing.
-func accepts(stepTool, tool string) bool {
+func Accepts(stepTool, tool string) bool {
 	if stepTool == tool {
 		return true
 	}
@@ -222,7 +222,7 @@ func (p *Plan) Update(stepID int, status, note string) (Outcome, error) {
 		}
 		if step.Tool != ToolNone {
 			// A step that names a tool needs a call of that tool; one that names none, some call.
-			e := slices.IndexFunc(p.Ledger, func(e Evidence) bool { return !e.Used && (step.Tool == "" || accepts(step.Tool, e.Tool)) })
+			e := slices.IndexFunc(p.Ledger, func(e Evidence) bool { return !e.Used && (step.Tool == "" || Accepts(step.Tool, e.Tool)) })
 			if e < 0 {
 				what := "successful call of " + step.Tool
 				if step.Tool == "" {

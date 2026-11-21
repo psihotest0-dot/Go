@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -18,7 +19,7 @@ import (
 func planEnv(t *testing.T) (*toolEnv, *taskplan.Store) {
 	t.Helper()
 	e := newToolEnv(t)
-	store := taskplan.NewStore(e.db.Queries)
+	store := taskplan.NewStore(e.db)
 	e.reg.WithPlans(store)
 	return e, store
 }
@@ -65,6 +66,31 @@ func TestThePlanToolsAreOneStubAndTwoTools(t *testing.T) {
 		update.Parameters.(map[string]any)["properties"].(map[string]any)["status"].(map[string]any)["enum"])
 	// What a turn pays for the stub, in every request.
 	assert.Less(t, planStubTokens(), 130)
+}
+
+// The tools a step may name (taskplan.StepTools) and the tools whose success is evidence
+// (evidenceTools) are two lists kept by hand. A step that names a tool which leaves no
+// evidence could never be done, and a renamed tool would leave both lists behind.
+func TestEveryStepToolLeavesEvidenceAndIsATool(t *testing.T) {
+	defined := map[string]bool{}
+	all := append(toolDefinitions(), attachmentToolDefinition(), libraryToolDefinition(), addToLibraryDefinition())
+	all = append(all, fileToolDefinitions()...)
+	for _, tool := range all {
+		defined[tool.Function.Name] = true
+	}
+
+	for _, tool := range taskplan.StepTools {
+		if tool == taskplan.ToolNone {
+			continue
+		}
+		assert.True(t, evidenceTools[tool], "a step may name %s, and its success is not evidence", tool)
+		assert.True(t, defined[tool], "a step may name %s, and no tool has that name", tool)
+	}
+	for tool := range evidenceTools {
+		named := slices.ContainsFunc(taskplan.StepTools, func(step string) bool { return taskplan.Accepts(step, tool) })
+		assert.True(t, named, "%s is evidence, and no step can take it", tool)
+		assert.True(t, defined[tool], "%s is evidence, and no tool has that name", tool)
+	}
 }
 
 func TestWithoutPlansTheToolsAreUnknown(t *testing.T) {
@@ -224,7 +250,7 @@ func TestAStepIsDoneOnWhatTheToolDid(t *testing.T) {
 	}}
 	o := planOrchestrator(mock, e, store)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "прочети статията и я обобщи"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -255,7 +281,7 @@ func TestAStepClaimedDoneBeforeTheToolRanIsRefused(t *testing.T) {
 	}}
 	o := planOrchestrator(mock, e, store)
 
-	content, _, _, err := o.generateResponse(ctx,
+	content, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "прочети статията"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -281,7 +307,7 @@ func TestAToolOfAConversationWithoutAPlanLeavesNothing(t *testing.T) {
 	}}
 	o := planOrchestrator(mock, e, store)
 
-	_, _, _, err := o.generateResponse(ctx,
+	_, _, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "отвори я"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -295,7 +321,7 @@ func TestAToolOfAConversationWithoutAPlanLeavesNothing(t *testing.T) {
 // stub, as it had.
 func TestATurnOfAConversationWithAPlanSeesThePlan(t *testing.T) {
 	e := newAttachmentEnv(t)
-	store := taskplan.NewStore(e.db.Queries)
+	store := taskplan.NewStore(e.db)
 	e.reg.WithPlans(store)
 	o := orchestratorWith(t, e, answeringModel()).WithTaskPlans(store)
 	_, err := store.Set(context.Background(), e.userID, "p1", "свали източниците", []taskplan.StepInput{
@@ -331,7 +357,7 @@ func TestATurnOfAConversationWithAPlanSeesThePlan(t *testing.T) {
 
 func TestThePlanNoteIsNotStored(t *testing.T) {
 	e := newAttachmentEnv(t)
-	store := taskplan.NewStore(e.db.Queries)
+	store := taskplan.NewStore(e.db)
 	e.reg.WithPlans(store)
 	o := orchestratorWith(t, e, answeringModel()).WithTaskPlans(store)
 	_, err := store.Set(context.Background(), e.userID, "p3", "цел", []taskplan.StepInput{{Text: "а"}})
@@ -374,7 +400,7 @@ func TestTheRoundsOfAPlanReplaceTheRoundsOfTheGroups(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: script}
 	o := planOrchestrator(mock, e, store)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "продължи"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -450,7 +476,7 @@ func TestAfterTheForcedStubThePlanToolsAreOffered(t *testing.T) {
 	}}
 	o := planOrchestrator(mock, e, store)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "за всеки от източниците направи отделен файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)
@@ -525,7 +551,7 @@ func TestAPlanTurnHasSixRoundsForToolsWhateverWasUnlocked(t *testing.T) {
 	mock := &llm.MockLLM{StreamScript: script}
 	o := planOrchestrator(mock, e, store)
 
-	content, _, executed, err := o.generateResponse(ctx,
+	content, executed, err := o.generateResponse(ctx,
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "за всеки източник направи файл"}}, o.turnTools(), nil)
 
 	require.NoError(t, err)

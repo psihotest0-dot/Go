@@ -225,12 +225,12 @@ func sanitizeAssistantText(s string) string {
 // gets the finished answer just before the final "[DONE]" frame and stores it: a
 // client that reads the history, or sends the next message, as soon as the stream
 // ends must find the answer there. It is not called when the generation fails.
-func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo, beforeDone func(content string, toolCalls []openai.ToolCall)) (assistantContent string, toolCalls []openai.ToolCall, err error) {
+func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, sessionID string, finalMessages []openai.ChatCompletionMessage, tools []openai.Tool, sources []api.SourceInfo, beforeDone func(content string, toolCalls []openai.ToolCall)) (assistantContent string, err error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		slog.ErrorContext(r.Context(), "streaming unsupported", "err", fmt.Errorf("response writer does not support flushing"))
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return "", nil, errors.New("streaming unsupported")
+		return "", errors.New("streaming unsupported")
 	}
 
 	filter := &streamFilter{}
@@ -242,7 +242,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		if rcv := recover(); rcv != nil {
 			slog.ErrorContext(r.Context(), "panic in streamResponse", "panic", rcv, "session_id", sessionID)
 			writeSSEError(w, flusher, "Internal error occurred")
-			assistantContent, toolCalls = "", nil
+			assistantContent = ""
 			err = fmt.Errorf("panic while streaming response: %v", rcv)
 		}
 		filter.Reset()
@@ -307,11 +307,11 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		return nil
 	}
 
-	assistantContent, _, toolCalls, err = o.generateResponse(r.Context(), finalMessages, tools, onDelta)
+	assistantContent, toolCalls, err := o.generateResponse(r.Context(), finalMessages, tools, onDelta)
 	if err != nil {
 		if ctxErr := r.Context().Err(); ctxErr != nil {
 			slog.Info("stream cancelled", "reason", ctxErr, "session_id", sessionID)
-			return assistantContent, toolCalls, err
+			return assistantContent, err
 		}
 
 		// err can embed the LLM URL or a provider response body; the client gets
@@ -319,7 +319,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		reqID, _ := r.Context().Value(api.RequestIDKey).(string)
 		slog.Error("generation failed", "error", err, "session_id", sessionID, "request_id", reqID)
 		writeSSEError(w, flusher, streamErrorMessage(reqID))
-		return assistantContent, toolCalls, err
+		return assistantContent, err
 	}
 
 	flushed := filter.Flush()
@@ -354,7 +354,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 
-	return assistantContent, toolCalls, nil
+	return assistantContent, nil
 }
 
 // streamErrorMessage is the client-facing text for a failed generation.

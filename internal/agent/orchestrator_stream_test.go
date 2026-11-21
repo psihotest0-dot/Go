@@ -25,7 +25,7 @@ func TestStreamResponseHidesInternalErrorDetails(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), api.RequestIDKey, "req-123"))
 	rec := httptest.NewRecorder()
 
-	_, _, err := orchestrator.streamResponse(rec, req, "sess-1",
+	_, err := orchestrator.streamResponse(rec, req, "sess-1",
 		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil, nil)
 
 	require.Error(t, err)

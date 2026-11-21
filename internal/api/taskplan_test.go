@@ -35,7 +35,7 @@ func taskPlan(t *testing.T, apiService *api.API, userID uuid.UUID, query string)
 
 func makePlan(t *testing.T, database *db.Database, userID uuid.UUID, session string) *taskplan.Plan {
 	t.Helper()
-	plan, err := taskplan.NewStore(database.Queries).Set(context.Background(), userID, session, "свали източниците",
+	plan, err := taskplan.NewStore(database).Set(context.Background(), userID, session, "свали източниците",
 		[]taskplan.StepInput{{Text: "добави линковете", Tool: "add_to_library"}, {Text: "кажи резултата"}})
 	require.NoError(t, err)
 	return plan
@@ -53,7 +53,7 @@ func TestTaskPlanIsNullWhenTheConversationHasNone(t *testing.T) {
 func TestTaskPlanShowsTheStepsAndNotTheLedger(t *testing.T) {
 	apiService, database, userID := setupAPI(t)
 	made := makePlan(t, database, userID, "s1")
-	_, err := taskplan.NewStore(database.Queries).Record(context.Background(), userID, "s1", "add_to_library", "add_to_library: 2 of 2 queued")
+	_, err := taskplan.NewStore(database).Record(context.Background(), userID, "s1", "add_to_library", "add_to_library: 2 of 2 queued")
 	require.NoError(t, err)
 
 	code, body := taskPlan(t, apiService, userID, "?session_id=s1")
@@ -76,7 +76,7 @@ func TestTaskPlanShowsTheStepsAndNotTheLedger(t *testing.T) {
 
 func TestTaskPlanShowsAFinishedPlanToo(t *testing.T) {
 	apiService, database, userID := setupAPI(t)
-	store := taskplan.NewStore(database.Queries)
+	store := taskplan.NewStore(database)
 	_, err := store.Set(context.Background(), userID, "s1", "цел", []taskplan.StepInput{{Text: "а", Tool: taskplan.ToolNone}})
 	require.NoError(t, err)
 	_, _, err = store.Update(context.Background(), userID, "s1", 1, taskplan.StepDone, "")

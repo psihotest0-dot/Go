@@ -247,10 +247,10 @@ func (o *Orchestrator) generateGuarded(
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
 	onDelta deltaFunc,
-) (string, string, []openai.ToolCall, error) {
-	content, reasoning, executed, err := o.generateChecked(ctx, finalMessages, tools, onDelta)
+) (string, []openai.ToolCall, error) {
+	content, executed, err := o.generateChecked(ctx, finalMessages, tools, onDelta)
 	if err != nil {
-		return content, reasoning, executed, err
+		return content, executed, err
 	}
 	// An "extraction" of a study that no tool opened is the model's own writing (see
 	// extraction_claim.go); the line under it says so. Not when another check has already put
@@ -262,7 +262,7 @@ func (o *Orchestrator) generateGuarded(
 		content += "\n\n" + note
 		if onDelta != nil {
 			if err := onDelta("\n\n"+note, ""); err != nil {
-				return content, reasoning, executed, err
+				return content, executed, err
 			}
 		}
 	}
@@ -272,11 +272,11 @@ func (o *Orchestrator) generateGuarded(
 		content += "\n\n" + report
 		if onDelta != nil {
 			if err := onDelta("\n\n"+report, ""); err != nil {
-				return content, reasoning, executed, err
+				return content, executed, err
 			}
 		}
 	}
-	return content, reasoning, executed, nil
+	return content, executed, nil
 }
 
 // generateChecked is generateGuarded without the report of the library: it checks what the
@@ -286,7 +286,7 @@ func (o *Orchestrator) generateChecked(
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
 	onDelta deltaFunc,
-) (string, string, []openai.ToolCall, error) {
+) (string, []openai.ToolCall, error) {
 	if !o.hasFileGroup() {
 		return o.generateRounds(ctx, finalMessages, tools, onDelta)
 	}
@@ -297,9 +297,9 @@ func (o *Orchestrator) generateChecked(
 		messages = withNoteOnLastUser(finalMessages, removalNote)
 	}
 
-	content, reasoning, executed, err := o.generateRounds(ctx, messages, tools, onDelta)
+	content, executed, err := o.generateRounds(ctx, messages, tools, onDelta)
 	if err != nil {
-		return content, reasoning, executed, err
+		return content, executed, err
 	}
 	turn := turnFrom(ctx)
 	userMessage := lastUserContent(finalMessages)
@@ -333,11 +333,10 @@ func (o *Orchestrator) generateChecked(
 			if asksToAppend(userMessage) {
 				required = withoutTools(required, writeFileTool)
 			}
-			retried, retriedReasoning, retriedCalls, err := o.retryUnbacked(ctx, messages, open, required, *retry, onDelta)
-			reasoning += retriedReasoning
+			retried, retriedCalls, err := o.retryUnbacked(ctx, messages, open, required, *retry, onDelta)
 			executed = append(executed, retriedCalls...)
 			if err != nil {
-				return retried, reasoning, executed, err
+				return retried, executed, err
 			}
 			content = retried
 		}
@@ -366,15 +365,15 @@ func (o *Orchestrator) generateChecked(
 		metrics.UserFileOps.WithLabelValues("status", "corrected").Inc()
 		correction = statusCorrection
 	default:
-		return content, reasoning, executed, nil
+		return content, executed, nil
 	}
 	content += "\n\n" + correction
 	if onDelta != nil {
 		if err := onDelta("\n\n"+correction, ""); err != nil {
-			return content, reasoning, executed, err
+			return content, executed, err
 		}
 	}
-	return content, reasoning, executed, nil
+	return content, executed, nil
 }
 
 // fileRetry is what differs between the two reasons to ask a turn again with the file tools:
@@ -440,13 +439,13 @@ func (o *Orchestrator) retryUnbacked(
 	open, required []openai.Tool,
 	why fileRetry,
 	onDelta deltaFunc,
-) (string, string, []openai.ToolCall, error) {
+) (string, []openai.ToolCall, error) {
 	slog.WarnContext(ctx, "the answer claims or promises a file change that no tool made; the turn is asked again with the file tools",
 		"reason", why.op)
 	metrics.UserFileOps.WithLabelValues(why.op, "retried").Inc()
 	if onDelta != nil {
 		if err := onDelta(why.notice, ""); err != nil {
-			return "", "", nil, err
+			return "", nil, err
 		}
 	}
 	return o.runRounds(ctx, withNoteOnLastUser(messages, why.note), open, onDelta, required)

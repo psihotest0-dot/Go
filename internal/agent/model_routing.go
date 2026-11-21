@@ -96,7 +96,7 @@ func (o *Orchestrator) generateResponse(
 	finalMessages []openai.ChatCompletionMessage,
 	tools []openai.Tool,
 	onDelta deltaFunc,
-) (string, string, []openai.ToolCall, error) {
+) (string, []openai.ToolCall, error) {
 	turn := turnFrom(ctx)
 	paid, reason := o.routeToPaid(ctx, finalMessages, tools)
 	if !paid {
@@ -108,17 +108,17 @@ func (o *Orchestrator) generateResponse(
 	}
 
 	paidCtx := context.WithValue(ctx, llmClientKey{}, o.paid)
-	content, reasoning, executed, err := o.generateGuarded(paidCtx, finalMessages, tools, onDelta)
+	content, executed, err := o.generateGuarded(paidCtx, finalMessages, tools, onDelta)
 	if err == nil {
 		metrics.ChatRoutes.WithLabelValues("paid", reason).Inc()
 		turn.setAnsweredBy(answeredBy{Provider: "deepseek", Model: o.paidName})
-		return content, reasoning, executed, nil
+		return content, executed, nil
 	}
 
 	// The request ended (the client left or the time ran out): nothing to retry for.
 	if ctx.Err() != nil || len(executed) > 0 || strings.TrimSpace(content) != "" {
 		metrics.ChatRoutes.WithLabelValues("paid_failed", reason).Inc()
-		return content, reasoning, executed, err
+		return content, executed, err
 	}
 	slog.WarnContext(ctx, "the paid model failed before it did anything; the local model answers this turn",
 		slog.String("reason", reason), slog.Any("error", err))
