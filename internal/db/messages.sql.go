@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -95,8 +96,29 @@ func (q *Queries) DeleteAssistantMessages(ctx context.Context, arg DeleteAssista
 	return result.RowsAffected()
 }
 
+const getMessageCursor = `-- name: GetMessageCursor :one
+SELECT created_at::timestamptz AS created_at
+FROM messages
+WHERE id = $1 AND user_id = $2 AND session_id = $3 AND created_at IS NOT NULL
+`
+
+type GetMessageCursorParams struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+// Where a message stands in its conversation: the time that, with its id, is the cursor of
+// GetMessagesBySessionBefore. A message of another person or session is "no rows".
+func (q *Queries) GetMessageCursor(ctx context.Context, arg GetMessageCursorParams) (time.Time, error) {
+	row := q.db.QueryRowContext(ctx, getMessageCursor, arg.ID, arg.UserID, arg.SessionID)
+	var created_at time.Time
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
 `
 
 type GetMessagesBySessionParams struct {
@@ -107,6 +129,65 @@ type GetMessagesBySessionParams struct {
 
 func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySessionParams) ([]Message, error) {
 	rows, err := q.db.QueryContext(ctx, getMessagesBySession, arg.UserID, arg.SessionID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Message{}
+	for rows.Next() {
+		var i Message
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Role,
+			&i.Content,
+			&i.CreatedAt,
+			&i.SourceChunkIds,
+			&i.IsAnalyzed,
+			&i.AnalysisAttempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMessagesBySessionBefore = `-- name: GetMessagesBySessionBefore :many
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts FROM messages
+WHERE user_id = $1 AND session_id = $2
+  AND created_at <= $3::timestamptz
+  AND (created_at, id) < ($3::timestamptz, $4::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $5
+`
+
+type GetMessagesBySessionBeforeParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+	BeforeAt  time.Time `json:"before_at"`
+	BeforeID  uuid.UUID `json:"before_id"`
+	RowLimit  int32     `json:"row_limit"`
+}
+
+// The page of a conversation older than the message the cursor names (its time and id),
+// newest first like GetMessagesBySession. The id breaks the tie of messages stored in one
+// instant, so no page repeats or skips one; "created_at <=" is the same bound for the index.
+func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessagesBySessionBeforeParams) ([]Message, error) {
+	rows, err := q.db.QueryContext(ctx, getMessagesBySessionBefore,
+		arg.UserID,
+		arg.SessionID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -167,6 +168,22 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// "before" is the id of the oldest message the client shows: the page is the messages
+	// older than it, so a long conversation can be read backwards page by page.
+	var beforeID uuid.UUID
+	beforeRaw := r.URL.Query().Get("before")
+	if beforeRaw != "" {
+		if sessionID == "" {
+			http.Error(w, "before needs a session_id", http.StatusBadRequest)
+			return
+		}
+		beforeID, err = uuid.Parse(beforeRaw)
+		if err != nil {
+			http.Error(w, "before must be the id of a message", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// A session id is optional because a client that starts a fresh session on
 	// every load has no way of naming the conversation it wants to restore,
 	// and refusing the request left users with what looked like lost history
@@ -174,12 +191,33 @@ func (a *API) GetMessagesHandler(w http.ResponseWriter, r *http.Request) {
 	// messages the user owns are returned; each one still carries its
 	// session_id, so conversations remain distinguishable.
 	var msgs []db.Message
-	if sessionID == "" {
+	switch {
+	case sessionID == "":
 		msgs, err = a.db.Queries.GetRecentMessagesByUser(r.Context(), db.GetRecentMessagesByUserParams{
 			UserID: userID,
 			Limit:  limit,
 		})
-	} else {
+	case beforeRaw != "":
+		// A message of another person or another conversation is not found, the same as one
+		// that does not exist: nothing tells whether it is somebody else's.
+		var at time.Time
+		at, err = a.db.Queries.GetMessageCursor(r.Context(), db.GetMessageCursorParams{
+			ID: beforeID, UserID: userID, SessionID: sessionID,
+		})
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "message not found", http.StatusNotFound)
+			return
+		}
+		if err == nil {
+			msgs, err = a.db.Queries.GetMessagesBySessionBefore(r.Context(), db.GetMessagesBySessionBeforeParams{
+				UserID:    userID,
+				SessionID: sessionID,
+				BeforeAt:  at,
+				BeforeID:  beforeID,
+				RowLimit:  limit,
+			})
+		}
+	default:
 		msgs, err = a.db.Queries.GetMessagesBySession(r.Context(), db.GetMessagesBySessionParams{
 			UserID:    userID,
 			SessionID: sessionID,

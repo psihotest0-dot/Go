@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -23,12 +25,63 @@ func validSessionID(id string) bool {
 	return !strings.ContainsFunc(id, unicode.IsControl)
 }
 
-// RegisterSessionRoutes adds the chat session endpoint to a mux whose requests already
+// RegisterSessionRoutes adds the chat session endpoints to a mux whose requests already
 // carry the user:
 //
 //	DELETE /chat/sessions/{id}  delete the conversation (204; also when there is none)
+//	GET    /telegram/sessions   the Telegram conversations of the user
 func (a *API) RegisterSessionRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /chat/sessions/{id}", a.DeleteSessionHandler)
+	mux.HandleFunc("GET /telegram/sessions", a.ListTelegramSessionsHandler)
+}
+
+// TelegramSessionID is the session id of the conversation with a Telegram chat. The bot writes to
+// it and the app opens it, so both take the id from here.
+func TelegramSessionID(chatID int64) string {
+	return "tg-" + strconv.FormatInt(chatID, 10)
+}
+
+// TelegramSessionDTO is one Telegram conversation as the app lists it.
+type TelegramSessionDTO struct {
+	SessionID string `json:"session_id"`
+	Name      string `json:"name"`
+}
+
+// TelegramSessionsResponse is the body of GET /telegram/sessions.
+type TelegramSessionsResponse struct {
+	Sessions []TelegramSessionDTO `json:"sessions"`
+}
+
+// ListTelegramSessionsHandler lists the Telegram chats tied to the user (/link) as conversations
+// the app can open next to its own: "Telegram", then "Telegram 2" and so on in the order of the
+// chat ids. A user with no Telegram link gets an empty list.
+func (a *API) ListTelegramSessionsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(ParsedUserIDKey).(uuid.UUID)
+	if !ok {
+		slog.WarnContext(r.Context(), "unauthorized access attempt", slog.String("path", r.URL.Path))
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	chats, err := a.db.Queries.ListTelegramChatsByUser(r.Context(), userID)
+	if err != nil {
+		writeInternalError(w, r, "failed to list the telegram chats", err)
+		return
+	}
+
+	out := TelegramSessionsResponse{Sessions: make([]TelegramSessionDTO, 0, len(chats))}
+	for i, chatID := range chats {
+		name := "Telegram"
+		if i > 0 {
+			name += " " + strconv.Itoa(i+1)
+		}
+		out.Sessions = append(out.Sessions, TelegramSessionDTO{SessionID: TelegramSessionID(chatID), Name: name})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		slog.ErrorContext(r.Context(), "failed to write the telegram sessions", slog.Any("error", err))
+	}
 }
 
 // DeleteSessionHandler deletes one conversation of the user for good: its messages, the

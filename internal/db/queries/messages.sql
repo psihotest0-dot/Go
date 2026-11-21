@@ -2,7 +2,25 @@
 INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids) VALUES ($1, $2, $3, $4, $5) RETURNING *;
 
 -- name: GetMessagesBySession :many
-SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3;
+SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3;
+
+-- Where a message stands in its conversation: the time that, with its id, is the cursor of
+-- GetMessagesBySessionBefore. A message of another person or session is "no rows".
+-- name: GetMessageCursor :one
+SELECT created_at::timestamptz AS created_at
+FROM messages
+WHERE id = $1 AND user_id = $2 AND session_id = $3 AND created_at IS NOT NULL;
+
+-- The page of a conversation older than the message the cursor names (its time and id),
+-- newest first like GetMessagesBySession. The id breaks the tie of messages stored in one
+-- instant, so no page repeats or skips one; "created_at <=" is the same bound for the index.
+-- name: GetMessagesBySessionBefore :many
+SELECT * FROM messages
+WHERE user_id = sqlc.arg('user_id') AND session_id = sqlc.arg('session_id')
+  AND created_at <= sqlc.arg('before_at')::timestamptz
+  AND (created_at, id) < (sqlc.arg('before_at')::timestamptz, sqlc.arg('before_id')::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('row_limit');
 
 -- name: GetRecentMessagesByUser :many
 SELECT * FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2;

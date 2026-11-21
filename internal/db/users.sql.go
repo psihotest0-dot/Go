@@ -48,3 +48,32 @@ func (q *Queries) LinkTelegramUser(ctx context.Context, arg LinkTelegramUserPara
 	_, err := q.db.ExecContext(ctx, linkTelegramUser, arg.TelegramChatID, arg.UserID)
 	return err
 }
+
+const listTelegramChatsByUser = `-- name: ListTelegramChatsByUser :many
+SELECT telegram_chat_id FROM telegram_users WHERE user_id = $1 ORDER BY telegram_chat_id
+`
+
+// The Telegram chats tied to a person (/link), lowest chat id first: each is a conversation the
+// app can open (session tg-<chat id>).
+func (q *Queries) ListTelegramChatsByUser(ctx context.Context, userID uuid.UUID) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listTelegramChatsByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var telegram_chat_id int64
+		if err := rows.Scan(&telegram_chat_id); err != nil {
+			return nil, err
+		}
+		items = append(items, telegram_chat_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

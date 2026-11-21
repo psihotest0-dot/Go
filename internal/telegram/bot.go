@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"go-monolith/internal/agent"
+	"go-monolith/internal/api"
 	"go-monolith/internal/proposals"
 )
 
@@ -473,7 +474,7 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 	stopTyping := b.keepTyping(turnCtx, chatID)
 	defer stopTyping()
 	turn, err := b.processor.ProcessChatTurn(turnCtx, userID, agent.ChatRequest{
-		SessionID: fmt.Sprintf("tg-%d", chatID),
+		SessionID: api.TelegramSessionID(chatID),
 		Content:   msg.Text,
 		UsePaid:   b.usePaid,
 	})
