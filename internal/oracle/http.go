@@ -61,7 +61,7 @@ func (h *Handler) bearer(next http.Handler) http.Handler {
 		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		digest := sha256.Sum256([]byte(got))
 		if !ok || subtle.ConstantTimeCompare(digest[:], h.tokenDigest[:]) != 1 {
-			metrics.OracleRequests.WithLabelValues("unauthorized").Inc()
+			metrics.OracleRequests.WithLabelValues("unauthorized", metrics.OracleModeNone).Inc()
 			// The token itself is never logged, nor is any part of it.
 			slog.WarnContext(r.Context(), "oracle: missing or wrong token",
 				slog.String("path", r.URL.Path), slog.String("remote", r.RemoteAddr))
@@ -92,18 +92,18 @@ func (h *Handler) evaluate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			metrics.OracleRequests.WithLabelValues("bad_request").Inc()
+			metrics.OracleRequests.WithLabelValues("bad_request", metrics.OracleModeNone).Inc()
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large")
 			return
 		}
-		metrics.OracleRequests.WithLabelValues("bad_request").Inc()
+		metrics.OracleRequests.WithLabelValues("bad_request", metrics.OracleModeNone).Inc()
 		slog.WarnContext(r.Context(), "oracle: the request body could not be read", slog.Any("error", err))
 		writeError(w, http.StatusBadRequest, "unreadable_body")
 		return
 	}
 	req, err := DecodeBytes(raw)
 	if err != nil {
-		metrics.OracleRequests.WithLabelValues("bad_request").Inc()
+		metrics.OracleRequests.WithLabelValues("bad_request", metrics.OracleModeNone).Inc()
 		var bad *InvalidRequestError
 		if errors.As(err, &bad) {
 			slog.WarnContext(r.Context(), "oracle: invalid request", slog.String("reason", bad.Reason))

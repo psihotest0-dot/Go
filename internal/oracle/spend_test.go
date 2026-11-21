@@ -15,6 +15,7 @@ import (
 type listStore struct{ rows []Evaluation }
 
 func (s *listStore) Save(context.Context, Evaluation) (Evaluation, error) { return Evaluation{}, nil }
+func (s *listStore) SaveServed(context.Context, Evaluation) (bool, error) { return false, nil }
 func (s *listStore) List(_ context.Context, f ListFilter) ([]Evaluation, error) {
 	var out []Evaluation
 	for _, r := range s.rows {

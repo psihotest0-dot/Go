@@ -39,6 +39,15 @@ const (
 	StatusFailed   = "failed"
 )
 
+// Where the verdict of a light journal row came from (the column served_from, migration 33).
+// A row the model was asked for has none.
+const (
+	// ServedFromCache: the verdict was given a moment ago for the same signal.
+	ServedFromCache = "cache"
+	// ServedFromJoined: the signal was still being asked, and the call waited for the answer.
+	ServedFromJoined = "joined"
+)
+
 // Answer is what the model is asked to return. The enum tag becomes part of the JSON
 // schema the model server enforces, so the verdict cannot be anything else.
 type Answer struct {
@@ -101,7 +110,9 @@ type Result struct {
 	PromptVersion string `json:"prompt_version"`
 }
 
-// Evaluation is one row of the journal.
+// Evaluation is one row of the journal. ServedFrom is set on the light row of a call that did
+// not reach the model: its verdict, reason, model and prompt label are those of the answer it
+// repeats, Mode is the mode of this call, and attempts, tokens and latency are 0.
 type Evaluation struct {
 	ID               int64           `json:"id"`
 	CreatedAt        time.Time       `json:"created_at"`
@@ -121,5 +132,6 @@ type Evaluation struct {
 	Error            string          `json:"error,omitempty"`
 	PromptVersion    string          `json:"prompt_version,omitempty"` // "" when not recorded (rows older than migration 00026)
 	SignalVersion    string          `json:"signal_version,omitempty"` // strategy version read from the request by the database ("oracle-probe" = a test question); never written
+	ServedFrom       string          `json:"served_from,omitempty"`    // ServedFromCache or ServedFromJoined; "" on a row the model was asked for
 	Request          json.RawMessage `json:"-"`                        // only written; the list leaves it out
 }

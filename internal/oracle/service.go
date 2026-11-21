@@ -63,6 +63,9 @@ type Service struct {
 	now    func() time.Time
 	cache  *verdictCache
 	flight singleflight.Group
+	// served counts the light journal rows being written in the background (see
+	// journalServed); a test waits for them.
+	served sync.WaitGroup
 }
 
 // NewService returns the Oracle that asks client and writes to store. The model is
@@ -94,9 +97,11 @@ func renderSystemPrompt() (string, error) {
 // error for a fault on this side.
 func (s *Service) Evaluate(ctx context.Context, req *Request, raw []byte, requestID string) (Result, error) {
 	key := req.Signal.SignalID
+	mode := metrics.OracleMode(req.Mode)
 	if res, ok := s.cache.get(key, s.now()); ok {
-		metrics.OracleRequests.WithLabelValues("cached").Inc()
+		metrics.OracleRequests.WithLabelValues("cached", mode).Inc()
 		res.RequestID = requestID
+		s.journalServed(ctx, req, raw, res, ServedFromCache)
 		return res, nil
 	}
 
@@ -122,7 +127,8 @@ func (s *Service) Evaluate(ctx context.Context, req *Request, raw []byte, reques
 		res.RequestID = requestID
 		if r.Shared && !led { // led is read after the result arrived, which is after the function returned
 			res.Cached = true
-			metrics.OracleRequests.WithLabelValues("cached").Inc()
+			metrics.OracleRequests.WithLabelValues("cached", mode).Inc()
+			s.journalServed(ctx, req, raw, res, ServedFromJoined)
 		}
 		return res, nil
 	}
@@ -134,6 +140,7 @@ func (s *Service) ask(ctx context.Context, req *Request, raw []byte, requestID s
 	defer cancel()
 
 	started := time.Now()
+	mode := metrics.OracleMode(req.Mode)
 	ev := Evaluation{
 		RequestID: requestID,
 		SignalID:  req.Signal.SignalID,
@@ -145,12 +152,12 @@ func (s *Service) ask(ctx context.Context, req *Request, raw []byte, requestID s
 	answer, err := s.query(ctx, req, &ev)
 	elapsed := time.Since(started)
 	ev.LatencyMS = int(elapsed.Milliseconds())
-	metrics.OracleLatency.Observe(elapsed.Seconds())
+	metrics.OracleLatency.WithLabelValues(mode).Observe(elapsed.Seconds())
 
 	if err != nil {
 		ev.Status = StatusFailed
 		ev.Error = cleanText(err.Error(), maxFieldRunes)
-		metrics.OracleRequests.WithLabelValues("failed").Inc()
+		metrics.OracleRequests.WithLabelValues("failed", mode).Inc()
 		slog.ErrorContext(ctx, "oracle evaluation failed",
 			slog.String("signal_id", ev.SignalID), slog.String("symbol", ev.Symbol),
 			slog.Int("attempts", ev.Attempts), slog.Int64("latency_ms", elapsed.Milliseconds()),
@@ -162,8 +169,8 @@ func (s *Service) ask(ctx context.Context, req *Request, raw []byte, requestID s
 	ev.Status = StatusAnswered
 	ev.Verdict = answer.Verdict
 	ev.Reason = answer.Reason
-	metrics.OracleRequests.WithLabelValues("answered").Inc()
-	metrics.OracleVerdicts.WithLabelValues(answer.Verdict).Inc()
+	metrics.OracleRequests.WithLabelValues("answered", mode).Inc()
+	metrics.OracleVerdicts.WithLabelValues(answer.Verdict, mode).Inc()
 	slog.InfoContext(ctx, "oracle evaluated",
 		slog.String("signal_id", ev.SignalID), slog.String("symbol", ev.Symbol),
 		slog.String("verdict", ev.Verdict), slog.String("mode", ev.Mode),
@@ -268,6 +275,39 @@ func (s *Service) journal(ctx context.Context, ev Evaluation) {
 		slog.ErrorContext(ctx, "failed to journal the oracle evaluation",
 			slog.String("signal_id", ev.SignalID), slog.Any("error", err))
 	}
+}
+
+// journalServed writes the light row of a call that was answered from memory or from a
+// question already on its way (migration 33), in the background: the answer to the bot does
+// not wait for the database, so the latency and the availability of the route are what they
+// were without the row. The row is written only when the signal has no row yet in the mode of
+// this call, which is the case when the bot asks one signal in two modes and the first
+// caller's mode is not this one. A row that is lost is logged and costs nothing else.
+func (s *Service) journalServed(ctx context.Context, req *Request, raw []byte, res Result, from string) {
+	ev := Evaluation{
+		RequestID:     res.RequestID,
+		SignalID:      req.Signal.SignalID,
+		Symbol:        req.Signal.Symbol,
+		Mode:          req.Mode,
+		Status:        StatusAnswered,
+		Verdict:       res.Verdict,
+		Reason:        res.Reason,
+		Model:         res.Model,
+		PromptVersion: res.PromptVersion,
+		ServedFrom:    from,
+		Request:       raw,
+	}
+	ctx = context.WithoutCancel(ctx)
+	s.served.Add(1)
+	go func() {
+		defer s.served.Done()
+		jctx, cancel := context.WithTimeout(ctx, journalTimeout)
+		defer cancel()
+		if _, err := s.store.SaveServed(jctx, ev); err != nil {
+			slog.WarnContext(ctx, "failed to journal a served oracle evaluation",
+				slog.String("signal_id", ev.SignalID), slog.String("mode", ev.Mode), slog.Any("error", err))
+		}
+	}()
 }
 
 // verdictCache remembers the verdict of a signal for a while.

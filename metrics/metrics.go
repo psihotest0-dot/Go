@@ -88,23 +88,30 @@ var (
 	// ended. "answered" is a verdict from the model, "cached" one repeated from memory,
 	// "failed" a call the model could not answer (the bot treats it as a HOLD),
 	// "unauthorized" a wrong or missing token and "bad_request" a body that cannot be used.
+	//
+	// All three Oracle series carry the mode the bot said it asks in (see OracleMode): the bot
+	// asks the same signal in shadow mode for its evaluation and in active mode from a
+	// container that follows the verdict, and the one that comes second is answered from
+	// what the first caused. The alerts add the modes up (sum), so they do not change.
 	OracleRequests = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "oracle_requests_total",
-		Help: "Calls to the Oracle route by outcome.",
-	}, []string{"outcome"}) // outcome: answered, cached, failed, unauthorized, bad_request
+		Help: "Calls to the Oracle route by outcome and mode.",
+	}, []string{"outcome", "mode"}) // outcome: answered, cached, failed, unauthorized, bad_request
 
-	// OracleVerdicts counts the verdicts the model gave (cached repeats are not counted again).
+	// OracleVerdicts counts the verdicts the model gave (cached repeats are not counted again),
+	// by the mode of the call that made the model give it.
 	OracleVerdicts = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "oracle_verdicts_total",
-		Help: "Verdicts given by the Oracle model.",
-	}, []string{"verdict"}) // verdict: APPROVE, VETO, HOLD
+		Help: "Verdicts given by the Oracle model, by verdict and mode.",
+	}, []string{"verdict", "mode"}) // verdict: APPROVE, VETO, HOLD
 
-	// OracleLatency is the time of one call that reached the model, with its repeat.
-	OracleLatency = promauto.NewHistogram(prometheus.HistogramOpts{
+	// OracleLatency is the time of one call that reached the model, with its repeat, by the
+	// mode of the call that started it.
+	OracleLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "oracle_latency_seconds",
-		Help:    "Time to answer one Oracle call that went to the model.",
+		Help:    "Time to answer one Oracle call that went to the model, by mode.",
 		Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 20, 30},
-	})
+	}, []string{"mode"})
 
 	// PaidLLMTokens counts the tokens a paid LLM provider reported (DeepSeek, for the Oracle
 	// when ORACLE_LLM=deepseek): the input that came from its cache, the input that did not,
@@ -264,11 +271,14 @@ func init() {
 	// has no earlier sample to grow from, so increase() would miss the first event of its
 	// kind, and the alerts on refused or failed calls would miss the first refused or
 	// failed call.
-	for _, outcome := range []string{"answered", "cached", "failed", "unauthorized", "bad_request"} {
-		OracleRequests.WithLabelValues(outcome)
-	}
-	for _, verdict := range []string{"APPROVE", "VETO", "HOLD"} {
-		OracleVerdicts.WithLabelValues(verdict)
+	for _, mode := range OracleModes {
+		OracleLatency.WithLabelValues(mode)
+		for _, outcome := range []string{"answered", "cached", "failed", "unauthorized", "bad_request"} {
+			OracleRequests.WithLabelValues(outcome, mode)
+		}
+		for _, verdict := range []string{"APPROVE", "VETO", "HOLD"} {
+			OracleVerdicts.WithLabelValues(verdict, mode)
+		}
 	}
 	// The same for the cache, so that the first hit of a kind shows in rate().
 	for _, kind := range []string{CacheKindQuery, CacheKindPassage} {
@@ -279,6 +289,29 @@ func init() {
 	for _, search := range []string{RetrievalSearchChunks, RetrievalSearchContext} {
 		RetrievalNearestDistance.WithLabelValues(search)
 		RetrievalResults.WithLabelValues(search)
+	}
+}
+
+// The values of the mode label of the Oracle series. "none" is a call that did not say (the
+// field is optional), and a call refused or unreadable before its mode could be read.
+const (
+	OracleModeShadow = "shadow"
+	OracleModeActive = "active"
+	OracleModeNone   = "none"
+)
+
+// OracleModes is every value the mode label can have; each series exists at zero from the start.
+var OracleModes = []string{OracleModeShadow, OracleModeActive, OracleModeNone}
+
+// OracleMode turns the mode of a request ("shadow", "active", or "" when it did not say) into
+// the label of the Oracle series. Anything else is "none": the label never takes a value a
+// caller made up, so the number of series is bounded.
+func OracleMode(mode string) string {
+	switch mode {
+	case OracleModeShadow, OracleModeActive:
+		return mode
+	default:
+		return OracleModeNone
 	}
 }
 

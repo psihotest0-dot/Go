@@ -12,6 +12,10 @@ import (
 type Store interface {
 	// Save writes one row and returns it with its id and time.
 	Save(ctx context.Context, e Evaluation) (Evaluation, error)
+	// SaveServed writes the light row of a call that did not reach the model (e.ServedFrom
+	// says where its verdict came from), unless the signal already has a row in e.Mode. It
+	// reports whether a row was written.
+	SaveServed(ctx context.Context, e Evaluation) (bool, error)
 	// List returns the newest rows first, at most f.Limit of them.
 	List(ctx context.Context, f ListFilter) ([]Evaluation, error)
 }
@@ -62,6 +66,29 @@ func (s *DBStore) Save(ctx context.Context, e Evaluation) (Evaluation, error) {
 	return e, nil
 }
 
+func (s *DBStore) SaveServed(ctx context.Context, e Evaluation) (bool, error) {
+	request := e.Request
+	if len(request) == 0 {
+		request = []byte("{}")
+	}
+	n, err := s.q.CreateServedOracleEvaluation(ctx, db.CreateServedOracleEvaluationParams{
+		RequestID:     e.RequestID,
+		SignalID:      e.SignalID,
+		Symbol:        e.Symbol,
+		Mode:          e.Mode,
+		Verdict:       e.Verdict,
+		Reason:        e.Reason,
+		Model:         e.Model,
+		Request:       request,
+		PromptVersion: e.PromptVersion,
+		ServedFrom:    e.ServedFrom,
+	})
+	if err != nil {
+		return false, fmt.Errorf("save the served oracle evaluation: %w", err)
+	}
+	return n > 0, nil
+}
+
 func (s *DBStore) List(ctx context.Context, f ListFilter) ([]Evaluation, error) {
 	rows, err := s.q.ListOracleEvaluations(ctx, db.ListOracleEvaluationsParams{
 		Symbol:   f.Symbol,
@@ -92,6 +119,7 @@ func (s *DBStore) List(ctx context.Context, f ListFilter) ([]Evaluation, error) 
 			Error:            r.Error,
 			PromptVersion:    r.PromptVersion,
 			SignalVersion:    r.SignalVersion.String,
+			ServedFrom:       r.ServedFrom.String,
 		})
 	}
 	return out, nil

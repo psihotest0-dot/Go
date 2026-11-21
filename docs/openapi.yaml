@@ -1080,6 +1080,15 @@ paths:
         call is written to the journal (`GET /oracle/decisions`).
 
 
+        The verdict belongs to the `signal_id`, not to the `mode`: the same signal
+        asked in the other mode is answered from the first call (`cached: true`).
+        Such a call leaves a light journal row of its own mode (`served_from`), so
+        the journal shows a signal in every mode that asked about it; only one is
+        written for a signal and a mode. The metrics carry the mode of the call
+        (`oracle_requests_total`, `oracle_verdicts_total`, `oracle_latency_seconds`:
+        `shadow`, `active`, or `none` when the body did not say or was refused).
+
+
         Any status other than 200 carries no verdict: the caller must treat it
         as a `HOLD`, never as a yes.
       security:
@@ -1298,8 +1307,9 @@ components:
           type: string
           enum: ['', shadow, active]
           description: >-
-            What the bot does with the verdict. Only kept in the journal; the
-            model is not told.
+            What the bot does with the verdict. Kept in the journal and used as
+            the `mode` label of the metrics; the model is not told, and the
+            verdict of a signal is the same in both modes (see the route).
         signal:
           $ref: '#/components/schemas/OracleSignal'
         rationale:
@@ -1454,7 +1464,9 @@ components:
           type: string
         attempts:
           type: integer
-          description: How many times the model was asked (1 or 2).
+          description: >-
+            How many times the model was asked (1 or 2); 0 on a row that did not
+            reach the model (`served_from`).
         finish_reason:
           type: string
           description: '`length` means the reply was cut off at the token limit.'
@@ -1482,6 +1494,19 @@ components:
             (`signal.version` of the request body). `oracle-probe` marks the bot's
             own test questions, which are not signals. Read from the stored request
             by the database; absent when the request did not say.
+        served_from:
+          type: string
+          enum: [cache, joined]
+          description: >-
+            Present on the light row of a call that did not reach the model:
+            `cache` (the verdict was given a moment ago for the same signal) or
+            `joined` (the call waited for the one that was on its way). The
+            verdict, reason, model and `prompt_version` are those of the answer it
+            repeats; `mode` is the mode of THIS call; attempts, tokens and latency
+            are 0; `request_id` and the stored request are this call's. At most one
+            such row exists for a signal and a mode, and none when the mode already
+            has a row of a call that reached the model. Absent on a row the model
+            was asked for.
     OracleDecisionList:
       type: object
       properties:

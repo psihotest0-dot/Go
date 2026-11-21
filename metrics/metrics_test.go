@@ -19,9 +19,9 @@ func TestMetricNamesThatDashboardsAndAlertsRelyOn(t *testing.T) {
 	LLMQueueWait.WithLabelValues("interactive").Observe(0.01)
 	Proposals.WithLabelValues("save_global_rule", "created").Inc()
 	WebToolRequests.WithLabelValues("web_search", "ok").Inc()
-	OracleRequests.WithLabelValues("answered").Inc()
-	OracleVerdicts.WithLabelValues("HOLD").Inc()
-	OracleLatency.Observe(1)
+	OracleRequests.WithLabelValues("answered", OracleModeShadow).Inc()
+	OracleVerdicts.WithLabelValues("HOLD", OracleModeShadow).Inc()
+	OracleLatency.WithLabelValues(OracleModeShadow).Observe(1)
 	IngestJobs.WithLabelValues("completed").Inc()
 	IngestDuration.WithLabelValues("completed").Observe(1)
 	DistillationSummaries.WithLabelValues("ok").Inc()
@@ -87,6 +87,23 @@ func TestOracleSeriesExistFromTheStart(t *testing.T) {
 	for _, want := range []string{"APPROVE", "VETO", "HOLD"} {
 		assert.True(t, verdicts[want], "oracle_verdicts_total{verdict=%q} is not exported", want)
 	}
+	for _, metric := range []string{"oracle_requests_total", "oracle_verdicts_total", "oracle_latency_seconds"} {
+		modes := labelValues(metric, "mode")
+		for _, want := range []string{"shadow", "active", "none"} {
+			assert.True(t, modes[want], "%s{mode=%q} is not exported", metric, want)
+		}
+		assert.Len(t, modes, 3, "%s has a mode other than shadow, active and none", metric)
+	}
+}
+
+// The label of the mode takes three values whatever the caller sent, so the series cannot
+// multiply; the bot's own words for its modes are the first two.
+func TestOracleModeLabelIsBounded(t *testing.T) {
+	assert.Equal(t, "shadow", OracleMode("shadow"))
+	assert.Equal(t, "active", OracleMode("active"))
+	assert.Equal(t, "none", OracleMode(""))
+	assert.Equal(t, "none", OracleMode("paper3"))
+	assert.Equal(t, "none", OracleMode("SHADOW"))
 }
 
 func TestCountersOnlyGoUp(t *testing.T) {

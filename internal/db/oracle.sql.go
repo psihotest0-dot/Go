@@ -73,10 +73,64 @@ func (q *Queries) CreateOracleEvaluation(ctx context.Context, arg CreateOracleEv
 	return i, err
 }
 
+const createServedOracleEvaluation = `-- name: CreateServedOracleEvaluation :execrows
+INSERT INTO oracle_evaluations (
+    request_id, signal_id, symbol, mode, status, verdict, reason, model,
+    attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error, request,
+    prompt_version, served_from
+)
+SELECT
+    $1::text, $2::text, $3::text, $4::text,
+    'answered', $5::text, $6::text, $7::text,
+    0, '', 0, 0, 0, '', $8::jsonb,
+    $9::text, $10::text
+WHERE NOT EXISTS (
+    SELECT 1 FROM oracle_evaluations
+    WHERE signal_id = $2::text AND mode = $4::text
+)
+ON CONFLICT (signal_id, mode) WHERE served_from IS NOT NULL DO NOTHING
+`
+
+type CreateServedOracleEvaluationParams struct {
+	RequestID     string          `json:"request_id"`
+	SignalID      string          `json:"signal_id"`
+	Symbol        string          `json:"symbol"`
+	Mode          string          `json:"mode"`
+	Verdict       string          `json:"verdict"`
+	Reason        string          `json:"reason"`
+	Model         string          `json:"model"`
+	Request       json.RawMessage `json:"request"`
+	PromptVersion string          `json:"prompt_version"`
+	ServedFrom    string          `json:"served_from"`
+}
+
+// The light row of a call that did not reach the model (migration 33): the verdict of an
+// earlier call, repeated to another caller. It is written only when the signal has no row
+// in the mode of this call yet; the unique index on (signal_id, mode) of the served rows
+// settles two calls that arrive at once. The number of rows written is 0 or 1.
+func (q *Queries) CreateServedOracleEvaluation(ctx context.Context, arg CreateServedOracleEvaluationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createServedOracleEvaluation,
+		arg.RequestID,
+		arg.SignalID,
+		arg.Symbol,
+		arg.Mode,
+		arg.Verdict,
+		arg.Reason,
+		arg.Model,
+		arg.Request,
+		arg.PromptVersion,
+		arg.ServedFrom,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listOracleEvaluations = `-- name: ListOracleEvaluations :many
 SELECT id, created_at, request_id, signal_id, symbol, mode, status, verdict, reason,
        model, attempts, finish_reason, prompt_tokens, completion_tokens, latency_ms, error,
-       prompt_version, signal_version
+       prompt_version, signal_version, served_from
 FROM oracle_evaluations
 WHERE ($1::text = '' OR symbol = $1)
   AND ($2::bigint = 0 OR id < $2)
@@ -109,6 +163,7 @@ type ListOracleEvaluationsRow struct {
 	Error            string         `json:"error"`
 	PromptVersion    string         `json:"prompt_version"`
 	SignalVersion    sql.NullString `json:"signal_version"`
+	ServedFrom       sql.NullString `json:"served_from"`
 }
 
 // The newest first, a page at a time: before_id 0 starts at the newest, and the
@@ -142,6 +197,7 @@ func (q *Queries) ListOracleEvaluations(ctx context.Context, arg ListOracleEvalu
 			&i.Error,
 			&i.PromptVersion,
 			&i.SignalVersion,
+			&i.ServedFrom,
 		); err != nil {
 			return nil, err
 		}

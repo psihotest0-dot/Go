@@ -130,6 +130,27 @@ func (m *memStore) Save(_ context.Context, e Evaluation) (Evaluation, error) {
 	return e, nil
 }
 
+// SaveServed does what the database does: a row only when the signal has none in the mode.
+func (m *memStore) SaveServed(ctx context.Context, e Evaluation) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failSave {
+		return false, context.DeadlineExceeded
+	}
+	for _, r := range m.rows {
+		if r.SignalID == e.SignalID && r.Mode == e.Mode {
+			return false, nil
+		}
+	}
+	e.ID = int64(len(m.rows) + 1)
+	e.CreatedAt = time.Now()
+	m.rows = append(m.rows, e)
+	return true, nil
+}
+
 func (m *memStore) List(_ context.Context, f ListFilter) ([]Evaluation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -236,22 +257,72 @@ func reflectTypeField(v any, name string) (reflect.StructField, bool) {
 	return reflect.TypeOf(v).FieldByName(name)
 }
 
-// requestsWith is how many calls the route has counted with the given outcome.
+// requestsWith is how many calls the route has counted with the given outcome, in every mode.
 func requestsWith(t testing.TB, outcome string) float64 {
+	t.Helper()
+	return oracleCounter(t, "oracle_requests_total", map[string]string{"outcome": outcome})
+}
+
+// requestsIn is the same for one mode ("shadow", "active" or "none").
+func requestsIn(t testing.TB, outcome, mode string) float64 {
+	t.Helper()
+	return oracleCounter(t, "oracle_requests_total", map[string]string{"outcome": outcome, "mode": mode})
+}
+
+// verdictsIn is how many verdicts the model has given in the mode.
+func verdictsIn(t testing.TB, verdict, mode string) float64 {
+	t.Helper()
+	return oracleCounter(t, "oracle_verdicts_total", map[string]string{"verdict": verdict, "mode": mode})
+}
+
+// latencyCountIn is how many calls that reached the model the latency histogram has seen in the mode.
+func latencyCountIn(t testing.TB, mode string) uint64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()
 	require.NoError(t, err)
 	for _, family := range families {
-		if family.GetName() != "oracle_requests_total" {
+		if family.GetName() != "oracle_latency_seconds" {
 			continue
 		}
 		for _, m := range family.GetMetric() {
 			for _, l := range m.GetLabel() {
-				if l.GetName() == "outcome" && l.GetValue() == outcome {
-					return m.GetCounter().GetValue()
+				if l.GetName() == "mode" && l.GetValue() == mode {
+					return m.GetHistogram().GetSampleCount()
 				}
 			}
 		}
 	}
 	return 0
 }
+
+// oracleCounter adds up the series of the counter that carry every one of the labels.
+func oracleCounter(t testing.TB, name string, want map[string]string) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	var total float64
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, m := range family.GetMetric() {
+			have := map[string]string{}
+			for _, l := range m.GetLabel() {
+				have[l.GetName()] = l.GetValue()
+			}
+			match := true
+			for k, v := range want {
+				if have[k] != v {
+					match = false
+				}
+			}
+			if match {
+				total += m.GetCounter().GetValue()
+			}
+		}
+	}
+	return total
+}
+
+// waitServed waits for the light journal rows that are being written in the background.
+func waitServed(svc *Service) { svc.served.Wait() }

@@ -97,6 +97,7 @@ func TestTheRouteRefusesACallWithoutTheRightToken(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := newRoutes(t, good(VerdictApprove, "x"))
 			before := requestsWith(t, "unauthorized")
+			beforeNone := requestsIn(t, "unauthorized", "none")
 
 			rec := r.do(http.MethodPost, "/oracle/evaluate", marshal(t, validRequest()), tt.headers)
 
@@ -106,6 +107,7 @@ func TestTheRouteRefusesACallWithoutTheRightToken(t *testing.T) {
 			assert.Equal(t, 0, r.model.callCount(), "the model is never reached without the token")
 			assert.Empty(t, r.store.snapshot())
 			assert.Equal(t, before+1, requestsWith(t, "unauthorized"))
+			assert.Equal(t, beforeNone+1, requestsIn(t, "unauthorized", "none"), "a refused call has no mode to count in")
 		})
 	}
 }
@@ -139,6 +141,7 @@ func TestEvaluateOnlyTakesPost(t *testing.T) {
 func TestEvaluateRefusesABadBody(t *testing.T) {
 	r := newRoutes(t, good(VerdictApprove, "x"))
 	before := requestsWith(t, "bad_request")
+	beforeNone := requestsIn(t, "bad_request", "none")
 
 	rec := r.do(http.MethodPost, "/oracle/evaluate", marshal(t, validRequest(func(b map[string]any) {
 		b["signal"].(map[string]any)["symbol"] = "not a symbol — SECRET-IN-BODY"
@@ -151,6 +154,7 @@ func TestEvaluateRefusesABadBody(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "SECRET-IN-BODY", "the answer names the field, not what was in it")
 	assert.Equal(t, 0, r.model.callCount())
 	assert.Equal(t, before+1, requestsWith(t, "bad_request"))
+	assert.Equal(t, beforeNone+1, requestsIn(t, "bad_request", "none"), "an unreadable body has no mode to count in")
 
 	rec = r.do(http.MethodPost, "/oracle/evaluate", []byte("not json"), bearer(testToken))
 	assert.Equal(t, http.StatusBadRequest, rec.Code)

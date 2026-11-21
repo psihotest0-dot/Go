@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -231,4 +232,166 @@ func TestTheSchemaGuardsTheTwoVersionColumns(t *testing.T) {
 		INSERT INTO oracle_evaluations (signal_id, symbol, status, signal_version, request)
 		VALUES ($1, 'AAPL', 'failed', 'forged', '{"signal":{"version":"1.0.0"}}')`, prefix+"v-forged")
 	assert.Error(t, err, "a generated column refuses a value")
+}
+
+// served is the light row of a call in the mode that repeats the verdict of another.
+func served(prefix, id, mode, from string) Evaluation {
+	return Evaluation{
+		RequestID: "req-served-" + id, SignalID: prefix + id, Symbol: "KO", Mode: mode,
+		Status: StatusAnswered, Verdict: VerdictApprove, Reason: "Причина " + id, Model: "gemma",
+		PromptVersion: "0123456789ab", ServedFrom: from,
+		Request: []byte(`{"schema_version":1,"signal":{"symbol":"KO","version":"1.0.0"}}`),
+	}
+}
+
+func TestDBStoreWritesALightRowOnlyWhenTheModeHasNone(t *testing.T) {
+	store, database, prefix := openStore(t)
+	ctx := context.Background()
+
+	// A signal the model was asked about in shadow mode.
+	_, err := store.Save(ctx, answered(prefix, "s", "KO", VerdictApprove))
+	require.NoError(t, err)
+
+	wrote, err := store.SaveServed(ctx, served(prefix, "s", ModeActive, ServedFromCache))
+	require.NoError(t, err)
+	assert.True(t, wrote, "the other mode has no row yet")
+
+	wrote, err = store.SaveServed(ctx, served(prefix, "s", ModeActive, ServedFromCache))
+	require.NoError(t, err)
+	assert.False(t, wrote, "one light row for a signal and a mode")
+
+	wrote, err = store.SaveServed(ctx, served(prefix, "s", ModeShadow, ServedFromCache))
+	require.NoError(t, err)
+	assert.False(t, wrote, "the shadow mode has the row of the call that reached the model")
+
+	wrote, err = store.SaveServed(ctx, served(prefix, "s", "", ServedFromJoined))
+	require.NoError(t, err)
+	assert.True(t, wrote, "a call that did not say its mode is a mode of its own")
+
+	var n int
+	require.NoError(t, database.SqlDB.QueryRowContext(ctx,
+		`SELECT count(*) FROM oracle_evaluations WHERE signal_id = $1`, prefix+"s").Scan(&n))
+	assert.Equal(t, 3, n)
+
+	// A signal nobody has a row for is written too (the first call of a mode), and another
+	// signal's rows do not count.
+	wrote, err = store.SaveServed(ctx, served(prefix, "other", ModeActive, ServedFromCache))
+	require.NoError(t, err)
+	assert.True(t, wrote)
+}
+
+func TestDBStoreReadsAndKeepsTheLightRow(t *testing.T) {
+	store, database, prefix := openStore(t)
+	ctx := context.Background()
+	_, err := store.Save(ctx, answered(prefix, "k", "KO", VerdictApprove))
+	require.NoError(t, err)
+	_, err = store.SaveServed(ctx, served(prefix, "k", ModeActive, ServedFromJoined))
+	require.NoError(t, err)
+
+	rows, err := store.List(ctx, ListFilter{Limit: 200})
+	require.NoError(t, err)
+	got := map[string]Evaluation{}
+	for _, r := range rows {
+		if r.SignalID == prefix+"k" {
+			got[r.Mode] = r
+		}
+	}
+	require.Len(t, got, 2)
+
+	asked, light := got[ModeShadow], got[ModeActive]
+	assert.Empty(t, asked.ServedFrom, "a row the model was asked for has no source")
+	assert.Equal(t, ServedFromJoined, light.ServedFrom)
+	assert.Equal(t, StatusAnswered, light.Status)
+	assert.Equal(t, VerdictApprove, light.Verdict)
+	assert.Equal(t, "Причина k", light.Reason)
+	assert.Equal(t, "gemma", light.Model)
+	assert.Equal(t, "0123456789ab", light.PromptVersion)
+	assert.Equal(t, "req-served-k", light.RequestID)
+	assert.Equal(t, "1.0.0", light.SignalVersion, "read from the body of the call, like any row")
+	assert.Zero(t, light.Attempts)
+	assert.Zero(t, light.PromptTokens)
+	assert.Zero(t, light.CompletionTokens)
+	assert.Zero(t, light.LatencyMS)
+	assert.Empty(t, light.FinishReason)
+	assert.Empty(t, light.Error)
+
+	var body string
+	require.NoError(t, database.SqlDB.QueryRowContext(ctx,
+		`SELECT request::text FROM oracle_evaluations WHERE signal_id = $1 AND served_from IS NOT NULL`, prefix+"k").Scan(&body))
+	assert.JSONEq(t, `{"schema_version":1,"signal":{"symbol":"KO","version":"1.0.0"}}`, body)
+}
+
+// Calls of one mode arrive at once (the bot asks a HOLD again every minute, and the shadow
+// container beside it asks too): the unique index lets exactly one light row through.
+func TestDBStoreWritesOneLightRowWhenCallsRace(t *testing.T) {
+	store, database, prefix := openStore(t)
+	ctx := context.Background()
+
+	const callers = 16
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	wrote := 0
+	start := make(chan struct{})
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			ok, err := store.SaveServed(ctx, served(prefix, "race", ModeActive, ServedFromCache))
+			assert.NoError(t, err, "losing the race is not an error")
+			if ok {
+				mu.Lock()
+				wrote++
+				mu.Unlock()
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	assert.Equal(t, 1, wrote)
+	var n int
+	require.NoError(t, database.SqlDB.QueryRowContext(ctx,
+		`SELECT count(*) FROM oracle_evaluations WHERE signal_id = $1`, prefix+"race").Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+// The unique index is what holds when two calls pass the "no row yet" check together.
+func TestTheSchemaAllowsOneServedRowPerSignalAndMode(t *testing.T) {
+	_, database, prefix := openStore(t)
+	ctx := context.Background()
+
+	insert := func(signalID, mode string, servedFrom any) error {
+		_, err := database.SqlDB.ExecContext(ctx, `
+			INSERT INTO oracle_evaluations (signal_id, symbol, mode, status, verdict, attempts, served_from, request)
+			VALUES ($1, 'KO', $2, 'answered', 'HOLD', 0, $3, '{}')`, signalID, mode, servedFrom)
+		return err
+	}
+	require.NoError(t, insert(prefix+"u", "active", "cache"))
+	assert.Error(t, insert(prefix+"u", "active", "joined"), "a second served row of the same signal and mode")
+	require.NoError(t, insert(prefix+"u", "shadow", "cache"), "another mode is another row")
+	require.NoError(t, insert(prefix+"u2", "active", "cache"), "another signal is another row")
+	// The rows the model was asked for are not limited: a HOLD is asked again and again.
+	require.NoError(t, insert(prefix+"u", "active", nil))
+	require.NoError(t, insert(prefix+"u", "active", nil))
+}
+
+func TestTheSchemaGuardsTheShapeOfAServedRow(t *testing.T) {
+	_, database, prefix := openStore(t)
+	ctx := context.Background()
+
+	insert := func(signalID, status string, verdict any, attempts int, servedFrom any) error {
+		_, err := database.SqlDB.ExecContext(ctx, `
+			INSERT INTO oracle_evaluations (signal_id, symbol, mode, status, verdict, attempts, served_from, request)
+			VALUES ($1, 'KO', 'active', $2, $3, $4, $5, '{}')`, signalID, status, verdict, attempts, servedFrom)
+		return err
+	}
+	require.NoError(t, insert(prefix+"ok-cache", "answered", "HOLD", 0, "cache"))
+	require.NoError(t, insert(prefix+"ok-joined", "answered", "HOLD", 0, "joined"))
+	require.NoError(t, insert(prefix+"ok-asked", "answered", "HOLD", 1, nil), "a row the model was asked for is as before")
+
+	assert.Error(t, insert(prefix+"x-source", "answered", "HOLD", 0, "memory"), "a source that is not cache or joined")
+	assert.Error(t, insert(prefix+"x-empty", "answered", "HOLD", 0, ""), "an empty source is not no source")
+	assert.Error(t, insert(prefix+"x-attempts", "answered", "HOLD", 1, "cache"), "a served row never asked the model")
+	assert.Error(t, insert(prefix+"x-failed", "failed", nil, 0, "cache"), "a served row repeats a verdict, so it is an answer")
 }
