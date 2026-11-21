@@ -1052,24 +1052,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required:
-                - sessions
-                properties:
-                  sessions:
-                    type: array
-                    items:
-                      type: object
-                      required:
-                      - session_id
-                      - name
-                      properties:
-                        session_id:
-                          type: string
-                          example: tg-1607252727
-                        name:
-                          type: string
-                          example: Telegram
+                $ref: '#/components/schemas/TelegramSessionList'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -1844,3 +1827,26 @@ components:
         updated_at:
           type: string
           format: date-time
+    TelegramSession:
+      type: object
+      required:
+      - session_id
+      - name
+      properties:
+        session_id:
+          type: string
+          description: The session the bot writes to, 	g-<chat id>.
+          example: tg-1607252727
+        name:
+          type: string
+          description: What the app calls the conversation (Telegram, Telegram 2, ...).
+          example: Telegram
+    TelegramSessionList:
+      type: object
+      required:
+      - sessions
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelegramSession'
