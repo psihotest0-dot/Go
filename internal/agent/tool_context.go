@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sqlc-dev/pqtype"
+
 	"go-monolith/internal/answerplan"
 	"go-monolith/internal/api"
 	"go-monolith/internal/proposals"
@@ -72,6 +74,10 @@ type turnState struct {
 	by answeredBy
 	// plan is the plan of the answer to a personal message, nil for most turns (answer_plan.go).
 	plan *answerplan.Plan
+	// storedPlan is the plan as planReply stored it (with the marks of the answer), and
+	// planEvents says that the client asked for the frame "event: plan" (ChatRequest.PlanEvents).
+	storedPlan pqtype.NullRawMessage
+	planEvents bool
 	// userURLs are the addresses the person wrote in this conversation, by their key
 	// (urlKey): the only ones add_to_library may fetch.
 	userURLs map[string]string

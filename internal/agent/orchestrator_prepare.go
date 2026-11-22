@@ -75,6 +75,7 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
 	turn.setEarlierAnswer(chatCtx.EarlierAnswer)
 	turn.setAnswerPlan(answerPlan)
+	turn.setPlanEvents(req.PlanEvents)
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}

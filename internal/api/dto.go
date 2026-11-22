@@ -121,15 +121,19 @@ type MessageDTO struct {
 	Content   string       `json:"content"`
 	CreatedAt *time.Time   `json:"created_at"`
 	Sources   []SourceInfo `json:"sources,omitempty"`
+	// Remembered are the memories a planned answer used (RememberedMemories), for the line
+	// "Лили си спомни: …" under it; absent for every other message.
+	Remembered []string `json:"remembered,omitempty"`
 }
 
 func toMessageDTO(m db.Message) MessageDTO {
 	dto := MessageDTO{
-		ID:        m.ID,
-		UserID:    m.UserID,
-		SessionID: m.SessionID,
-		Role:      m.Role,
-		Content:   m.Content,
+		ID:         m.ID,
+		UserID:     m.UserID,
+		SessionID:  m.SessionID,
+		Role:       m.Role,
+		Content:    m.Content,
+		Remembered: RememberedMemories(m.AnswerPlan),
 	}
 	if m.CreatedAt.Valid {
 		dto.CreatedAt = &m.CreatedAt.Time

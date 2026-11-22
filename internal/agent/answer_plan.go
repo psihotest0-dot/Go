@@ -16,6 +16,7 @@ import (
 	"github.com/sqlc-dev/pqtype"
 
 	"go-monolith/internal/answerplan"
+	"go-monolith/internal/api"
 	"go-monolith/internal/db"
 	"go-monolith/metrics"
 )
@@ -255,7 +256,51 @@ func (t *turnState) planReply(raw string) (string, pqtype.NullRawMessage) {
 	if err != nil { // only strings and numbers: not expected
 		return content, pqtype.NullRawMessage{}
 	}
-	return content, pqtype.NullRawMessage{RawMessage: b, Valid: true}
+	out := pqtype.NullRawMessage{RawMessage: b, Valid: true}
+	t.mu.Lock()
+	t.storedPlan = out
+	t.mu.Unlock()
+	return content, out
+}
+
+// remembered are the memories the stored answer used (api.RememberedMemories); nil before
+// planReply and for a turn without a plan.
+func (t *turnState) remembered() []string {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return api.RememberedMemories(t.storedPlan)
+}
+
+func (t *turnState) setPlanEvents(on bool) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.planEvents = on
+}
+
+// planFrame is the frame "event: plan" with the memories the answer used, for a client that asked
+// for it (ChatRequest.PlanEvents); "" otherwise and when the answer used none.
+func (t *turnState) planFrame() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	wanted := t.planEvents
+	t.mu.Unlock()
+	remembered := t.remembered()
+	if !wanted || len(remembered) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(map[string][]string{"remembered": remembered})
+	if err != nil {
+		return ""
+	}
+	return "event: plan\ndata: " + string(b) + "\n\n"
 }
 
 // withoutPlanMarksIfPlanned is the text without the marks when the turn had a plan, else as it is.

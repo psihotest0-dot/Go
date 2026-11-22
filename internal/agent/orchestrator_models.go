@@ -35,6 +35,10 @@ type ChatRequest struct {
 	// reply and this turn has to wait. A client that does not know the frame must not ask for
 	// it: it would take the frame for text.
 	QueueEvents bool `json:"queue_events,omitempty"`
+	// PlanEvents asks for the frame "event: plan" (data: {"remembered": [...]}) after the text of
+	// an answer that used the person's memories (П55, step 2.5), for the line "Лили си спомни".
+	// A client that does not know the frame must not ask for it.
+	PlanEvents bool `json:"plan_events,omitempty"`
 }
 
 type chatContext struct {

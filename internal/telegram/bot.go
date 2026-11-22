@@ -503,7 +503,7 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 	}
 
 	if strings.TrimSpace(answer) != "" {
-		b.sendAnswer(chatID, answer)
+		b.sendAnswer(chatID, withRemembered(answer, turn.Remembered))
 	}
 	if len(turn.Proposals) > 0 {
 		b.sendReply(chatID, proposalNotice(turn.Proposals))
@@ -860,4 +860,25 @@ func (b *Bot) send(chatID int64, text string) {
 	if _, err := b.sender.Send(tgbotapi.NewMessage(chatID, text)); err != nil {
 		slog.Error("Failed to send telegram reply", slog.Any("error", err), slog.Int64("chat_id", chatID))
 	}
+}
+
+// withRemembered adds under a planned answer the line "Лили си спомни: …" in italics (П55, step
+// 2.5) with the memories the answer used. The memories are text of the model: their Markdown
+// marks are made literal, so that a star in a memory cannot open a tag.
+func withRemembered(answer string, remembered []string) string {
+	if len(remembered) == 0 {
+		return answer
+	}
+	escaped := make([]string, len(remembered))
+	for i, m := range remembered {
+		var sb strings.Builder
+		for _, r := range m {
+			if strings.ContainsRune(escapable, r) {
+				sb.WriteRune('\\')
+			}
+			sb.WriteRune(r)
+		}
+		escaped[i] = sb.String()
+	}
+	return strings.TrimRight(answer, " \n\t") + "\n\n_Лили си спомни: " + strings.Join(escaped, "; ") + "_"
 }

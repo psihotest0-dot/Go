@@ -421,6 +421,8 @@ type ChatTurn struct {
 	// Proposals are the writes the model asked for in this turn that wait for the
 	// user's confirmation.
 	Proposals []proposals.Proposal
+	// Remembered are the memories a planned answer used (П55, step 2.5); nil for most turns.
+	Remembered []string
 }
 
 // ProcessChat executes the chat pipeline without HTTP dependencies and returns
@@ -478,5 +480,5 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 		"response_length": len(answer),
 	})
 
-	return ChatTurn{Answer: answer, Proposals: prep.turn.madeProposals()}, nil
+	return ChatTurn{Answer: answer, Proposals: prep.turn.madeProposals(), Remembered: prep.turn.remembered()}, nil
 }

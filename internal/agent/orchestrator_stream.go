@@ -396,6 +396,12 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		beforeDone(assistantContent, toolCalls)
 	}
 
+	// The memories the answer used (after beforeDone: it stores the plan with its marks).
+	if frame := turnFrom(r.Context()).planFrame(); frame != "" {
+		fmt.Fprint(w, frame)
+		flusher.Flush()
+	}
+
 	fmt.Fprintf(w, "data: [DONE]\n\n")
 	flusher.Flush()
 

@@ -138,6 +138,8 @@ type fakeProcessor struct {
 	err    error
 	// proposals are the writes the model "proposed" in the turn.
 	proposals []proposals.Proposal
+	// remembered are the memories a planned answer "used".
+	remembered []string
 	// onCall runs inside ProcessChatTurn and may block.
 	onCall func(ctx context.Context, userID uuid.UUID, req agent.ChatRequest)
 
@@ -155,7 +157,7 @@ func (p *fakeProcessor) ProcessChatTurn(ctx context.Context, userID uuid.UUID, r
 	if p.onCall != nil {
 		p.onCall(ctx, userID, req)
 	}
-	return agent.ChatTurn{Answer: p.answer, Proposals: p.proposals}, p.err
+	return agent.ChatTurn{Answer: p.answer, Proposals: p.proposals, Remembered: p.remembered}, p.err
 }
 
 // fakeDesk is the proposal desk: it holds the open proposals per user.
