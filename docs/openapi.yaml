@@ -529,6 +529,13 @@ paths:
           "local"}` or `{"provider": "deepseek", "model": "deepseek-flash"}`. A
           client can show it next to the answer; the history does not keep it;
 
+        * `event: plan` - once, before the end, only when the request has
+          `plan_events` true and the answer was planned from the person's
+          memories and used some of them (`ANSWER_PLAN_ENABLED`):
+          `{"remembered": ["...", "..."]}`, the start of each memory it used,
+          for a line like "Лили си спомни: …" under the answer. The history
+          keeps it as `remembered` on the message;
+
         * `data: [DONE]` - the end of a good answer; by then the answer is
           stored, so the history already has it;
 
@@ -575,6 +582,11 @@ paths:
                     Ask to be told, with `event: queued`, that the request waits for another
                     reply in the same conversation. A client that does not know the frame must
                     not ask for it - it would take it for text. Left out: false.
+                plan_events:
+                  type: boolean
+                  description: >-
+                    Ask for `event: plan` with the memories a planned answer used. A client
+                    that does not know the frame must not ask for it. Left out: false.
       responses:
         '200':
           description: Stream of events
@@ -648,6 +660,9 @@ paths:
                     (no limit left for the day, no network, a refusal) the local one answers
                     instead.
                 queue_events:
+                  type: boolean
+                  description: As for `/chat/stream`.
+                plan_events:
                   type: boolean
                   description: As for `/chat/stream`.
       responses:
@@ -1577,6 +1592,14 @@ components:
             based on, as it was shown while streaming.
           items:
             $ref: '#/components/schemas/SourceInfo'
+        remembered:
+          type: array
+          description: >-
+            Only on an answer planned from the person's memories that used some
+            of them: the start of each memory it used (the same list as the
+            `event: plan` frame of the stream).
+          items:
+            type: string
     SourceInfo:
       type: object
       properties:
