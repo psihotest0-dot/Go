@@ -46,8 +46,14 @@ const personalThreshold = 0.031
 // +0.06-0.10 for a fitting memory ("диван" for the evening on the sofa) and +0.02-0.05 for the
 // rest. A memory is used when it is at least memoryMinLift above its baseline and within
 // memoryNearBest of the best one - so one clear fit does not bring two weak ones with it.
+//
+// memoryMinLift was 0.05 until the owner's blind test of 2026-11-22 (step 2.4, measurements\
+// p55_blind_2026-11-22): the planned answer won 7 of 15 against today's, 5 of 8 where its best
+// memory was at 0.07 or more and 2 of 7 below - a weak memory ("слуша рок, когато шофира" for
+// "ще си почивам") makes the reply worse, and today's reply weaves the memories of the prompt
+// anyway. 0.07 rests on those 15 pairs; the second round measures it on new messages.
 const (
-	memoryMinLift  = 0.05
+	memoryMinLift  = 0.07
 	memoryNearBest = 0.015
 	maxMemories    = 3
 	// minFreshMemories: with at least this many fitting memories that the last plans did not

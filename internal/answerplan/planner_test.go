@@ -279,3 +279,18 @@ func contents(ms []Memory) []string {
 	}
 	return out
 }
+
+// A memory with a lift a little under memoryMinLift stays out, one a little over it is used:
+// the owner's blind test found weak memories worse than none.
+func TestTheWeakestMemoryThatIsUsed(t *testing.T) {
+	p := newPlanner(t, personalFake())
+	withLift := func(name string, l float64) Memory {
+		return mem(name, vec(map[int]float64{2: l, 3: math.Sqrt(1 - l*l)}))
+	}
+	_, result := p.Decide(context.Background(), Turn{Text: tired, Candidates: []Memory{withLift("weak", memoryMinLift-0.01)}})
+	assert.Equal(t, SkipNoMemories, result)
+	plan, result := p.Decide(context.Background(), Turn{Text: tired, Candidates: []Memory{withLift("strong", memoryMinLift+0.01)}})
+	require.Equal(t, ResultPlanned, result)
+	assert.Equal(t, []string{"strong"}, contents(plan.Memories))
+	assert.InDelta(t, 0.07, memoryMinLift, 1e-9, "the threshold of the owner's blind test")
+}
