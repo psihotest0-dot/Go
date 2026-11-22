@@ -122,6 +122,7 @@ func TestAnUnknownSettingStopsTheStartEvenWhileOff(t *testing.T) {
 		for _, cfg := range []*config.Config{
 			{PaidLLMEnabled: enabled, OracleLLM: "depseek", DeepSeekAPIKey: "k"},
 			{PaidLLMEnabled: enabled, LibraryLLM: "cloud", DeepSeekAPIKey: "k"},
+			{PaidLLMEnabled: enabled, ExplainLLM: "cloud", DeepSeekAPIKey: "k"},
 			{PaidLLMEnabled: enabled, TelegramLLM: "lokal", DeepSeekAPIKey: "k"},
 			{PaidLLMEnabled: enabled, TelegramLLM: "deepseek", DeepSeekAPIKey: "k"},
 		} {

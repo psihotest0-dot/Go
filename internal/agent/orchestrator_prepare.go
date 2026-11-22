@@ -76,6 +76,9 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	turn.setEarlierAnswer(chatCtx.EarlierAnswer)
 	turn.setAnswerPlan(answerPlan)
 	turn.setPlanEvents(req.PlanEvents)
+	// An explanation from the library (step 2.8): its search is forced, gathered by the code, and
+	// answered by the model EXPLAIN_LLM names.
+	turn.setExplain(o.explainSubjectFor(req.Content))
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}

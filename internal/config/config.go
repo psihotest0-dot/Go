@@ -169,6 +169,14 @@ type Config struct {
 	// without the tone examples, the repeated description of the tools and of the web, and
 	// without read_attachment when no file is attached. Off by default.
 	LeanPromptEnabled bool
+	// ExplainDossierEnabled (EXPLAIN_DOSSIER_ENABLED) turns on the explanation from the library
+	// (step 2.8, internal/agent/explain.go): for "не разбирам X" / "обясни ми X" the code gathers
+	// the passages and the model writes the explanation from them. Off by default.
+	ExplainDossierEnabled bool
+	// ExplainLLM (EXPLAIN_LLM) says which model writes such an explanation: "local" or empty (the
+	// default) - the local model, even though it is a library question; "deepseek" - the paid one
+	// (it needs PAID_LLM_ENABLED). The button of a conversation in the client still decides first.
+	ExplainLLM string
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -348,19 +356,21 @@ func Load() *Config {
 		LLMTopP:                floatEnv("LLM_TOP_P", 0.8, 0.01, 1),
 		LLMPresencePenalty:     floatEnv("LLM_PRESENCE_PENALTY", 0, 0, 2),
 
-		EmbedderURL:         os.Getenv("EMBEDDER_URL"),
-		EmbedderTimeout:     time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
-		DatabaseURL:         dbURL,
-		TelegramBotToken:    os.Getenv("TELEGRAM_BOT_TOKEN"),
-		EnableAdaptiveSkip:  adaptiveSkip,
-		EnableDistillation:  distillation,
-		FilesEnabled:        boolEnv("FILES_ENABLED", false),
-		FilesDir:            filesDir(),
-		LibraryAddEnabled:   boolEnv("LIBRARY_ADD_ENABLED", false),
-		TaskPlanEnabled:     boolEnv("TASK_PLAN_ENABLED", false),
-		AnswerPlanEnabled:   boolEnv("ANSWER_PLAN_ENABLED", false),
-		MemoryThemesEnabled: boolEnv("MEMORY_THEMES_ENABLED", false),
-		LeanPromptEnabled:   boolEnv("LEAN_PROMPT_ENABLED", false),
+		EmbedderURL:           os.Getenv("EMBEDDER_URL"),
+		EmbedderTimeout:       time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
+		DatabaseURL:           dbURL,
+		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
+		EnableAdaptiveSkip:    adaptiveSkip,
+		EnableDistillation:    distillation,
+		FilesEnabled:          boolEnv("FILES_ENABLED", false),
+		FilesDir:              filesDir(),
+		LibraryAddEnabled:     boolEnv("LIBRARY_ADD_ENABLED", false),
+		TaskPlanEnabled:       boolEnv("TASK_PLAN_ENABLED", false),
+		AnswerPlanEnabled:     boolEnv("ANSWER_PLAN_ENABLED", false),
+		MemoryThemesEnabled:   boolEnv("MEMORY_THEMES_ENABLED", false),
+		LeanPromptEnabled:     boolEnv("LEAN_PROMPT_ENABLED", false),
+		ExplainDossierEnabled: boolEnv("EXPLAIN_DOSSIER_ENABLED", false),
+		ExplainLLM:            strings.ToLower(strings.TrimSpace(os.Getenv("EXPLAIN_LLM"))),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

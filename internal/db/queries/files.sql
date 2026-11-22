@@ -329,3 +329,13 @@ WHERE f.user_id = sqlc.arg('user_id')
   AND f.deleted_at IS NULL
 ORDER BY (COALESCE(1.0 / (60 + v.rank), 0.0) + COALESCE(1.0 / (60 + t.rank), 0.0)) DESC
 LIMIT sqlc.arg('match_count');
+
+-- GetChunkNeighbours is the text just before and just after a passage in its file (the
+-- explanation dossier, step 2.8): delta -1 or 1. Only the person's own chunks.
+-- name: GetChunkNeighbours :many
+SELECT CAST(n.chunk_index - c.chunk_index AS INTEGER) AS delta, n.text
+FROM document_chunks c
+JOIN document_chunks n
+  ON n.file_id = c.file_id AND n.chunk_type = c.chunk_type AND n.user_id = c.user_id
+ AND n.chunk_index IN (c.chunk_index - 1, c.chunk_index + 1)
+WHERE c.id = $1 AND c.user_id = $2;

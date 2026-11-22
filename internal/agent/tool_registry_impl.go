@@ -555,6 +555,16 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	// file, 6 of Freud, a cookbook and a book about vitamin B12).
 	scope, scoped := r.retrieval.FileNamedIn(ctx, userID, currentQuery(ctx), query)
 
+	// The first search of an explanation from the library is the dossier of the code (explain.go);
+	// a question that names a file stays inside the file, as any search does.
+	if subject := turnFrom(ctx).takeExplain(); subject != "" {
+		if !scoped {
+			queryEN, _ := stringArg(args, queryENArg)
+			return r.explainDossier(ctx, userID, query, queryEN, subject)
+		}
+		metrics.ExplainDossiers.WithLabelValues(explainScoped).Inc()
+	}
+
 	// A short query is taken for filler ("да", "hi"), and so was "CLBSV2" - the name of the
 	// file itself, which the model sends when it is asked what is in the file (measured on
 	// 2026-11-15). When the question names a file, the query is the file and is searched.

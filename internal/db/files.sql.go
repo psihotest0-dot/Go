@@ -141,6 +141,50 @@ func (q *Queries) DeleteIngestedFile(ctx context.Context, arg DeleteIngestedFile
 	return err
 }
 
+const getChunkNeighbours = `-- name: GetChunkNeighbours :many
+SELECT CAST(n.chunk_index - c.chunk_index AS INTEGER) AS delta, n.text
+FROM document_chunks c
+JOIN document_chunks n
+  ON n.file_id = c.file_id AND n.chunk_type = c.chunk_type AND n.user_id = c.user_id
+ AND n.chunk_index IN (c.chunk_index - 1, c.chunk_index + 1)
+WHERE c.id = $1 AND c.user_id = $2
+`
+
+type GetChunkNeighboursParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+type GetChunkNeighboursRow struct {
+	Delta int32  `json:"delta"`
+	Text  string `json:"text"`
+}
+
+// GetChunkNeighbours is the text just before and just after a passage in its file (the
+// explanation dossier, step 2.8): delta -1 or 1. Only the person's own chunks.
+func (q *Queries) GetChunkNeighbours(ctx context.Context, arg GetChunkNeighboursParams) ([]GetChunkNeighboursRow, error) {
+	rows, err := q.db.QueryContext(ctx, getChunkNeighbours, arg.ID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetChunkNeighboursRow{}
+	for rows.Next() {
+		var i GetChunkNeighboursRow
+		if err := rows.Scan(&i.Delta, &i.Text); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getChunksForReembedding = `-- name: GetChunksForReembedding :many
 SELECT c.id, c.chunk_type, c.chunk_index, c.text, f.file_name
 FROM document_chunks c

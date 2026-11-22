@@ -70,7 +70,7 @@ func (o *Orchestrator) planSignals(ctx context.Context, message string, hasFiles
 	return answerplan.Signals{
 		Cloud:          o.paid != nil && chosen && usePaid,
 		Task:           task,
-		ForcedTool:     forcedFirstTool(o.turnTools(), message) != "",
+		ForcedTool:     forcedFirstTool(o.turnTools(), message) != "" || o.explainSubjectFor(message) != "",
 		FileRequest:    asksToWrite(message) || asksToRemoveFile(message),
 		Attachment:     hasFiles,
 		StatusQuestion: asksForStatus(message),

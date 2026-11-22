@@ -258,6 +258,14 @@ var (
 	// forced_tool, greeting...). Only while ANSWER_PLAN_ENABLED is on. AnswerPlanMarks counts
 	// the memory marks ([1], [2]...) of the planned answers: "used" for a mark of a given
 	// memory, "unknown" for a number the plan did not give.
+	// ExplainDossiers counts the dossiers of the explanation from the library (step 2.8,
+	// internal/agent/explain.go), by result: "built", "empty" (no search found anything),
+	// "failed" (every search failed), "scoped" (the question named a file: an ordinary search
+	// of that file). Only while EXPLAIN_DOSSIER_ENABLED is on.
+	ExplainDossiers = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "explain_dossier_total",
+		Help: "Dossiers of the explanation from the library, by result.",
+	}, []string{"result"})
 	AnswerPlans = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "answer_plan_total",
 		Help: "Turns the plan of an answer to a personal message looked at, by result.",

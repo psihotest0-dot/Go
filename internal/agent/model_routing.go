@@ -22,7 +22,9 @@ import (
 //     2026-11-14: the answers are as good by the owner's taste (blind, 14 questions: 6 for
 //     the local model, 5 for the paid one, 3 equal) and about 2.5 times faster;
 //   - any turn of a conversation the owner sent to the cloud (use_paid=true in the request,
-//     the button of the client); use_paid=false keeps even a library question at home.
+//     the button of the client); use_paid=false keeps even a library question at home;
+//   - an explanation from the library (explain.go), when EXPLAIN_LLM=deepseek; without it such a
+//     turn stays at home even though it is a library question.
 //
 // If the paid model fails before it has done anything - no limit left for the day, no
 // network, a refusal of the provider - the same turn is asked of the local model, so the
@@ -77,6 +79,14 @@ func (o *Orchestrator) routeToPaid(ctx context.Context, messages []openai.ChatCo
 			return true, "chosen"
 		}
 		return false, "chosen_local"
+	}
+	// An explanation from the library goes where EXPLAIN_LLM says, whatever LIBRARY_LLM says
+	// (explain.go): the owner liked the local model's as much as the cloud's.
+	if turnFrom(ctx).explaining() {
+		if o.explainCloud {
+			return true, "explain"
+		}
+		return false, "explain_local"
 	}
 	if o.libraryPaid && forcedFirstTool(tools, lastUserContent(messages)) != "" {
 		return true, "library"

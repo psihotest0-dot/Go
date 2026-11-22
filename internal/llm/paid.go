@@ -20,7 +20,7 @@ type Paid struct {
 // ignored, with a warning in the log). An unknown value of those two stops the start even
 // while it is off - a typo must not pick a model - and so does a missing key when it is on.
 func NewPaid(cfg *config.Config, logger *slog.Logger) (*Paid, error) {
-	for name, value := range map[string]string{"ORACLE_LLM": cfg.OracleLLM, "LIBRARY_LLM": cfg.LibraryLLM} {
+	for name, value := range map[string]string{"ORACLE_LLM": cfg.OracleLLM, "LIBRARY_LLM": cfg.LibraryLLM, "EXPLAIN_LLM": cfg.ExplainLLM} {
 		switch value {
 		case "", "local", "deepseek":
 		default:
@@ -35,8 +35,8 @@ func NewPaid(cfg *config.Config, logger *slog.Logger) (*Paid, error) {
 	}
 
 	if !cfg.PaidLLMEnabled {
-		if cfg.OracleLLM == "deepseek" || cfg.LibraryLLM == "deepseek" {
-			logger.Warn("ORACLE_LLM / LIBRARY_LLM = deepseek is ignored: PAID_LLM_ENABLED is not true, everything stays on the local model")
+		if cfg.OracleLLM == "deepseek" || cfg.LibraryLLM == "deepseek" || cfg.ExplainLLM == "deepseek" {
+			logger.Warn("ORACLE_LLM / LIBRARY_LLM / EXPLAIN_LLM = deepseek is ignored: PAID_LLM_ENABLED is not true, everything stays on the local model")
 		}
 		return nil, nil
 	}

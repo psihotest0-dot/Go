@@ -491,6 +491,10 @@ func (o *Orchestrator) runRounds(
 	forced := ""
 	if len(require) == 0 {
 		forced = forcedFirstTool(tools, lastUserContent(messages))
+		// An explanation from the library searches first, as a question to the books does (explain.go).
+		if forced == "" && turnFrom(ctx).explaining() && onlyTool(tools, searchDocumentsTool) != nil {
+			forced = searchDocumentsTool
+		}
 	}
 
 	// active are the tools on offer in this round; a group of tools joins them when the

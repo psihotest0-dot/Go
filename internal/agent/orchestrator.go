@@ -80,6 +80,9 @@ type Orchestrator struct {
 	// leanPrompt is LEAN_PROMPT_ENABLED: the prompt without the parts that the measurement of
 	// 2026-11-22 found to be of no use (WithLeanPrompt).
 	leanPrompt bool
+	// explainDossier is EXPLAIN_DOSSIER_ENABLED: the explanation from the library (explain.go);
+	// explainCloud is EXPLAIN_LLM=deepseek: such a turn goes to the paid model.
+	explainDossier, explainCloud bool
 	// questionEvery is CHAT_QUESTION_EVERY: every this-many-th reply of a conversation ends
 	// with a question; 0, the value of an Orchestrator built without NewOrchestrator, puts
 	// the dose off. See closing_note.go.

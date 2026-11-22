@@ -98,6 +98,10 @@ type turnState struct {
 	// earlier is the last answer of the conversation that rested on passages of the library
 	// (earlier_answer.go).
 	earlier earlierAnswer
+	// explain is the subject of an explanation from the library, "" for most turns; explainDone:
+	// the dossier was given (explain.go).
+	explain     string
+	explainDone bool
 }
 
 // markPlanActive records that this turn works on a plan in progress.

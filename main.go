@@ -327,6 +327,13 @@ func run() error {
 			orchestrator.WithPaidModel(client, name, library)
 		}
 	}
+	// The explanation from the library (step 2.8): off unless EXPLAIN_DOSSIER_ENABLED; EXPLAIN_LLM
+	// says whether the local model or the paid one writes it.
+	if cfg.ExplainDossierEnabled {
+		cloud := cfg.ExplainLLM == "deepseek" && paid != nil
+		orchestrator.WithExplainDossier(cloud)
+		logger.Info("the explanation from the library is on", slog.Bool("written_by_the_paid_model", cloud))
+	}
 	oracleModel := llm.OracleClient(cfg, llmClient, paid, logger)
 	oracleHandler := oracle.NewHandler(oracle.NewService(oracleModel, oracleStore), oracleStore, cfg.OracleToken)
 	oracleHandler.RegisterReadRoutes(protectedMux)
