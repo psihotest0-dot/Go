@@ -108,6 +108,16 @@ func (o *Orchestrator) generateResponse(
 	onDelta deltaFunc,
 ) (string, []openai.ToolCall, error) {
 	turn := turnFrom(ctx)
+	// A question about the work that the code answers from the folder or the plan: no model at
+	// all, and so none of the checks of a model's answer (status_answer.go).
+	if text := turn.statusAnswerText(); text != "" {
+		if onDelta != nil {
+			if err := onDelta(text, ""); err != nil {
+				return "", nil, err
+			}
+		}
+		return text, nil, nil
+	}
 	paid, reason := o.routeToPaid(ctx, finalMessages, tools)
 	if !paid {
 		if o.paid != nil {

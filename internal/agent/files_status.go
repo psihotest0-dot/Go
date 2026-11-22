@@ -70,25 +70,10 @@ func (r *DefaultToolRegistry) FilesChangedSince(userID uuid.UUID, since time.Tim
 // the messages. (First tried: two messages back; on the real chat of 2026-11-20 that went back
 // to the request that had made the file, 18:00, and the claim of 19:06 passed.)
 func requestSince(history []openai.ChatCompletionMessage, at []time.Time) time.Time {
-	if len(at) != len(history) {
-		return time.Time{}
+	if i := statusRequestIndex(history, at); i >= 0 {
+		return at[i]
 	}
-	var users []int
-	for i, m := range history {
-		if m.Role == openai.ChatMessageRoleUser {
-			users = append(users, i)
-		}
-	}
-	if len(users) < 2 {
-		return time.Time{}
-	}
-	earlier := users[:len(users)-1] // without the question itself
-	for i := len(earlier) - 1; i >= 0; i-- {
-		if utf8.RuneCountInString(strings.TrimSpace(history[earlier[i]].Content)) >= minRequestRunes {
-			return at[earlier[i]]
-		}
-	}
-	return at[earlier[0]]
+	return time.Time{}
 }
 
 // statusClaimUnbacked tells whether the answer to a question about how far the work is

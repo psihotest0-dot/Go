@@ -177,6 +177,10 @@ type Config struct {
 	// default) - the local model, even though it is a library question; "deepseek" - the paid one
 	// (it needs PAID_LLM_ENABLED). The button of a conversation in the client still decides first.
 	ExplainLLM string
+	// StatusAnswerEnabled (STATUS_ANSWER_ENABLED): a short question about the work ("успя ли?",
+	// "докъде стигна") after a request about the files, or with a plan of a task in progress, is
+	// answered by the code from the folder and the plan, not by the model (step 3.2). Off by default.
+	StatusAnswerEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -371,6 +375,7 @@ func Load() *Config {
 		LeanPromptEnabled:     boolEnv("LEAN_PROMPT_ENABLED", false),
 		ExplainDossierEnabled: boolEnv("EXPLAIN_DOSSIER_ENABLED", false),
 		ExplainLLM:            strings.ToLower(strings.TrimSpace(os.Getenv("EXPLAIN_LLM"))),
+		StatusAnswerEnabled:   boolEnv("STATUS_ANSWER_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

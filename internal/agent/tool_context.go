@@ -102,6 +102,9 @@ type turnState struct {
 	// the dossier was given (explain.go).
 	explain     string
 	explainDone bool
+	// statusText is the answer of the code to a question about the work, "" for most turns
+	// (status_answer.go): the model is not asked.
+	statusText string
 }
 
 // markPlanActive records that this turn works on a plan in progress.

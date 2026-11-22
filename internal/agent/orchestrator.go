@@ -83,6 +83,8 @@ type Orchestrator struct {
 	// explainDossier is EXPLAIN_DOSSIER_ENABLED: the explanation from the library (explain.go);
 	// explainCloud is EXPLAIN_LLM=deepseek: such a turn goes to the paid model.
 	explainDossier, explainCloud bool
+	// statusAnswer is STATUS_ANSWER_ENABLED: "успя ли?" is answered by the code (status_answer.go).
+	statusAnswer bool
 	// questionEvery is CHAT_QUESTION_EVERY: every this-many-th reply of a conversation ends
 	// with a question; 0, the value of an Orchestrator built without NewOrchestrator, puts
 	// the dose off. See closing_note.go.

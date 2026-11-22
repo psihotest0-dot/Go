@@ -246,6 +246,10 @@ func run() error {
 		orchestrator.WithLeanPrompt()
 		logger.Info("the lean prompt is on")
 	}
+	if cfg.StatusAnswerEnabled {
+		orchestrator.WithStatusAnswer()
+		logger.Info("the answer to a question about the work comes from the code")
+	}
 	if cfg.TaskPlanEnabled {
 		plans := taskplan.NewStore(database)
 		toolRegistry.WithPlans(plans)

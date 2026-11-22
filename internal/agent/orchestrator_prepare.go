@@ -79,6 +79,8 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// An explanation from the library (step 2.8): its search is forced, gathered by the code, and
 	// answered by the model EXPLAIN_LLM names.
 	turn.setExplain(o.explainSubjectFor(req.Content))
+	// "Успя ли?" about work on the files or a plan: the code answers from the folder and the plan.
+	turn.setStatusAnswer(o.statusAnswerFor(ctx, userID, req.Content, chatCtx.History, chatCtx.HistoryAt, taskPlan))
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}
