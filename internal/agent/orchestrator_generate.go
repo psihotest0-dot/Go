@@ -370,6 +370,11 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 					parseErr, tc.Function.Name)
 				countToolCall(tc.Function.Name, toolResultBadArgs)
 				turn.addToolLog(toolLogFailure(tc.Function.Name, "the arguments were not a JSON object", true))
+			} else if key := callKey(tc.Function.Name, args); turn.ranBefore(key) {
+				slog.WarnContext(ctx, "the same tool call again in one turn; not run", "tool", tc.Function.Name)
+				countToolCall(tc.Function.Name, toolResultDuplicate)
+				turn.addToolLog(toolLogRepeat(tc.Function.Name))
+				content = repeatedCallResult(tc.Function.Name)
 			} else {
 				res, err := o.tools.ExecuteTool(ctx, tc.Function.Name, args)
 				switch {
@@ -403,6 +408,7 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 					slog.Info("tool execution succeeded", "tool", tc.Function.Name, "result_bytes", len(resBytes))
 					countToolCall(tc.Function.Name, toolResultOK)
 					turn.addToolLog(toolLogLine(tc.Function.Name, args, res, len(resBytes)))
+					turn.rememberCall(tc.Function.Name, key)
 					o.recordPlanEvidence(ctx, tc.Function.Name, args, res, len(resBytes))
 				}
 			}
@@ -468,6 +474,9 @@ func (o *Orchestrator) runRounds(
 	// The caller's slice is copied because tool rounds append to it and the
 	// caller may still use its own view (e.g. for tracing).
 	messages := slices.Clone(finalMessages)
+	// The results of the calls of an earlier run (a retry of the turn) are not in these
+	// messages, so a call made there may be made here (see tool_repeat.go).
+	turnFrom(ctx).forgetCalls()
 
 	var assistantContent strings.Builder
 	var executed []openai.ToolCall

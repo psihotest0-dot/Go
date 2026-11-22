@@ -83,6 +83,9 @@ type turnState struct {
 	// toolLog is what the tools of the turn did, one line a call, written by the server and
 	// stored with the answer (see tool_log.go).
 	toolLog []string
+	// calls are the calls of tools that worked in this run of the rounds, by callKey: the same
+	// call again is not run (see tool_repeat.go).
+	calls map[string]struct{}
 }
 
 // markPlanActive records that this turn works on a plan in progress.

@@ -54,7 +54,7 @@ func init() {
 	// The series exist at zero from the start, so that increase() sees the first call of a
 	// kind (as the Oracle series do; see metrics.init).
 	for _, label := range knownTools {
-		for _, result := range []string{toolResultOK, toolResultRefused, toolResultFailed, toolResultBadArgs} {
+		for _, result := range []string{toolResultOK, toolResultRefused, toolResultFailed, toolResultBadArgs, toolResultDuplicate} {
 			metrics.ToolCalls.WithLabelValues(label, result)
 		}
 	}

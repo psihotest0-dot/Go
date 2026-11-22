@@ -70,7 +70,8 @@ var (
 	// ToolCalls counts the calls of the model's tools in the chat, by tool and result: "ok" the
 	// tool ran, "refused" the model got the call wrong (a missing argument, a link it did not
 	// get from the user; the reason went back to it), "failed" the server failed, "bad_args" the
-	// arguments were not a JSON object. The tool is one of the names the server knows, or
+	// arguments were not a JSON object, "duplicate" the same call (tool and arguments) was made
+	// already in the turn and was not run again. The tool is one of the names the server knows, or
 	// "unknown" (a name the model made up), so the label cannot grow without bound.
 	ToolCalls = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "agent_tool_calls_total",
