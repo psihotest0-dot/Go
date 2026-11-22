@@ -39,7 +39,7 @@ func TestMemoryOfADeletedChatIsStillMadeAndThenTheMessageIsPurged(t *testing.T) 
 	require.Equal(t, int64(1), deleted.Retired, "the unread message is kept for the memory job")
 
 	llmMock := &mockLLMClient{responses: []string{
-		`[{"fact_key": "location", "value": "Varna", "statement": "Живея във Варна", "is_explicit_change": false}]`,
+		`[{"evidence": "Живея във Варна", "fact_key": "location", "value": "Varna", "statement": "Живея във Варна", "is_explicit_change": false}]`,
 	}}
 	worker := NewMemoryConsolidationWorker(database, llmMock, &mockEmbedder{})
 	require.NoError(t, worker.Work(ctx, &river.Job[MemoryConsolidationArgs]{Args: MemoryConsolidationArgs{UserID: user.ID}}))

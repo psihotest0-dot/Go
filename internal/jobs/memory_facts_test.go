@@ -137,8 +137,10 @@ func (e *consolidationEnv) statuses() map[string]string {
 	return out
 }
 
+// factJSON is one fact of the reflector; its evidence is the value, which every message of these
+// tests has in it (groundedFacts drops a fact whose evidence is not in the message).
 func factJSON(key, value, statement string, explicit bool) string {
-	return fmt.Sprintf(`[{"fact_key": %q, "value": %q, "statement": %q, "is_explicit_change": %v}]`, key, value, statement, explicit)
+	return fmt.Sprintf(`[{"evidence": %q, "fact_key": %q, "value": %q, "statement": %q, "is_explicit_change": %v}]`, value, key, value, statement, explicit)
 }
 
 const (
@@ -256,7 +258,7 @@ func (r *roleRecordingLLM) ChatWithJSONSchema(_ context.Context, req openai.Chat
 func TestTheReflectorWritesAboutThePersonInTheThirdPerson(t *testing.T) {
 	var seen []string
 	e := newConsolidationEnv(t)
-	e.worker.llmClient = &promptRecordingLLM{prompts: &seen, answer: factJSON("name", "Ивайло", "Потребителят се казва Ивайло", false)}
+	e.worker.llmClient = &promptRecordingLLM{prompts: &seen, answer: `[{"evidence": "Казвам се Ивайло", "fact_key": "name", "value": "Ивайло", "statement": "Потребителят се казва Ивайло", "is_explicit_change": false}]`}
 	e.say("Казвам се Ивайло")
 	e.worker.llmClient = &promptRecordingLLM{prompts: &seen, answer: "[]"}
 	e.say("Живея в София")
@@ -284,4 +286,15 @@ func (r *promptRecordingLLM) ChatWithJSONSchema(_ context.Context, req openai.Ch
 	return openai.ChatCompletionResponse{
 		Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Content: r.answer}}},
 	}, nil
+}
+
+// A fact that does not stand on the person's words is not stored: here the model "remembers" a
+// liking the message never mentions, next to the fact it does (plan step 0.2).
+func TestAFactWithoutThePersonsWordsIsNotStored(t *testing.T) {
+	e := newConsolidationEnv(t,
+		`[{"evidence": "Живея в София", "fact_key": "location", "value": "София", "statement": "Потребителят живее в София", "is_explicit_change": false},`+
+			` {"evidence": "обича планините", "fact_key": "hobby", "value": "планини", "statement": "Потребителят обича планините", "is_explicit_change": false}]`,
+	)
+	e.say("Живея в София")
+	assert.Equal(t, map[string]string{"Потребителят живее в София": "active"}, e.statuses())
 }

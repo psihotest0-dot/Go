@@ -243,6 +243,15 @@ var (
 		Help: "Concept summaries made by the distillation pass, by result.",
 	}, []string{"result"}) // result: ok, error
 
+	// MemoryFactsDropped counts the facts of the background memory analysis that were not stored
+	// because they do not stand on the person's words (jobs/fact_evidence.go): no_evidence (the
+	// model quoted nothing), not_in_message (its quote is not in the message), name_not_a_name (a
+	// fact of the kind "name" whose value is long or is not in the message).
+	MemoryFactsDropped = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "memory_facts_dropped_total",
+		Help: "Facts of the memory analysis dropped because they do not stand on the person's words, by reason.",
+	}, []string{"reason"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever
@@ -309,6 +318,9 @@ func init() {
 	for _, kind := range []string{CacheKindQuery, CacheKindPassage} {
 		CacheHits.WithLabelValues(kind)
 		CacheMisses.WithLabelValues(kind)
+	}
+	for _, reason := range []string{"no_evidence", "not_in_message", "name_not_a_name"} {
+		MemoryFactsDropped.WithLabelValues(reason)
 	}
 	// And for the searches, so that the panels show both from the start.
 	for _, search := range []string{RetrievalSearchChunks, RetrievalSearchContext} {

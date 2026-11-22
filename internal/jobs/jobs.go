@@ -145,7 +145,11 @@ func NewMemoryConsolidationWorker(dbClient *db.Database, llmClient llm.LLMClient
 	}
 }
 
+// Fact is one fact the reflector found in a message. Evidence comes first in the schema, so
+// that the model copies the person's words before it writes the fact; groundedFacts keeps only
+// the facts whose evidence is in the message word for word.
 type Fact struct {
+	Evidence         string `json:"evidence"`
 	FactKey          string `json:"fact_key"`
 	Value            string `json:"value"`
 	Statement        string `json:"statement"`
@@ -228,6 +232,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 			w.countFailedAnalysis(ctx, msg.ID)
 			continue
 		}
+		facts = groundedFacts(msg.Content, facts)
 
 		hasErrors := false
 		if len(facts) > 0 {

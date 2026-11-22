@@ -104,8 +104,8 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 
 	llmMock := &mockLLMClient{
 		responses: []string{
-			`[{"fact_key": "location", "value": "Sofia", "statement": "Живея в София", "is_explicit_change": false}]`,
-			`[{"fact_key": "location", "value": "Varna", "statement": "Преместих се във Варна", "is_explicit_change": true}]`,
+			`[{"evidence": "Живея в София", "fact_key": "location", "value": "Sofia", "statement": "Живея в София", "is_explicit_change": false}]`,
+			`[{"evidence": "Преместих се във Варна", "fact_key": "location", "value": "Varna", "statement": "Преместих се във Варна", "is_explicit_change": true}]`,
 		},
 	}
 	embedderMock := &mockEmbedder{}
