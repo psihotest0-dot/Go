@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -93,6 +94,11 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// does not grow past its budget. A turn without a link has the budgets it always had.
 	userURLs := userURLKeys(chatCtx.History)
 	tools := o.turnTools()
+	if o.leanPrompt && len(chatCtx.Attachments) == 0 {
+		// Without an attached file the tool that reads one is of no use (255 tokens a turn).
+		tools = slices.DeleteFunc(tools, func(t openai.Tool) bool { return t.Function != nil && t.Function.Name == readAttachmentTool })
+	}
+	chatCtx.Lean = o.leanPrompt
 	historyTokens := plan.limits.historyTokens
 	if taskPlan != nil {
 		// The tools of the plan are on offer from the start, in the place of their stub; the note

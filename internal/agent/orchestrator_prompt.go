@@ -35,6 +35,7 @@ func buildSystemPrompt(ctx chatContext) (openai.ChatCompletionMessage, error) {
 		"RelevantMemories": ctx.Memories,
 		"Chunks":           ctx.Chunks,
 		"Attachments":      ctx.Attachments,
+		"Lean":             ctx.Lean,
 	})
 	if err != nil {
 		return openai.ChatCompletionMessage{}, err

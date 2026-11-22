@@ -46,6 +46,8 @@ type chatContext struct {
 	Chunks   []string
 	Sources  []api.SourceInfo
 	Rules    []string
+	// Lean leaves out of the system prompt the parts Orchestrator.WithLeanPrompt names.
+	Lean bool
 	// StyleNotes are the confirmed notes on how the user likes to be talked to.
 	StyleNotes  []string
 	TopMemories []string

@@ -242,6 +242,10 @@ func run() error {
 
 	// The plan of a task (package taskplan): off unless TASK_PLAN_ENABLED. The server keeps the
 	// plan of a conversation and checks that a step is done before it is marked so.
+	if cfg.LeanPromptEnabled {
+		orchestrator.WithLeanPrompt()
+		logger.Info("the lean prompt is on")
+	}
 	if cfg.TaskPlanEnabled {
 		plans := taskplan.NewStore(database)
 		toolRegistry.WithPlans(plans)

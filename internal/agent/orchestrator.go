@@ -77,6 +77,9 @@ type Orchestrator struct {
 	libraryPaid bool
 	// answerPlanner makes the plan of an answer to a personal message; nil: off (answer_plan.go).
 	answerPlanner *answerplan.Planner
+	// leanPrompt is LEAN_PROMPT_ENABLED: the prompt without the parts that the measurement of
+	// 2026-11-22 found to be of no use (WithLeanPrompt).
+	leanPrompt bool
 	// questionEvery is CHAT_QUESTION_EVERY: every this-many-th reply of a conversation ends
 	// with a question; 0, the value of an Orchestrator built without NewOrchestrator, puts
 	// the dose off. See closing_note.go.
@@ -96,6 +99,18 @@ func (o *Orchestrator) WithFileTools() *Orchestrator {
 // (DefaultToolRegistry.WithLibraryAdd).
 func (o *Orchestrator) WithLibraryAdd() *Orchestrator {
 	o.addToLibrary = true
+	return o
+}
+
+// WithLeanPrompt sends the lean prompt: without the tone examples, the list of the tools (their
+// definitions name them) and the second description of the web tools with its example, and
+// without read_attachment in a conversation that has no attached file. Measured on 2026-11-22
+// (go-monolith-backups\measurements\prompt_modules_2026-11-22): the 90 cases of the tools and
+// the books 177 of 180 instead of 171 - the web after a read file 0 of 6 instead of 4 of 6 -
+// about 15 % faster, ~1130 tokens less; the owner's blind test of the tone 5 : 5 (and 5 for the
+// same at temperature 1.0).
+func (o *Orchestrator) WithLeanPrompt() *Orchestrator {
+	o.leanPrompt = true
 	return o
 }
 

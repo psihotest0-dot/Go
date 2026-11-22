@@ -165,6 +165,10 @@ type Config struct {
 	// vector is made from "themes: memory", so that the search finds it for a mood or a moment.
 	// Off by default: without it no memory gets themes and nothing changes.
 	MemoryThemesEnabled bool
+	// LeanPromptEnabled (LEAN_PROMPT_ENABLED) sends the lean chat prompt (agent.WithLeanPrompt):
+	// without the tone examples, the repeated description of the tools and of the web, and
+	// without read_attachment when no file is attached. Off by default.
+	LeanPromptEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -356,6 +360,7 @@ func Load() *Config {
 		TaskPlanEnabled:     boolEnv("TASK_PLAN_ENABLED", false),
 		AnswerPlanEnabled:   boolEnv("ANSWER_PLAN_ENABLED", false),
 		MemoryThemesEnabled: boolEnv("MEMORY_THEMES_ENABLED", false),
+		LeanPromptEnabled:   boolEnv("LEAN_PROMPT_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),
