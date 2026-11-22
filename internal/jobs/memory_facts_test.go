@@ -110,7 +110,7 @@ func newConsolidationEnv(t *testing.T, responses ...string) *consolidationEnv {
 	llmMock := &mockLLMClient{responses: responses}
 	return &consolidationEnv{
 		t: t, ctx: ctx, database: database, user: user, llm: llmMock,
-		worker: NewMemoryConsolidationWorker(database, llmMock, &mockEmbedder{}),
+		worker: quietWorker(NewMemoryConsolidationWorker(database, llmMock, &mockEmbedder{})),
 	}
 }
 

@@ -131,6 +131,16 @@ type MemoryConsolidationWorker struct {
 	dbClient  *db.Database
 	llmClient llm.LLMClient
 	embedder  llm.Embedder
+	// now is the clock that tells whether a conversation is quiet (planAnalysis); nil is time.Now.
+	now func() time.Time
+}
+
+// clock is the time of the worker's clock.
+func (w *MemoryConsolidationWorker) clock() time.Time {
+	if w.now != nil {
+		return w.now()
+	}
+	return time.Now()
 }
 
 func (w *MemoryConsolidationWorker) Timeout(job *river.Job[MemoryConsolidationArgs]) time.Duration {
@@ -203,9 +213,22 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		return nil
 	}
 
-	processedCount := 0
+	// A conversation is read when it is quiet, a long one in windows (memory_windows.go).
+	plan := planAnalysis(messages, w.clock())
+	if plan.waiting > 0 {
+		slog.Info("messages wait for their conversation to become quiet", "user_id", job.Args.UserID, "messages", plan.waiting)
+	}
 
-	for _, msg := range messages {
+	processedCount := 0
+	for _, window := range plan.windows {
+		if ctx.Err() != nil || processedCount >= consolidationMessagesPerRun {
+			return nil
+		}
+		w.readWindow(ctx, job.Args.UserID, window)
+		processedCount += personLines(window)
+	}
+
+	for _, msg := range plan.single {
 		if ctx.Err() != nil {
 			break
 		}
@@ -341,6 +364,11 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, userID u
 		return nil, err
 	}
 
+	return parseFacts(resp)
+}
+
+// parseFacts reads the facts of the model's answer (a JSON array, maybe in a code fence).
+func parseFacts(resp openai.ChatCompletionResponse) ([]Fact, error) {
 	var facts []Fact
 	if len(resp.Choices) > 0 {
 		cleaned := strings.TrimSpace(resp.Choices[0].Message.Content)
@@ -349,8 +377,7 @@ func (w *MemoryConsolidationWorker) analyzeMessage(ctx context.Context, userID u
 		cleaned = strings.TrimSuffix(cleaned, "```")
 		cleaned = strings.TrimSpace(cleaned)
 
-		err = json.Unmarshal([]byte(cleaned), &facts)
-		if err != nil {
+		if err := json.Unmarshal([]byte(cleaned), &facts); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal facts: %w", err)
 		}
 	}

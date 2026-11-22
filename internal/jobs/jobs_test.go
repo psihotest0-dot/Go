@@ -4,6 +4,7 @@ import (
 	"context"
 	"go-monolith/internal/config"
 	"testing"
+	"time"
 
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
@@ -20,6 +21,8 @@ import (
 type mockLLMClient struct {
 	responses []string
 	callCount int
+	// requests are the JSON-schema requests it got.
+	requests []openai.ChatCompletionRequest
 }
 
 func (m *mockLLMClient) Chat(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
@@ -31,6 +34,7 @@ func (m *mockLLMClient) ChatStream(ctx context.Context, req openai.ChatCompletio
 }
 
 func (m *mockLLMClient) ChatWithJSONSchema(ctx context.Context, req openai.ChatCompletionRequest, schema interface{}) (openai.ChatCompletionResponse, error) {
+	m.requests = append(m.requests, req)
 	if m.callCount >= len(m.responses) {
 		return openai.ChatCompletionResponse{}, nil
 	}
@@ -110,7 +114,7 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	}
 	embedderMock := &mockEmbedder{}
 
-	worker := NewMemoryConsolidationWorker(database, llmMock, embedderMock)
+	worker := quietWorker(NewMemoryConsolidationWorker(database, llmMock, embedderMock))
 
 	// Message 1
 	sessionID := "sess-1"
@@ -154,4 +158,11 @@ func TestMemoryConsolidationWorker(t *testing.T) {
 	require.Len(t, mems2, 1, "the replaced memory must be gone")
 	assert.Equal(t, "Преместих се във Варна", mems2[0].Content)
 	assert.Equal(t, "active", mems2[0].Status)
+}
+
+// quietWorker reads the messages as if their conversation had been quiet for an hour: a message
+// written by the test a moment ago is read at once (see planAnalysis).
+func quietWorker(w *MemoryConsolidationWorker) *MemoryConsolidationWorker {
+	w.now = func() time.Time { return time.Now().Add(time.Hour) }
+	return w
 }
