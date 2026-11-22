@@ -170,6 +170,29 @@ func shouldSkipRetrieval(query string) bool {
 	return false
 }
 
+// earlierUserMessages are the person's messages before the one of this turn, the most recent first
+// (at most retrieval.EarlierMessagesForMemories). history is the newest first, and its first message
+// of the person is the one of this turn (it is stored before the turn is prepared; with regenerate
+// the answer being replaced comes before it).
+func earlierUserMessages(history []db.Message) []string {
+	var out []string
+	current := true
+	for _, m := range history {
+		if m.Role != "user" {
+			continue
+		}
+		if current {
+			current = false
+			continue
+		}
+		out = append(out, m.Content)
+		if len(out) == retrieval.EarlierMessagesForMemories {
+			break
+		}
+	}
+	return out
+}
+
 // topMemoryLimit is how many memories, by importance, the prompt always carries as
 // profile facts.
 const topMemoryLimit = 15
@@ -219,9 +242,21 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 	var conceptChunks []retrieval.SearchResult
 	var searchErr error
 
+	// The history is read first: the search for memories uses the person's earlier messages
+	// when the message is short (retrieval/memory_query.go). dbMsgs are the newest first, and the
+	// message of this turn is already stored.
+	dbMsgs, err := o.db.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
+		UserID:    userID,
+		SessionID: req.SessionID,
+		Limit:     int32(lim.historyMessages),
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to get messages", "err", err)
+		return chatCtx, memoryIDs, err
+	}
+
 	if !skip {
-		// Call new SearchForContext method
-		memories, conceptChunks, searchErr = o.retrieval.SearchForContext(ctx, userID, req.Content, 5)
+		memories, conceptChunks, searchErr = o.retrieval.SearchForContext(ctx, userID, req.Content, earlierUserMessages(dbMsgs), 5)
 		// Retrieval is an enhancement, not a requirement: a degraded search must
 		// not cost the user their answer, so the error is logged and the chat
 		// continues without retrieved context.
@@ -287,18 +322,7 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 		chatCtx.StyleNotes = notes
 	}
 
-	// Fetch Message History
-	dbMsgs, err := o.db.Queries.GetMessagesBySession(ctx, db.GetMessagesBySessionParams{
-		UserID:    userID,
-		SessionID: req.SessionID,
-		Limit:     int32(lim.historyMessages),
-	})
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to get messages", "err", err)
-		return chatCtx, memoryIDs, err
-	}
-
-	// dbMsgs are returned in DESC order (newest first).
+	// The message history: dbMsgs are returned in DESC order (newest first).
 	// We need them in ASC order (oldest first) for the prompt history.
 	for i := len(dbMsgs) - 1; i >= 0; i-- {
 		m := dbMsgs[i]

@@ -172,7 +172,7 @@ func TestSearchRawChunksWithoutNearbyConceptsAddsNothing(t *testing.T) {
 
 func (e *chunkEnv) contextSummaries(t *testing.T, question string) []string {
 	t.Helper()
-	_, concepts, err := e.svc.SearchForContext(context.Background(), e.user, question, 5)
+	_, concepts, err := e.svc.SearchForContext(context.Background(), e.user, question, nil, 5)
 	require.NoError(t, err)
 	var texts []string
 	for _, c := range concepts {

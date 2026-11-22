@@ -417,7 +417,10 @@ func CosineSimilarity(a, b []float32) float32 {
 	return dotProduct / (float32(math.Sqrt(float64(normA))) * float32(math.Sqrt(float64(normB))))
 }
 
-func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUID, query string, limit int) (memories []SearchResult, conceptChunks []SearchResult, err error) {
+// SearchForContext finds what the prompt of a turn holds besides the history: the memories for
+// the message (earlier: the person's earlier messages in the conversation, the most recent first,
+// used for a short message - see memory_query.go) and the concept summaries close to it.
+func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUID, query string, earlier []string, limit int) (memories []SearchResult, conceptChunks []SearchResult, err error) {
 	start := time.Now()
 	defer func() {
 		metrics.StageLatency.WithLabelValues("search_for_context").Observe(time.Since(start).Seconds())
@@ -438,7 +441,7 @@ func (s *RetrievalService) SearchForContext(ctx context.Context, userID uuid.UUI
 
 	eg, childCtx := errgroup.WithContext(ctx)
 	eg.Go(func() (err error) {
-		memories, err = s.searchMemories(childCtx, userID, query, limit, queryVec)
+		memories, err = s.memoriesInConversation(childCtx, userID, query, earlier, limit, queryVec)
 		return err
 	})
 	eg.Go(func() error {
