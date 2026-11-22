@@ -388,7 +388,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		Status:          req.Status,
 		SourceMessageID: req.SourceMessageID,
 		Importance:      req.Importance,
-		Metadata:        metadata,
+		Metadata:        db.WithoutMemoryThemes(metadata), // only the theme job writes them
 		Embedding:       newEmbedding,
 		EmbeddingModel:  newEmbeddingModel,
 	})
@@ -543,12 +543,14 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		mem, dbErr := a.db.UpdateMemoryWithCheck(r.Context(), db.UpdateMemoryParams{
-			ID:             memoryID,
-			UserID:         userID,
-			Content:        sql.NullString{String: req.Content, Valid: true},
-			Status:         sql.NullString{String: req.Status, Valid: true},
-			Importance:     sql.NullInt32{Int32: req.Importance, Valid: true},
-			Metadata:       metadata,
+			ID:         memoryID,
+			UserID:     userID,
+			Content:    sql.NullString{String: req.Content, Valid: true},
+			Status:     sql.NullString{String: req.Status, Valid: true},
+			Importance: sql.NullInt32{Int32: req.Importance, Valid: true},
+			// A new text loses its themes (step 2.12): the vector above is made from the text
+			// alone, and the theme job gives the memory new ones later.
+			Metadata:       db.MemoryMetadataForUpdate(metadata, existingMem.Metadata, newContentHash != existingMem.ContentHash),
 			Embedding:      newEmbedding,
 			EmbeddingModel: newEmbeddingModel,
 		})

@@ -15,13 +15,46 @@ import (
 	"go-monolith/internal/retrieval"
 )
 
-func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Database, llmClient llm.LLMClient, embedder llm.Embedder, catMgr *retrieval.CategoryManager) (*river.Client[pgx.Tx], error) {
+// Options turn on the jobs that are behind a flag.
+type Options struct {
+	// MemoryThemes (MEMORY_THEMES_ENABLED) runs the theme job of the memories (memory_themes.go).
+	MemoryThemes bool
+}
+
+func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Database, llmClient llm.LLMClient, embedder llm.Embedder, catMgr *retrieval.CategoryManager, opts Options) (*river.Client[pgx.Tx], error) {
 	workers := river.NewWorkers()
 	river.AddWorker(workers, NewMemoryConsolidationPeriodicWorker(database))
 	river.AddWorker(workers, NewMemoryConsolidationWorker(database, llmClient, embedder))
 	river.AddWorker(workers, NewEmbeddingCacheGCWorker(database))
 	river.AddWorker(workers, NewIngestFileWorker(database, embedder, catMgr))
 	river.AddWorker(workers, NewDistillationWorker(database, llmClient, embedder))
+	// The worker is always there, so that a job left in the queue when the flag was turned off
+	// still finishes; only the periodic insert follows the flag.
+	river.AddWorker(workers, NewMemoryThemesWorker(database, llmClient, embedder))
+
+	periodic := []*river.PeriodicJob{
+		river.NewPeriodicJob(
+			river.PeriodicInterval(5*time.Minute),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return MemoryConsolidationPeriodicArgs{}, &river.InsertOpts{
+					Queue: "maintenance",
+				}
+			},
+			&river.PeriodicJobOpts{RunOnStart: true},
+		),
+		river.NewPeriodicJob(
+			river.PeriodicInterval(24*time.Hour),
+			func() (river.JobArgs, *river.InsertOpts) {
+				return EmbeddingCacheGCArgs{}, &river.InsertOpts{
+					Queue: "maintenance",
+				}
+			},
+			&river.PeriodicJobOpts{RunOnStart: true},
+		),
+	}
+	if opts.MemoryThemes {
+		periodic = append(periodic, memoryThemesJob())
+	}
 
 	driver := riverpgxv5.New(pool)
 	riverClient, err := river.NewClient(driver, &river.Config{
@@ -32,27 +65,8 @@ func NewRiverClient(ctx context.Context, pool *pgxpool.Pool, database *db.Databa
 			"memory":       {MaxWorkers: 1},
 			"maintenance":  {MaxWorkers: 1},
 		},
-		Workers: workers,
-		PeriodicJobs: []*river.PeriodicJob{
-			river.NewPeriodicJob(
-				river.PeriodicInterval(5*time.Minute),
-				func() (river.JobArgs, *river.InsertOpts) {
-					return MemoryConsolidationPeriodicArgs{}, &river.InsertOpts{
-						Queue: "maintenance",
-					}
-				},
-				&river.PeriodicJobOpts{RunOnStart: true},
-			),
-			river.NewPeriodicJob(
-				river.PeriodicInterval(24*time.Hour),
-				func() (river.JobArgs, *river.InsertOpts) {
-					return EmbeddingCacheGCArgs{}, &river.InsertOpts{
-						Queue: "maintenance",
-					}
-				},
-				&river.PeriodicJobOpts{RunOnStart: true},
-			),
-		},
+		Workers:      workers,
+		PeriodicJobs: periodic,
 	})
 	if err != nil {
 		return nil, err

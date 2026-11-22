@@ -182,7 +182,7 @@ func run() error {
 		// don't exit, just continue without it if it fails
 	}
 
-	riverClient, err := jobs.NewRiverClient(startupCtx, database.Pool, database, llmClient, embedder, catMgr)
+	riverClient, err := jobs.NewRiverClient(startupCtx, database.Pool, database, llmClient, embedder, catMgr, jobs.Options{MemoryThemes: cfg.MemoryThemesEnabled})
 	if err != nil {
 		return fmt.Errorf("failed to create river client: %w", err)
 	}

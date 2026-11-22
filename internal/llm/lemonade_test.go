@@ -475,3 +475,31 @@ func TestMockLLMStreamErrorGivesNilStream(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, stream == nil)
 }
+
+// A ready schema (json.RawMessage) is sent as it is, with the bounds a Go type cannot express; a
+// broken one is refused before anything is sent.
+func TestChatWithJSONSchemaSendsAReadySchemaAsItIs(t *testing.T) {
+	var calls atomic.Int32
+	var body struct {
+		ResponseFormat struct {
+			JSONSchema struct {
+				Schema json.RawMessage `json:"schema"`
+			} `json:"json_schema"`
+		} `json:"response_format"`
+	}
+	c := newTestClient(t, Options{Model: "m"}, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		writeJSON(w, http.StatusOK, okCompletion)
+	})
+
+	schema := json.RawMessage(`{"type":"array","maxItems":5,"items":{"type":"string","maxLength":40}}`)
+	_, err := c.ChatWithJSONSchema(context.Background(), userRequest("hi"), schema)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(schema), string(body.ResponseFormat.JSONSchema.Schema))
+
+	_, err = c.ChatWithJSONSchema(context.Background(), userRequest("hi"), json.RawMessage(`{"type":`))
+	require.Error(t, err)
+	assert.EqualValues(t, 1, calls.Load(), "a broken schema is not sent")
+}

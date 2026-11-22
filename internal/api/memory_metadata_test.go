@@ -83,3 +83,42 @@ func TestTheMetadataOfAMemoryIsStored(t *testing.T) {
 	}
 	assert.Equal(t, want, storedMetadata(t, database, userID, created.ID))
 }
+
+// The themes of a memory (step 2.12) belong to its text and only the theme job writes them: a
+// client cannot send them, an edit of the text drops them (the job gives the new text its own), and
+// an edit that keeps the text keeps them, even when the client sends metadata without them.
+func TestTheThemesOfAMemoryFollowItsText(t *testing.T) {
+	a, database, userID := setupAPI(t)
+	ctx := context.Background()
+
+	w := sendMemory(t, a, userID, http.MethodPost, "/memories", map[string]any{
+		"content": "Ивайло почива на дивана.", "importance": 5, "metadata": map[string]any{"source": "test", "themes": []string{"чужда"}},
+	})
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created api.MemoryDTO
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	assert.Equal(t, map[string]any{"source": "test"}, storedMetadata(t, database, userID, created.ID), "a client cannot write themes")
+
+	mem, err := database.Queries.GetMemoryByID(ctx, db.GetMemoryByIDParams{ID: created.ID, UserID: userID})
+	require.NoError(t, err)
+	n, err := database.Queries.SetMemoryThemes(ctx, db.SetMemoryThemesParams{
+		Themes: json.RawMessage(`["умора","почивка"]`), ID: mem.ID, UserID: userID, ContentHash: mem.ContentHash,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n)
+
+	path := "/memories/" + created.ID.String()
+	w = sendMemory(t, a, userID, http.MethodPut, path, map[string]any{
+		"content": "Ивайло почива на дивана.", "status": "active", "importance": 6, "metadata": map[string]any{"source": "flet"},
+	})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, map[string]any{"source": "flet", "themes": []any{"умора", "почивка"}}, storedMetadata(t, database, userID, created.ID),
+		"the same text keeps its themes")
+
+	w = sendMemory(t, a, userID, http.MethodPut, path, map[string]any{
+		"content": "Ивайло почива в градината.", "status": "active", "importance": 6,
+	})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Equal(t, map[string]any{"source": "flet"}, storedMetadata(t, database, userID, created.ID),
+		"a new text loses them, also when no metadata is sent")
+}

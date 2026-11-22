@@ -214,3 +214,22 @@ func TestOptionsDefaults(t *testing.T) {
 	assert.EqualValues(t, 5, Options{BatchSize: 5}.batch())
 	assert.NotNil(t, Options{}.logger())
 }
+
+// A memory with themes (step 2.12) is embedded again with them, as the theme job made it.
+func TestMemoriesAreReembeddedWithTheirThemes(t *testing.T) {
+	e := newEnv(t)
+	m, err := e.d.Queries.CreateMemory(e.ctx, db.CreateMemoryParams{
+		UserID: e.user.ID, Content: "Почива на дивана.", Status: "active",
+		Embedding: pgvector.NewVector(constVector(0.1, config.VectorDimension)), EmbeddingModel: oldModel, Importance: 5,
+		Metadata:    pqtype.NullRawMessage{RawMessage: []byte(`{"themes":["умора","вечер"]}`), Valid: true},
+		ContentHash: db.GenerateHash("Почива на дивана." + uuid.NewString()),
+	})
+	require.NoError(t, err)
+
+	f := &fakeEmbedder{value: 0.6}
+	_, err = Memories(e.ctx, e.d, f, Options{})
+	require.NoError(t, err)
+	assert.Contains(t, f.texts, "умора, вечер: Почива на дивана.")
+	v, _ := e.memoryState(t, m.ID)
+	assert.InDelta(t, 0.6, v, 1e-6)
+}

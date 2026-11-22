@@ -267,6 +267,15 @@ var (
 		Help: "Memory marks in planned answers, by kind (used, unknown).",
 	}, []string{"kind"})
 
+	// MemoryThemes counts the memories the theme job (step 2.12, jobs.MemoryThemesWorker) looked
+	// at, by result: themed (themes stored, the vector made from them), empty (the model gave
+	// none), changed (the text changed or the memory went meanwhile), failed (the model or the
+	// embedder failed; the next run tries again). Only while MEMORY_THEMES_ENABLED is on.
+	MemoryThemes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "memory_themes_total",
+		Help: "Memories the theme job looked at, by result (themed, empty, changed, failed).",
+	}, []string{"result"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever

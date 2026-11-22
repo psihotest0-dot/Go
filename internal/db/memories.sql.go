@@ -8,6 +8,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -227,6 +228,55 @@ func (q *Queries) GetMemories(ctx context.Context, arg GetMemoriesParams) ([]Mem
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getMemoriesWithoutThemes = `-- name: GetMemoriesWithoutThemes :many
+SELECT id, user_id, content, content_hash, metadata
+FROM memories
+WHERE status IN ('active', 'candidate')
+  AND content <> ''
+  AND metadata->'themes' IS NULL
+ORDER BY user_id, created_at, id
+LIMIT $1
+`
+
+type GetMemoriesWithoutThemesRow struct {
+	ID          uuid.UUID             `json:"id"`
+	UserID      uuid.UUID             `json:"user_id"`
+	Content     string                `json:"content"`
+	ContentHash string                `json:"content_hash"`
+	Metadata    pqtype.NullRawMessage `json:"metadata"`
+}
+
+// The next memories the theme job (step 2.12, jobs.MemoryThemesWorker) has not looked at yet,
+// grouped by person so that one request to the model holds the memories of one person only.
+func (q *Queries) GetMemoriesWithoutThemes(ctx context.Context, limit int32) ([]GetMemoriesWithoutThemesRow, error) {
+	rows, err := q.db.QueryContext(ctx, getMemoriesWithoutThemes, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetMemoriesWithoutThemesRow{}
+	for rows.Next() {
+		var i GetMemoriesWithoutThemesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Content,
+			&i.ContentHash,
+			&i.Metadata,
 		); err != nil {
 			return nil, err
 		}
@@ -537,6 +587,44 @@ type SetMemoryStatusParams struct {
 func (q *Queries) SetMemoryStatus(ctx context.Context, arg SetMemoryStatusParams) error {
 	_, err := q.db.ExecContext(ctx, setMemoryStatus, arg.ID, arg.UserID, arg.Status)
 	return err
+}
+
+const setMemoryThemes = `-- name: SetMemoryThemes :execrows
+UPDATE memories
+SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{themes}', $1::jsonb),
+    embedding = COALESCE($2::vector, embedding),
+    embedding_model = COALESCE($3, embedding_model)
+WHERE id = $4 AND user_id = $5
+  AND content_hash = $6
+  AND metadata->'themes' IS NULL
+`
+
+type SetMemoryThemesParams struct {
+	Themes         json.RawMessage  `json:"themes"`
+	Embedding      *pgvector.Vector `json:"embedding"`
+	EmbeddingModel sql.NullString   `json:"embedding_model"`
+	ID             uuid.UUID        `json:"id"`
+	UserID         uuid.UUID        `json:"user_id"`
+	ContentHash    string           `json:"content_hash"`
+}
+
+// Stores the themes of a memory and, when there are any, the vector made from "themes: content".
+// Nothing is written when the text changed (or the memory went) after the job read it, or when
+// the memory already has themes: the next run takes the new text. updated_at stays: the themes
+// are the server's, not a change by the person.
+func (q *Queries) SetMemoryThemes(ctx context.Context, arg SetMemoryThemesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setMemoryThemes,
+		arg.Themes,
+		arg.Embedding,
+		arg.EmbeddingModel,
+		arg.ID,
+		arg.UserID,
+		arg.ContentHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateMemory = `-- name: UpdateMemory :one

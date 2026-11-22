@@ -288,12 +288,21 @@ func (c *LemonadeClient) ChatStream(ctx context.Context, req openai.ChatCompleti
 	return leased, nil
 }
 
-// schemaWrapper allows us to pass a custom struct as a json.Marshaler.
+// schemaWrapper allows us to pass a custom struct as a json.Marshaler. A json.RawMessage is a
+// ready JSON schema and is sent as it is: the schema made from a Go type cannot bound a list
+// (maxItems) or a string (maxLength), and without a bound the local model once repeated one item
+// of a list until max_tokens (the theme job, 2026-11-22: 3 answers of 4).
 type schemaWrapper struct {
 	v interface{}
 }
 
 func (w schemaWrapper) MarshalJSON() ([]byte, error) {
+	if raw, ok := w.v.(json.RawMessage); ok {
+		if !json.Valid(raw) {
+			return nil, fmt.Errorf("the JSON schema is not valid JSON")
+		}
+		return raw, nil
+	}
 	schema, err := jsonschema.GenerateSchemaForType(w.v)
 	if err != nil {
 		return nil, err

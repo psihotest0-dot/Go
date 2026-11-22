@@ -136,7 +136,7 @@ func (s *RetrievalService) CreateMemory(ctx context.Context, userID uuid.UUID, c
 		Content:        content,
 		Status:         status,
 		Importance:     int32(importance),
-		Metadata:       metadata,
+		Metadata:       db.WithoutMemoryThemes(metadata), // only the theme job writes them
 		Embedding:      pgVec,
 		EmbeddingModel: config.DefaultEmbedModel,
 	}

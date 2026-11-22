@@ -123,3 +123,27 @@ WHERE memories.id = v.id;
 SELECT id, content, embedding, COALESCE(metadata->>'fact_key', '')::text AS fact_key
 FROM memories
 WHERE user_id = $1 AND id = ANY(sqlc.arg('ids')::uuid[]) AND embedding IS NOT NULL;
+
+-- The next memories the theme job (step 2.12, jobs.MemoryThemesWorker) has not looked at yet,
+-- grouped by person so that one request to the model holds the memories of one person only.
+-- name: GetMemoriesWithoutThemes :many
+SELECT id, user_id, content, content_hash, metadata
+FROM memories
+WHERE status IN ('active', 'candidate')
+  AND content <> ''
+  AND metadata->'themes' IS NULL
+ORDER BY user_id, created_at, id
+LIMIT sqlc.arg('limit');
+
+-- Stores the themes of a memory and, when there are any, the vector made from "themes: content".
+-- Nothing is written when the text changed (or the memory went) after the job read it, or when
+-- the memory already has themes: the next run takes the new text. updated_at stays: the themes
+-- are the server's, not a change by the person.
+-- name: SetMemoryThemes :execrows
+UPDATE memories
+SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{themes}', sqlc.arg('themes')::jsonb),
+    embedding = COALESCE(sqlc.narg('embedding')::vector, embedding),
+    embedding_model = COALESCE(sqlc.narg('embedding_model'), embedding_model)
+WHERE id = sqlc.arg('id') AND user_id = sqlc.arg('user_id')
+  AND content_hash = sqlc.arg('content_hash')
+  AND metadata->'themes' IS NULL;

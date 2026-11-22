@@ -160,6 +160,11 @@ type Config struct {
 	// message (П55 phase 1, internal/answerplan): the code picks the person's memories for the
 	// reply and the model writes it from them. Off by default: without it nothing changes.
 	AnswerPlanEnabled bool
+	// MemoryThemesEnabled (MEMORY_THEMES_ENABLED) turns on the theme job of the memories (step
+	// 2.12, jobs.MemoryThemesWorker): the local model gives each memory a few theme words and its
+	// vector is made from "themes: memory", so that the search finds it for a mood or a moment.
+	// Off by default: without it no memory gets themes and nothing changes.
+	MemoryThemesEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -339,17 +344,18 @@ func Load() *Config {
 		LLMTopP:                floatEnv("LLM_TOP_P", 0.8, 0.01, 1),
 		LLMPresencePenalty:     floatEnv("LLM_PRESENCE_PENALTY", 0, 0, 2),
 
-		EmbedderURL:        os.Getenv("EMBEDDER_URL"),
-		EmbedderTimeout:    time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
-		DatabaseURL:        dbURL,
-		TelegramBotToken:   os.Getenv("TELEGRAM_BOT_TOKEN"),
-		EnableAdaptiveSkip: adaptiveSkip,
-		EnableDistillation: distillation,
-		FilesEnabled:       boolEnv("FILES_ENABLED", false),
-		FilesDir:           filesDir(),
-		LibraryAddEnabled:  boolEnv("LIBRARY_ADD_ENABLED", false),
-		TaskPlanEnabled:    boolEnv("TASK_PLAN_ENABLED", false),
-		AnswerPlanEnabled:  boolEnv("ANSWER_PLAN_ENABLED", false),
+		EmbedderURL:         os.Getenv("EMBEDDER_URL"),
+		EmbedderTimeout:     time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
+		DatabaseURL:         dbURL,
+		TelegramBotToken:    os.Getenv("TELEGRAM_BOT_TOKEN"),
+		EnableAdaptiveSkip:  adaptiveSkip,
+		EnableDistillation:  distillation,
+		FilesEnabled:        boolEnv("FILES_ENABLED", false),
+		FilesDir:            filesDir(),
+		LibraryAddEnabled:   boolEnv("LIBRARY_ADD_ENABLED", false),
+		TaskPlanEnabled:     boolEnv("TASK_PLAN_ENABLED", false),
+		AnswerPlanEnabled:   boolEnv("ANSWER_PLAN_ENABLED", false),
+		MemoryThemesEnabled: boolEnv("MEMORY_THEMES_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

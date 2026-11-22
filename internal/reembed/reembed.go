@@ -97,7 +97,8 @@ func Memories(ctx context.Context, d *db.Database, e llm.Embedder, opts Options)
 		texts := make([]string, len(memories))
 		ids := make([]uuid.UUID, len(memories))
 		for i, m := range memories {
-			texts[i], ids[i] = m.Content, m.ID
+			// With its themes when the theme job gave it some (step 2.12), as the job made it.
+			texts[i], ids[i] = db.MemoryEmbeddingText(m.Content, m.Metadata), m.ID
 		}
 		batchCtx, cancel := context.WithTimeout(ctx, batchTimeout)
 		vectors, err := e.EmbedTexts(batchCtx, texts, false)
