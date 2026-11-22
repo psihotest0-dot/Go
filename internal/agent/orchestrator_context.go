@@ -322,6 +322,8 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 		chatCtx.StyleNotes = notes
 	}
 
+	chatCtx.EarlierAnswer = earlierAnswerOf(dbMsgs)
+
 	// The message history: dbMsgs are returned in DESC order (newest first).
 	// We need them in ASC order (oldest first) for the prompt history.
 	for i := len(dbMsgs) - 1; i >= 0; i-- {

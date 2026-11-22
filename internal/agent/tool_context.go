@@ -86,6 +86,9 @@ type turnState struct {
 	// calls are the calls of tools that worked in this run of the rounds, by callKey: the same
 	// call again is not run (see tool_repeat.go).
 	calls map[string]struct{}
+	// earlier is the last answer of the conversation that rested on passages of the library
+	// (earlier_answer.go).
+	earlier earlierAnswer
 }
 
 // markPlanActive records that this turn works on a plan in progress.

@@ -590,7 +590,8 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 			results = mergePassages(limit, results, second)
 		}
 	}
-	if len(results) > 0 {
+	results, earlier := r.withEarlierAnswer(ctx, userID, query, scoped, limit, results)
+	if len(results) > 0 || len(earlier) > 0 {
 		turnFrom(ctx).markExternal(sourceSearchDocuments)
 	}
 
@@ -612,9 +613,22 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 		})
 	}
 
+	// The passages of the earlier answer: for the model to know what "it" is and not to tell
+	// them again as new; not in the sources panel, they are not a source of this answer.
+	for _, p := range earlier {
+		formattedResults = append(formattedResults, map[string]interface{}{
+			"id":                  p.ID,
+			"content":             truncateString(p.Content, 1500),
+			"file_name":           p.FileName,
+			"from_earlier_answer": true,
+		})
+	}
 	out := map[string]interface{}{
 		"status":  "success",
 		"results": formattedResults,
+	}
+	if len(earlier) > 0 {
+		out["note"] = earlierPassagesNote
 	}
 	if scoped {
 		// The model should know that these are the passages of that file only, not the

@@ -52,4 +52,7 @@ type chatContext struct {
 	// Attachments are the files the user attached to the conversation, as the
 	// system prompt shows them.
 	Attachments []promptFile
+	// EarlierAnswer is the last answer of the conversation that rested on passages of the
+	// library (earlier_answer.go).
+	EarlierAnswer earlierAnswer
 }

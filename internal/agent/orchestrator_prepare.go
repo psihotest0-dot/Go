@@ -64,6 +64,7 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// The tools of this turn share its state: what untrusted text it has read and
 	// which proposals it made (see turnState).
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
+	turn.setEarlierAnswer(chatCtx.EarlierAnswer)
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}
