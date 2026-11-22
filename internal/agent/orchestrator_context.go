@@ -294,6 +294,9 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 	for _, m := range topMemoriesDb {
 		chatCtx.TopMemories = append(chatCtx.TopMemories, m.Content)
 	}
+	for _, m := range memories {
+		chatCtx.MemoryHits = append(chatCtx.MemoryHits, m.ID)
+	}
 	memories = withoutProfileMemories(memories, topMemoriesDb)
 
 	for _, m := range memories {

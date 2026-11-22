@@ -40,7 +40,7 @@ func (q *Queries) CountAssistantRepliesBefore(ctx context.Context, arg CountAssi
 }
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log, answer_plan) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan
 `
 
 type CreateMessageParams struct {
@@ -50,6 +50,7 @@ type CreateMessageParams struct {
 	Content        string                `json:"content"`
 	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
 	ToolLog        sql.NullString        `json:"tool_log"`
+	AnswerPlan     pqtype.NullRawMessage `json:"answer_plan"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
@@ -60,6 +61,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.Content,
 		arg.SourceChunkIds,
 		arg.ToolLog,
+		arg.AnswerPlan,
 	)
 	var i Message
 	err := row.Scan(
@@ -73,6 +75,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.IsAnalyzed,
 		&i.AnalysisAttempts,
 		&i.ToolLog,
+		&i.AnswerPlan,
 	)
 	return i, err
 }
@@ -121,7 +124,7 @@ func (q *Queries) GetMessageCursor(ctx context.Context, arg GetMessageCursorPara
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
 `
 
 type GetMessagesBySessionParams struct {
@@ -150,6 +153,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
 			&i.ToolLog,
+			&i.AnswerPlan,
 		); err != nil {
 			return nil, err
 		}
@@ -165,7 +169,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 }
 
 const getMessagesBySessionBefore = `-- name: GetMessagesBySessionBefore :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log FROM messages
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages
 WHERE user_id = $1 AND session_id = $2
   AND created_at <= $3::timestamptz
   AND (created_at, id) < ($3::timestamptz, $4::uuid)
@@ -210,6 +214,7 @@ func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessage
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
 			&i.ToolLog,
+			&i.AnswerPlan,
 		); err != nil {
 			return nil, err
 		}
@@ -225,7 +230,7 @@ func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessage
 }
 
 const getRecentMessagesByUser = `-- name: GetRecentMessagesByUser :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
 `
 
 type GetRecentMessagesByUserParams struct {
@@ -253,6 +258,7 @@ func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMess
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
 			&i.ToolLog,
+			&i.AnswerPlan,
 		); err != nil {
 			return nil, err
 		}
@@ -268,7 +274,7 @@ func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMess
 }
 
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan
 FROM messages
 WHERE is_analyzed = FALSE AND user_id = $1
 ORDER BY created_at ASC
@@ -295,6 +301,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 			&i.IsAnalyzed,
 			&i.AnalysisAttempts,
 			&i.ToolLog,
+			&i.AnswerPlan,
 		); err != nil {
 			return nil, err
 		}
@@ -361,4 +368,83 @@ type MarkMessageAnalyzedParams struct {
 func (q *Queries) MarkMessageAnalyzed(ctx context.Context, arg MarkMessageAnalyzedParams) error {
 	_, err := q.db.ExecContext(ctx, markMessageAnalyzed, arg.ID, arg.UserID)
 	return err
+}
+
+const recentAnswerPlanned = `-- name: RecentAnswerPlanned :many
+SELECT (answer_plan IS NOT NULL)::boolean AS planned FROM messages
+WHERE user_id = $1 AND session_id = $2 AND role = 'assistant' AND created_at < $3
+ORDER BY created_at DESC, id DESC LIMIT $4
+`
+
+type RecentAnswerPlannedParams struct {
+	UserID    uuid.UUID    `json:"user_id"`
+	SessionID string       `json:"session_id"`
+	CreatedAt sql.NullTime `json:"created_at"`
+	Limit     int32        `json:"limit"`
+}
+
+// Whether each of the last answers of a conversation before a moment had a plan (П55), the newest
+// first: a plan comes at most once in answerplan.Every replies.
+func (q *Queries) RecentAnswerPlanned(ctx context.Context, arg RecentAnswerPlannedParams) ([]bool, error) {
+	rows, err := q.db.QueryContext(ctx, recentAnswerPlanned,
+		arg.UserID,
+		arg.SessionID,
+		arg.CreatedAt,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []bool{}
+	for rows.Next() {
+		var planned bool
+		if err := rows.Scan(&planned); err != nil {
+			return nil, err
+		}
+		items = append(items, planned)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const recentAnswerPlans = `-- name: RecentAnswerPlans :many
+SELECT answer_plan FROM messages
+WHERE user_id = $1 AND role = 'assistant' AND answer_plan IS NOT NULL
+ORDER BY created_at DESC, id DESC LIMIT $2
+`
+
+type RecentAnswerPlansParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Limit  int32     `json:"limit"`
+}
+
+// The plans of the person's last answers that had one, in any conversation, the newest first: a
+// memory they used is not used again while there are others.
+func (q *Queries) RecentAnswerPlans(ctx context.Context, arg RecentAnswerPlansParams) ([]pqtype.NullRawMessage, error) {
+	rows, err := q.db.QueryContext(ctx, recentAnswerPlans, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pqtype.NullRawMessage{}
+	for rows.Next() {
+		var answer_plan pqtype.NullRawMessage
+		if err := rows.Scan(&answer_plan); err != nil {
+			return nil, err
+		}
+		items = append(items, answer_plan)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

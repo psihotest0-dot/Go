@@ -775,6 +775,34 @@
       },
       "description": "Колко пъти проверките след отговора са се намесили: claim — твърдение за запис без запис; stall — обещание без работа; status — „успях“ без промяна във файловете; extraction — „извлечено“ без отворен източник; removal — молба за изтриване. retried — ходът е питан наново, corrected/noted — под отговора има ⚠️. Растяща линия значи, че моделът по-често казва нещо, което не е направил.",
       "id": 32
+    },
+    {
+      "type": "timeseries",
+      "title": "Answer plans per day",
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(answer_plan_total[1d])) > 0",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (kind) (increase(answer_plan_marks_total[1d])) > 0",
+          "legendFormat": "marks {{kind}}",
+          "refId": "B"
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 99,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "description": "План на отговора на лично съобщение (П55, ANSWER_PLAN_ENABLED): planned — Лили е получила 1–3 спомена за отговора; skipped_<причина> — защо не (not_personal, not_due — имало е план в последните 4 отговора, no_memories, cloud, greeting…). marks used — спомен, отбелязан в отговора; marks unknown — номер, който планът не е дал (моделът си измисля).",
+      "id": 33
     }
   ]
 }

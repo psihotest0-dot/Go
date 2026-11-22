@@ -264,6 +264,18 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 	}
 
 	filter := &streamFilter{}
+	// A planned answer (answer_plan.go) marks the memories it uses with [1], [2]...; the
+	// person does not see them.
+	var marks *planMarkFilter
+	if turnFrom(r.Context()).answerPlan() != nil {
+		marks = &planMarkFilter{}
+	}
+	shown := func(s string) string {
+		if marks == nil {
+			return s
+		}
+		return marks.Process(s)
+	}
 
 	// A panic must be reported as an error instead of a nil one, otherwise the
 	// caller treats the truncated answer as a success. The filter is released
@@ -326,7 +338,7 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		}
 
 		if content != "" {
-			filteredContent := filter.Process(content)
+			filteredContent := shown(filter.Process(content))
 			if filteredContent != "" {
 				dataMap := map[string]string{"content": filteredContent}
 				dataBytes, _ := json.Marshal(dataMap)
@@ -352,7 +364,10 @@ func (o *Orchestrator) streamResponse(w http.ResponseWriter, r *http.Request, se
 		return assistantContent, err
 	}
 
-	flushed := filter.Flush()
+	flushed := shown(filter.Flush())
+	if marks != nil {
+		flushed += marks.Flush()
+	}
 	if flushed != "" {
 		dataMap := map[string]string{"content": flushed}
 		dataBytes, _ := json.Marshal(dataMap)

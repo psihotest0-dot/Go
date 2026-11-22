@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"go-monolith/internal/answerplan"
 	"go-monolith/internal/api"
 	"go-monolith/internal/proposals"
 )
@@ -69,6 +70,8 @@ type turnState struct {
 	fileWrites int
 	// by is the model that gave the answer, when the paid model is configured (see model_routing.go).
 	by answeredBy
+	// plan is the plan of the answer to a personal message, nil for most turns (answer_plan.go).
+	plan *answerplan.Plan
 	// userURLs are the addresses the person wrote in this conversation, by their key
 	// (urlKey): the only ones add_to_library may fetch.
 	userURLs map[string]string

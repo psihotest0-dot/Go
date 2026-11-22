@@ -45,6 +45,7 @@ func TestSkipReason(t *testing.T) {
 		{"уморен съм от това:\n```go\nx := 1\n```", Signals{}, SkipCode},
 		// The signals of the turn go first.
 		{"уморен съм", Signals{Cloud: true}, SkipCloud},
+		{"уморен съм", Signals{Task: true}, SkipTask},
 		{"уморен съм", Signals{ForcedTool: true}, SkipForcedTool},
 		{"уморен съм", Signals{FileRequest: true}, SkipFile},
 		{"уморен съм", Signals{Attachment: true}, SkipAttachment},

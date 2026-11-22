@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 
+	"go-monolith/internal/answerplan"
 	"go-monolith/internal/api"
 )
 
@@ -60,11 +61,19 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// and no question to end with: it is a task, not a talk.
 	chatCtx, taskPlan, planToolTokens := o.withPlanNote(ctx, userID, req.SessionID, chatCtx)
 	chatCtx = o.withClosingNote(ctx, userID, req.SessionID, chatCtx, len(plan.files) > 0 || taskPlan != nil)
+	// A personal message may get the plan of its answer (П55): its note takes the place of the
+	// closing note, and it ends the reply the way that note said.
+	var answerPlan *answerplan.Plan
+	if o.answerPlanner != nil {
+		chatCtx, answerPlan = o.withAnswerPlan(ctx, userID, req.SessionID, chatCtx,
+			o.planSignals(ctx, req.Content, len(plan.files) > 0, taskPlan != nil))
+	}
 
 	// The tools of this turn share its state: what untrusted text it has read and
 	// which proposals it made (see turnState).
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
 	turn.setEarlierAnswer(chatCtx.EarlierAnswer)
+	turn.setAnswerPlan(answerPlan)
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}

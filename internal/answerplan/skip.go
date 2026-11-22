@@ -18,6 +18,7 @@ const (
 	SkipAttachment = "attachment"  // a file is attached to the conversation
 	SkipStatus     = "status"      // asks how far some work is ("успя ли?")
 	SkipCloud      = "cloud"       // the turn goes to the paid model: the memories stay at home
+	SkipTask       = "task"        // the conversation has a task plan in progress: a task, not a talk
 )
 
 // Signals are what the turn knows about the message besides its words; the agent sets them
@@ -29,6 +30,7 @@ const (
 // leave the machine (2026-11-22).
 type Signals struct {
 	Cloud          bool
+	Task           bool
 	ForcedTool     bool
 	FileRequest    bool
 	Attachment     bool
@@ -71,6 +73,8 @@ func SkipReason(text string, s Signals) string {
 	switch {
 	case s.Cloud:
 		return SkipCloud
+	case s.Task:
+		return SkipTask
 	case s.ForcedTool:
 		return SkipForcedTool
 	case s.FileRequest:

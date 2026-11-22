@@ -111,6 +111,7 @@ type Message struct {
 	IsAnalyzed       bool                  `json:"is_analyzed"`
 	AnalysisAttempts int32                 `json:"analysis_attempts"`
 	ToolLog          sql.NullString        `json:"tool_log"`
+	AnswerPlan       pqtype.NullRawMessage `json:"answer_plan"`
 }
 
 type PendingAction struct {

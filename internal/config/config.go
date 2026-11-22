@@ -156,6 +156,10 @@ type Config struct {
 	// plan of a task with several steps, the server keeps it and checks that a step is done
 	// before it is marked so (package taskplan). Off by default: without it nothing changes.
 	TaskPlanEnabled bool
+	// AnswerPlanEnabled (ANSWER_PLAN_ENABLED) turns on the plan of an answer to a personal
+	// message (П55 phase 1, internal/answerplan): the code picks the person's memories for the
+	// reply and the model writes it from them. Off by default: without it nothing changes.
+	AnswerPlanEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -345,6 +349,7 @@ func Load() *Config {
 		FilesDir:           filesDir(),
 		LibraryAddEnabled:  boolEnv("LIBRARY_ADD_ENABLED", false),
 		TaskPlanEnabled:    boolEnv("TASK_PLAN_ENABLED", false),
+		AnswerPlanEnabled:  boolEnv("ANSWER_PLAN_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

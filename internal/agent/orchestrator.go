@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 
+	"go-monolith/internal/answerplan"
 	"go-monolith/internal/api"
 	"go-monolith/internal/attachments"
 	"go-monolith/internal/config"
@@ -74,6 +75,8 @@ type Orchestrator struct {
 	paid        llm.LLMClient
 	paidName    string
 	libraryPaid bool
+	// answerPlanner makes the plan of an answer to a personal message; nil: off (answer_plan.go).
+	answerPlanner *answerplan.Planner
 	// questionEvery is CHAT_QUESTION_EVERY: every this-many-th reply of a conversation ends
 	// with a question; 0, the value of an Orchestrator built without NewOrchestrator, puts
 	// the dose off. See closing_note.go.
@@ -217,7 +220,8 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	store := func(content string, toolCalls []openai.ToolCall) {
 		storeCtx, cancelStore := context.WithTimeout(context.Background(), persistTimeout)
 		defer cancelStore()
-		o.storeAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog())
+		content, answerPlan := prep.turn.planReply(content)
+		o.storeAnswer(storeCtx, userID, req.SessionID, content, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog(), answerPlan)
 	}
 
 	assistantContent, err := o.streamResponse(w, r, req.SessionID, prep.messages, prep.tools, prep.sources, store)
@@ -236,7 +240,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	})
 
 	// A conversation shared with Telegram: the question and the answer are repeated in the chat.
-	o.mirrorReply(ctx, userID, req.SessionID, req.Content, assistantContent, false)
+	o.mirrorReply(ctx, userID, req.SessionID, req.Content, prep.turn.withoutPlanMarksIfPlanned(assistantContent), false)
 }
 
 type RegenerateRequest struct {
@@ -360,7 +364,8 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		}
 		// The old answer goes only now that a complete new one exists, and in the
 		// same transaction as the new one is written.
-		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, replaced, content, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog()); err != nil {
+		content, answerPlan := prep.turn.planReply(content)
+		if err := o.replaceAnswer(storeCtx, userID, req.SessionID, replaced, content, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog(), answerPlan); err != nil {
 			slog.ErrorContext(ctx, "failed to replace the previous answer; it is kept", "err", err, "session_id", req.SessionID)
 		}
 	}
@@ -446,12 +451,13 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 	if err != nil {
 		return ChatTurn{}, err
 	}
-	answer := sanitizeAssistantText(assistantContent)
+	answer, answerPlan := prep.turn.planReply(assistantContent)
+	answer = sanitizeAssistantText(answer)
 
 	// Use background context for persistence so it is not interrupted by immediate request context cancellation.
 	bgCtx, cancelBg := context.WithTimeout(context.Background(), persistTimeout)
 	defer cancelBg()
-	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog())
+	o.storeAnswer(bgCtx, userID, req.SessionID, answer, toolCalls, answerSources(prep.turn, prep.sources), prep.turn.storedToolLog(), answerPlan)
 
 	o.trace(bgCtx, userID, req.SessionID, "stream_end", map[string]interface{}{
 		"response_length": len(answer),

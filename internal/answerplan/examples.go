@@ -1,5 +1,7 @@
 package answerplan
 
+import "slices"
+
 // The example messages the detector compares a message with. They are the ones it was measured
 // with (harness H1, 2026-11-22; go-monolith-backups\measurements\p55_detector_2026-11-22): a
 // message is personal when its nearest personal example is nearer than its nearest example of
@@ -66,3 +68,9 @@ var (
 		"благодаря",
 	}
 )
+
+// Examples are copies of the example messages, for a test elsewhere that needs an embedder which
+// tells them apart (internal/agent).
+func Examples() (personal, notPersonal []string) {
+	return slices.Clone(personalExamples), slices.Clone(notPersonalExamples)
+}

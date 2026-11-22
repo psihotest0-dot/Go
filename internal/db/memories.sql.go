@@ -301,6 +301,55 @@ func (q *Queries) GetMemoryByID(ctx context.Context, arg GetMemoryByIDParams) (M
 	return i, err
 }
 
+const getMemoryVectors = `-- name: GetMemoryVectors :many
+SELECT id, content, embedding, COALESCE(metadata->>'fact_key', '')::text AS fact_key
+FROM memories
+WHERE user_id = $1 AND id = ANY($2::uuid[]) AND embedding IS NOT NULL
+`
+
+type GetMemoryVectorsParams struct {
+	UserID uuid.UUID   `json:"user_id"`
+	Ids    []uuid.UUID `json:"ids"`
+}
+
+type GetMemoryVectorsRow struct {
+	ID        uuid.UUID       `json:"id"`
+	Content   string          `json:"content"`
+	Embedding pgvector.Vector `json:"embedding"`
+	FactKey   string          `json:"fact_key"`
+}
+
+// The stored vectors and fact keys of some of the person's memories, for the plan of an answer
+// (П55): the search returns their text and score, the plan compares the vectors itself. A memory
+// without a vector is left out.
+func (q *Queries) GetMemoryVectors(ctx context.Context, arg GetMemoryVectorsParams) ([]GetMemoryVectorsRow, error) {
+	rows, err := q.db.QueryContext(ctx, getMemoryVectors, arg.UserID, pq.Array(arg.Ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetMemoryVectorsRow{}
+	for rows.Next() {
+		var i GetMemoryVectorsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Embedding,
+			&i.FactKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getTopMemories = `-- name: GetTopMemories :many
 SELECT id, user_id, content, status, embedding, embedding_model, source_message_id, importance, metadata, content_hash, created_at, updated_at, last_used_at FROM memories
 WHERE user_id = $1 AND status IN ('active', 'candidate')

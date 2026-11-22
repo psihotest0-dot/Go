@@ -252,6 +252,21 @@ var (
 		Help: "Facts of the memory analysis dropped because they do not stand on the person's words, by reason.",
 	}, []string{"reason"})
 
+	// AnswerPlans counts the turns the plan of an answer to a personal message (П55,
+	// internal/answerplan) looked at, by result: "planned", or "skipped_<reason>" - the
+	// reasons are answerplan's Skip... values (not_personal, not_due, no_memories, cloud,
+	// forced_tool, greeting...). Only while ANSWER_PLAN_ENABLED is on. AnswerPlanMarks counts
+	// the memory marks ([1], [2]...) of the planned answers: "used" for a mark of a given
+	// memory, "unknown" for a number the plan did not give.
+	AnswerPlans = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "answer_plan_total",
+		Help: "Turns the plan of an answer to a personal message looked at, by result.",
+	}, []string{"result"})
+	AnswerPlanMarks = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "answer_plan_marks_total",
+		Help: "Memory marks in planned answers, by kind (used, unknown).",
+	}, []string{"kind"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever

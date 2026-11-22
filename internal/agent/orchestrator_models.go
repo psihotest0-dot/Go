@@ -3,6 +3,7 @@ package agent
 import (
 	"time"
 
+	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/api"
@@ -38,6 +39,10 @@ type ChatRequest struct {
 
 type chatContext struct {
 	Memories []string
+	// MemoryHits are the memories the search found for the message, the ones of the profile
+	// (TopMemories) too: the plan of an answer (answer_plan.go) chooses among them, and the
+	// memory that fits "уморен съм" best may well be one the prompt already holds as a profile.
+	MemoryHits []uuid.UUID
 	Chunks   []string
 	Sources  []api.SourceInfo
 	Rules    []string

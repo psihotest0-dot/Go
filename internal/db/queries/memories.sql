@@ -115,3 +115,11 @@ FROM (
            unnest(sqlc.arg('embeddings')::vector[]) AS embedding
 ) v
 WHERE memories.id = v.id;
+
+-- The stored vectors and fact keys of some of the person's memories, for the plan of an answer
+-- (П55): the search returns their text and score, the plan compares the vectors itself. A memory
+-- without a vector is left out.
+-- name: GetMemoryVectors :many
+SELECT id, content, embedding, COALESCE(metadata->>'fact_key', '')::text AS fact_key
+FROM memories
+WHERE user_id = $1 AND id = ANY(sqlc.arg('ids')::uuid[]) AND embedding IS NOT NULL;

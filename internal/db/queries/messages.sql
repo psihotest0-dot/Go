@@ -1,5 +1,19 @@
 -- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *;
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log, answer_plan) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
+
+-- Whether each of the last answers of a conversation before a moment had a plan (П55), the newest
+-- first: a plan comes at most once in answerplan.Every replies.
+-- name: RecentAnswerPlanned :many
+SELECT (answer_plan IS NOT NULL)::boolean AS planned FROM messages
+WHERE user_id = $1 AND session_id = $2 AND role = 'assistant' AND created_at < $3
+ORDER BY created_at DESC, id DESC LIMIT $4;
+
+-- The plans of the person's last answers that had one, in any conversation, the newest first: a
+-- memory they used is not used again while there are others.
+-- name: RecentAnswerPlans :many
+SELECT answer_plan FROM messages
+WHERE user_id = $1 AND role = 'assistant' AND answer_plan IS NOT NULL
+ORDER BY created_at DESC, id DESC LIMIT $2;
 
 -- name: GetMessagesBySession :many
 SELECT * FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3;

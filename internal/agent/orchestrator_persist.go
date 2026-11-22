@@ -33,8 +33,9 @@ func (o *Orchestrator) saveUserMessage(ctx context.Context, userID uuid.UUID, se
 
 // persistAssistantMessage writes the answer through q, which is the orchestrator's
 // own queries or those of a transaction. toolLog is what the tools of the turn did
-// (turnState.storedToolLog; "" when none was called), shown to the model in the history.
-func (o *Orchestrator) persistAssistantMessage(ctx context.Context, q *db.Queries, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo, toolLog string) error {
+// (turnState.storedToolLog; "" when none was called), shown to the model in the history;
+// answerPlan is the plan of the answer (turnState.planReply; not Valid without one).
+func (o *Orchestrator) persistAssistantMessage(ctx context.Context, q *db.Queries, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo, toolLog string, answerPlan pqtype.NullRawMessage) error {
 	// Raw model output can carry <think> blocks and tool markup that the live
 	// stream hides; they must not end up in the history either.
 	contentToSave := sanitizeAssistantText(content)
@@ -67,7 +68,8 @@ func (o *Orchestrator) persistAssistantMessage(ctx context.Context, q *db.Querie
 			RawMessage: dbSourcesBytes,
 			Valid:      true,
 		},
-		ToolLog: sql.NullString{String: toolLog, Valid: true},
+		ToolLog:    sql.NullString{String: toolLog, Valid: true},
+		AnswerPlan: answerPlan,
 	})
 	return err
 }
@@ -83,8 +85,8 @@ func answerSources(turn *turnState, promptSources []api.SourceInfo) []api.Source
 // storeAnswer saves the finished answer. The user already has the text on
 // screen, so a failure is not returned, but it must not pass silently: the
 // answer is then missing from the history and from every later context.
-func (o *Orchestrator) storeAnswer(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo, toolLog string) {
-	if err := o.persistAssistantMessage(ctx, o.db.Queries, userID, sessionID, content, toolCalls, sources, toolLog); err != nil {
+func (o *Orchestrator) storeAnswer(ctx context.Context, userID uuid.UUID, sessionID string, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo, toolLog string, answerPlan pqtype.NullRawMessage) {
+	if err := o.persistAssistantMessage(ctx, o.db.Queries, userID, sessionID, content, toolCalls, sources, toolLog, answerPlan); err != nil {
 		slog.ErrorContext(ctx, "failed to store the assistant answer", "err", err, "session_id", sessionID)
 	}
 }
@@ -100,7 +102,7 @@ var errAnswerAlreadyReplaced = errors.New("the answer was already replaced")
 // session" deleted that one. With no replaced answer (the turn had failed) the new one is
 // only added. When one of them is gone already, nothing is written, so the turn does not
 // end up with two answers.
-func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sessionID string, replaced []uuid.UUID, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo, toolLog string) error {
+func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sessionID string, replaced []uuid.UUID, content string, toolCalls []openai.ToolCall, sources []api.SourceInfo, toolLog string, answerPlan pqtype.NullRawMessage) error {
 	tx, err := o.db.SqlDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
@@ -122,7 +124,7 @@ func (o *Orchestrator) replaceAnswer(ctx context.Context, userID uuid.UUID, sess
 			return errAnswerAlreadyReplaced
 		}
 	}
-	if err := o.persistAssistantMessage(ctx, q, userID, sessionID, content, toolCalls, sources, toolLog); err != nil {
+	if err := o.persistAssistantMessage(ctx, q, userID, sessionID, content, toolCalls, sources, toolLog, answerPlan); err != nil {
 		return fmt.Errorf("store the new answer: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

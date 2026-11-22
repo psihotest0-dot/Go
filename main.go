@@ -21,6 +21,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	"go-monolith/internal/agent"
+	"go-monolith/internal/answerplan"
 	"go-monolith/internal/api"
 	"go-monolith/internal/attachments"
 	"go-monolith/internal/config"
@@ -246,6 +247,19 @@ func run() error {
 		toolRegistry.WithPlans(plans)
 		orchestrator.WithTaskPlans(plans)
 		logger.Info("the plan of a task is on")
+	}
+
+	// The plan of an answer to a personal message (П55, internal/answerplan): off unless
+	// ANSWER_PLAN_ENABLED. It needs the embedder for its examples; without it the chat goes on
+	// as before, so a failure is logged and does not stop the start.
+	if cfg.AnswerPlanEnabled {
+		planner, err := answerplan.NewPlanner(ctx, embedder)
+		if err != nil {
+			logger.Error("the plan of an answer stays off", "err", err)
+		} else {
+			orchestrator.WithAnswerPlanner(planner)
+			logger.Info("the plan of an answer is on")
+		}
 	}
 
 	if cfg.TelegramBotToken != "" {
