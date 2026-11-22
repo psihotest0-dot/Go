@@ -43,9 +43,9 @@ type chatContext struct {
 	// (TopMemories) too: the plan of an answer (answer_plan.go) chooses among them, and the
 	// memory that fits "уморен съм" best may well be one the prompt already holds as a profile.
 	MemoryHits []uuid.UUID
-	Chunks   []string
-	Sources  []api.SourceInfo
-	Rules    []string
+	Chunks     []string
+	Sources    []api.SourceInfo
+	Rules      []string
 	// Lean leaves out of the system prompt the parts Orchestrator.WithLeanPrompt names.
 	Lean bool
 	// StyleNotes are the confirmed notes on how the user likes to be talked to.
