@@ -20,7 +20,6 @@ import (
 
 	"github.com/google/uuid"
 	pgvector "github.com/pgvector/pgvector-go"
-	"github.com/sqlc-dev/pqtype"
 )
 
 // maxSnippetRunes caps the source snippet returned with a message.
@@ -322,7 +321,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		Status          string                `json:"status"`
 		SourceMessageID uuid.NullUUID         `json:"source_message_id"`
 		Importance      int32                 `json:"importance"`
-		Metadata        pqtype.NullRawMessage `json:"metadata"`
+		Metadata        json.RawMessage `json:"metadata"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -333,6 +332,12 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateMemoryInput(req.Content, req.Status, req.Importance); err != nil {
+		slog.WarnContext(r.Context(), "invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	metadata, err := memoryMetadata(req.Metadata)
+	if err != nil {
 		slog.WarnContext(r.Context(), "invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -383,7 +388,7 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 		Status:          req.Status,
 		SourceMessageID: req.SourceMessageID,
 		Importance:      req.Importance,
-		Metadata:        req.Metadata,
+		Metadata:        metadata,
 		Embedding:       newEmbedding,
 		EmbeddingModel:  newEmbeddingModel,
 	})
@@ -481,13 +486,19 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Content    string                `json:"content"`
 			Status     string                `json:"status"`
 			Importance int32                 `json:"importance"`
-			Metadata   pqtype.NullRawMessage `json:"metadata"`
+			Metadata   json.RawMessage       `json:"metadata"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
 		}
 
 		if err := validateMemoryInput(req.Content, req.Status, req.Importance); err != nil {
+			slog.WarnContext(r.Context(), "invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		metadata, err := memoryMetadata(req.Metadata)
+		if err != nil {
 			slog.WarnContext(r.Context(), "invalid memory payload", slog.Any("error", err), slog.String("path", r.URL.Path))
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -537,7 +548,7 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			Content:        sql.NullString{String: req.Content, Valid: true},
 			Status:         sql.NullString{String: req.Status, Valid: true},
 			Importance:     sql.NullInt32{Int32: req.Importance, Valid: true},
-			Metadata:       req.Metadata,
+			Metadata:       metadata,
 			Embedding:      newEmbedding,
 			EmbeddingModel: newEmbeddingModel,
 		})

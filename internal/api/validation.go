@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/sqlc-dev/pqtype"
 )
 
 const (
@@ -42,8 +45,8 @@ var allowedRoles = map[string]struct{}{
 
 // allowedMemoryStatuses holds the lifecycle states a memory may be stored in.
 var allowedMemoryStatuses = map[string]struct{}{
-	"candidate":  {},
-	"active":     {},
+	"candidate": {},
+	"active":    {},
 }
 
 // decodeJSON decodes a size-limited JSON body into dst. It writes the response
@@ -68,6 +71,23 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 	writeInvalidBody(w, r, err)
 	return false
+}
+
+// memoryMetadata is the "metadata" of a memory request as the column takes it: none (absent or
+// null: a new memory has none, an updated one keeps its own) or a JSON object. The requests used
+// to decode it straight into pqtype.NullRawMessage, which has no UnmarshalJSON: the object went
+// into its fields, matched none, and the metadata was dropped without a word - a fact_key sent
+// with PUT /memories/{id} was never stored (found 2026-11-22).
+func memoryMetadata(raw json.RawMessage) (pqtype.NullRawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return pqtype.NullRawMessage{}, nil
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &object) != nil || object == nil {
+		return pqtype.NullRawMessage{}, errors.New("metadata must be a JSON object")
+	}
+	return pqtype.NullRawMessage{RawMessage: trimmed, Valid: true}, nil
 }
 
 // validateContent rejects blank or oversized message and memory bodies.
