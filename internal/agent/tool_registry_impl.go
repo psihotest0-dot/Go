@@ -255,6 +255,9 @@ func (r *DefaultToolRegistry) executeWebSearch(ctx context.Context, args map[str
 	if err != nil {
 		return nil, err
 	}
+	if answer, ok := result["result"].(map[string]interface{}); ok {
+		result["result"] = trimSearchResult(answer)
+	}
 	turnFrom(ctx).markExternal(sourceWebSearch)
 	return result, nil
 }
