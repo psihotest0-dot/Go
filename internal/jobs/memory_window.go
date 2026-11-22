@@ -15,6 +15,8 @@ import (
 	"go-monolith/internal/prompts"
 )
 
+// (The file is not called memory_windows.go: Go would build a file with that ending on Windows only.)
+//
 // The memory analysis reads a conversation, not each message alone (plan step 1.2, M1 + M3 from the
 // review of AnythingLLM, 2026-11-22): a fact often needs the words around it ("Ивайло предпочита да
 // почива пред телевизора с вкусна храна" came from three messages and a question of Lili). A

@@ -213,7 +213,7 @@ func (w *MemoryConsolidationWorker) Work(ctx context.Context, job *river.Job[Mem
 		return nil
 	}
 
-	// A conversation is read when it is quiet, a long one in windows (memory_windows.go).
+	// A conversation is read when it is quiet, a long one in windows (memory_window.go).
 	plan := planAnalysis(messages, w.clock())
 	if plan.waiting > 0 {
 		slog.Info("messages wait for their conversation to become quiet", "user_id", job.Args.UserID, "messages", plan.waiting)
