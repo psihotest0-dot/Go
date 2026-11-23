@@ -291,6 +291,36 @@ var (
 		Help: "Memories the theme job looked at, by result (themed, empty, changed, failed).",
 	}, []string{"result"})
 
+	// TaskRunSteps counts the steps of the tasks the server walks itself (package taskrun), by kind
+	// (key_facts, summary) and result: done (the file is written), failed (with its reason in the
+	// plan), stopped (the person stopped the task while the step ran). Only while TASK_RUN_ENABLED.
+	TaskRunSteps = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_run_steps_total",
+		Help: "Steps of the tasks the server walks, by kind and result (done, failed, stopped).",
+	}, []string{"kind", "result"})
+
+	// TaskRunRetries counts the second requests of a step: the first answer had numbers that are
+	// not in the passages of the document.
+	TaskRunRetries = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_run_retries_total",
+		Help: "Second requests of a step of a task, after numbers that are not in the passages.",
+	}, []string{"kind"})
+
+	// TaskRunDroppedLines counts the lines left out of the files of the tasks because a number of
+	// theirs is not in the passages of the document.
+	TaskRunDroppedLines = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_run_dropped_lines_total",
+		Help: "Lines left out of the files of the tasks: a number of theirs is not in the passages.",
+	}, []string{"kind"})
+
+	// TaskRuns counts the tasks the server walks, by kind and event: proposed (the person was
+	// asked), started (the person said yes), declined (the person asked for something else),
+	// stopped (the person stopped it), done (the report is in the conversation).
+	TaskRuns = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "task_runs_total",
+		Help: "Tasks the server walks, by kind and event (proposed, started, declined, stopped, done).",
+	}, []string{"kind", "event"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever

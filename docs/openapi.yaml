@@ -1136,6 +1136,13 @@ paths:
         that a step is `done` only after a successful call of the tool the step names. The app
         only shows it: nothing here changes a plan. What the tools did (the ledger) is not part of
         the answer; the line that says it is `evidence` of a done step.
+
+        With `TASK_RUN_ENABLED=true` the plan may also be one the server walks itself (`kind` is
+        set): "for each added source make a file with its key facts" is answered with the list of
+        the documents and "да започна ли?", and after the person's yes the server makes one file a
+        document in the background, each step's `ref` being the document and its `evidence` the
+        file written. Such a plan is not returned before the yes. The newest plan of either kind
+        is returned.
       parameters:
       - $ref: '#/components/parameters/UserId'
       - name: session_id
@@ -2016,7 +2023,13 @@ components:
         status:
           type: string
           enum: [active, done, cancelled]
-          description: '`done`: no step is left to do. `cancelled`: another plan took its place.'
+          description: '`done`: no step is left to do. `cancelled`: another plan took its place, or the person stopped it.'
+        kind:
+          type: string
+          enum: [key_facts, summary]
+          description: >-
+            Missing for a plan of the assistant. Set for a plan the server walks itself: what it
+            makes of each document (a file with its key facts, or with a summary).
         steps:
           type: array
           items:
@@ -2056,6 +2069,10 @@ components:
         note:
           type: string
           description: The reason of a failed or skipped step.
+        ref:
+          type: string
+          format: uuid
+          description: In a plan the server walks, the document of the library the step works on.
     TelegramSessionList:
       type: object
       required:

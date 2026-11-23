@@ -90,6 +90,10 @@ type Orchestrator struct {
 	statusAnswer bool
 	// helpAnswer is HELP_ANSWER_ENABLED: "какво можеш?" is answered by the code (help_answer.go).
 	helpAnswer bool
+	// runPlans keeps the plans of the tasks the server walks itself and runner walks them
+	// (TASK_RUN_ENABLED, task_run.go); nil: off.
+	runPlans *taskplan.Store
+	runner   taskRunWaker
 	// questionEvery is CHAT_QUESTION_EVERY: every this-many-th reply of a conversation ends
 	// with a question; 0, the value of an Orchestrator built without NewOrchestrator, puts
 	// the dose off. See closing_note.go.

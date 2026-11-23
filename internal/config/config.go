@@ -160,6 +160,12 @@ type Config struct {
 	// plan of a task with several steps, the server keeps it and checks that a step is done
 	// before it is marked so (package taskplan). Off by default: without it nothing changes.
 	TaskPlanEnabled bool
+	// TaskRunEnabled (TASK_RUN_ENABLED) lets the server walk a task over many documents itself (plan
+	// steps 3.3-3.7, package taskrun): "за всеки от добавените източници направи файл с ключовите
+	// му факти" is answered with the list and "да започна ли?", and after the yes the server makes a
+	// file from the passages of each document, with its numbers checked. Needs FILES_ENABLED. Off by
+	// default.
+	TaskRunEnabled bool
 	// AnswerPlanEnabled (ANSWER_PLAN_ENABLED) turns on the plan of an answer to a personal
 	// message (П55 phase 1, internal/answerplan): the code picks the person's memories for the
 	// reply and the model writes it from them. Off by default: without it nothing changes.
@@ -383,6 +389,7 @@ func Load() *Config {
 		LibraryAddEnabled:          boolEnv("LIBRARY_ADD_ENABLED", false),
 		WebFetchLocalEnabled:       boolEnv("WEB_FETCH_LOCAL_ENABLED", false),
 		TaskPlanEnabled:            boolEnv("TASK_PLAN_ENABLED", false),
+		TaskRunEnabled:             boolEnv("TASK_RUN_ENABLED", false),
 		AnswerPlanEnabled:          boolEnv("ANSWER_PLAN_ENABLED", false),
 		MemoryThemesEnabled:        boolEnv("MEMORY_THEMES_ENABLED", false),
 		LeanPromptEnabled:          boolEnv("LEAN_PROMPT_ENABLED", false),

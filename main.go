@@ -34,6 +34,7 @@ import (
 	"go-monolith/internal/proposals"
 	"go-monolith/internal/retrieval"
 	"go-monolith/internal/taskplan"
+	"go-monolith/internal/taskrun"
 	"go-monolith/internal/telegram"
 	"go-monolith/internal/userfiles"
 	"go-monolith/internal/webfetch"
@@ -269,6 +270,27 @@ func run() error {
 		toolRegistry.WithPlans(plans)
 		orchestrator.WithTaskPlans(plans)
 		logger.Info("the plan of a task is on")
+	}
+
+	// A task over many documents that the server walks itself (package taskrun): off unless
+	// TASK_RUN_ENABLED. It writes its files in the folder of the file tools.
+	if cfg.TaskRunEnabled {
+		if fileStore == nil {
+			logger.Error("the tasks of the server stay off: they need the file tools (FILES_ENABLED)")
+		} else {
+			runPlans := taskplan.NewStore(database)
+			runner := taskrun.New(database, runPlans, retrievalService, llmClient, fileStore)
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("the runner of tasks panicked; the tasks wait for a restart", slog.Any("error", r))
+					}
+				}()
+				runner.Run(ctx)
+			}()
+			orchestrator.WithTaskRun(runPlans, runner)
+			logger.Info("the server walks tasks over many documents itself")
+		}
 	}
 
 	// The plan of an answer to a personal message (П55, internal/answerplan): off unless

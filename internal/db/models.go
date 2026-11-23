@@ -146,6 +146,7 @@ type TaskPlan struct {
 	Status    string          `json:"status"`
 	CreatedAt time.Time       `json:"created_at"`
 	UpdatedAt time.Time       `json:"updated_at"`
+	Kind      string          `json:"kind"`
 }
 
 type User struct {

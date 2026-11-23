@@ -41,7 +41,7 @@ func (a *API) TaskPlanHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	plan, err := taskplan.NewStore(a.db).Latest(r.Context(), userID, sessionID)
+	plan, err := taskplan.NewStore(a.db).LatestAny(r.Context(), userID, sessionID)
 	if err != nil {
 		writeInternalError(w, r, "failed to read the task plan", err)
 		return

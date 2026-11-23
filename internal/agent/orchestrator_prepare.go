@@ -79,8 +79,20 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// An explanation from the library (step 2.8): its search is forced, gathered by the code, and
 	// answered by the model EXPLAIN_LLM names.
 	turn.setExplain(o.explainSubjectFor(req.Content))
-	// "Успя ли?" about work on the files or a plan: the code answers from the folder and the plan.
-	turn.setStatusAnswer(o.statusAnswerFor(ctx, userID, req.Content, chatCtx.History, chatCtx.HistoryAt, taskPlan))
+	// "Успя ли?" about work on the files or a plan: the code answers from the folder and the plan
+	// (the model's plan, else the one the server walks: task_run.go).
+	statusPlan := taskPlan
+	if running := o.runningPlan(ctx, userID, req.SessionID); running != nil {
+		turn.markTaskRunning()
+		if statusPlan == nil {
+			statusPlan = running
+		}
+	}
+	turn.setStatusAnswer(o.statusAnswerFor(ctx, userID, req.Content, chatCtx.History, chatCtx.HistoryAt, statusPlan))
+	// A task over many documents, its yes and its stop: the code answers (task_run.go).
+	if turn.statusAnswerText() == "" {
+		turn.setStatusAnswer(o.taskRunAnswer(ctx, userID, req.SessionID, req.Content, historyStart(chatCtx.History, chatCtx.HistoryAt)))
+	}
 	// "Какво можеш?": the code answers with what is on now, by the same road (help_answer.go).
 	if turn.statusAnswerText() == "" {
 		turn.setStatusAnswer(o.helpAnswerFor(req.Content))

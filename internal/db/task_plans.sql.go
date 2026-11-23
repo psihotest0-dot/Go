@@ -14,7 +14,7 @@ import (
 
 const cancelActiveTaskPlan = `-- name: CancelActiveTaskPlan :exec
 UPDATE task_plans SET status = 'cancelled', updated_at = now()
-WHERE user_id = $1 AND session_id = $2 AND status = 'active'
+WHERE user_id = $1 AND session_id = $2 AND status = 'active' AND kind = ''
 `
 
 type CancelActiveTaskPlanParams struct {
@@ -27,10 +27,66 @@ func (q *Queries) CancelActiveTaskPlan(ctx context.Context, arg CancelActiveTask
 	return err
 }
 
+const cancelRunningTaskPlans = `-- name: CancelRunningTaskPlans :execrows
+UPDATE task_plans SET status = 'cancelled', updated_at = now()
+WHERE user_id = $1 AND session_id = $2 AND status = 'active' AND kind <> ''
+`
+
+type CancelRunningTaskPlansParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+func (q *Queries) CancelRunningTaskPlans(ctx context.Context, arg CancelRunningTaskPlansParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, cancelRunningTaskPlans, arg.UserID, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const createProposedTaskPlan = `-- name: CreateProposedTaskPlan :one
+INSERT INTO task_plans (user_id, session_id, goal, steps, ledger, status, kind)
+VALUES ($1, $2, $3, $4, '[]', 'proposed', $5)
+RETURNING id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
+`
+
+type CreateProposedTaskPlanParams struct {
+	UserID    uuid.UUID       `json:"user_id"`
+	SessionID string          `json:"session_id"`
+	Goal      string          `json:"goal"`
+	Steps     json.RawMessage `json:"steps"`
+	Kind      string          `json:"kind"`
+}
+
+func (q *Queries) CreateProposedTaskPlan(ctx context.Context, arg CreateProposedTaskPlanParams) (TaskPlan, error) {
+	row := q.db.QueryRowContext(ctx, createProposedTaskPlan,
+		arg.UserID,
+		arg.SessionID,
+		arg.Goal,
+		arg.Steps,
+		arg.Kind,
+	)
+	var i TaskPlan
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Goal,
+		&i.Steps,
+		&i.Ledger,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
 const createTaskPlan = `-- name: CreateTaskPlan :one
 INSERT INTO task_plans (user_id, session_id, goal, steps, ledger)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at
+RETURNING id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
 `
 
 type CreateTaskPlanParams struct {
@@ -60,6 +116,7 @@ func (q *Queries) CreateTaskPlan(ctx context.Context, arg CreateTaskPlanParams) 
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -81,10 +138,27 @@ func (q *Queries) DeleteSessionTaskPlans(ctx context.Context, arg DeleteSessionT
 	return result.RowsAffected()
 }
 
+const dropProposedTaskPlan = `-- name: DropProposedTaskPlan :exec
+
+DELETE FROM task_plans WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
+`
+
+type DropProposedTaskPlanParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+// The plans the server walks (kind <> ”).
+// A new proposal takes the place of one that waits in the conversation.
+func (q *Queries) DropProposedTaskPlan(ctx context.Context, arg DropProposedTaskPlanParams) error {
+	_, err := q.db.ExecContext(ctx, dropProposedTaskPlan, arg.UserID, arg.SessionID)
+	return err
+}
+
 const getActiveTaskPlan = `-- name: GetActiveTaskPlan :one
-SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at
+SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
 FROM task_plans
-WHERE user_id = $1 AND session_id = $2 AND status = 'active'
+WHERE user_id = $1 AND session_id = $2 AND status = 'active' AND kind = ''
 `
 
 type GetActiveTaskPlanParams struct {
@@ -92,6 +166,7 @@ type GetActiveTaskPlanParams struct {
 	SessionID string    `json:"session_id"`
 }
 
+// The plan of the model (kind ”): the plans the server walks have their own queries below.
 func (q *Queries) GetActiveTaskPlan(ctx context.Context, arg GetActiveTaskPlanParams) (TaskPlan, error) {
 	row := q.db.QueryRowContext(ctx, getActiveTaskPlan, arg.UserID, arg.SessionID)
 	var i TaskPlan
@@ -105,14 +180,47 @@ func (q *Queries) GetActiveTaskPlan(ctx context.Context, arg GetActiveTaskPlanPa
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const getLatestRunTaskPlan = `-- name: GetLatestRunTaskPlan :one
+SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
+FROM task_plans
+WHERE user_id = $1 AND session_id = $2 AND kind <> '' AND status <> 'proposed'
+ORDER BY id DESC
+LIMIT 1
+`
+
+type GetLatestRunTaskPlanParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+// The newest plan the server walked or walks in the conversation (not a proposal).
+func (q *Queries) GetLatestRunTaskPlan(ctx context.Context, arg GetLatestRunTaskPlanParams) (TaskPlan, error) {
+	row := q.db.QueryRowContext(ctx, getLatestRunTaskPlan, arg.UserID, arg.SessionID)
+	var i TaskPlan
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Goal,
+		&i.Steps,
+		&i.Ledger,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
 	)
 	return i, err
 }
 
 const getLatestTaskPlan = `-- name: GetLatestTaskPlan :one
-SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at
+SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
 FROM task_plans
-WHERE user_id = $1 AND session_id = $2
+WHERE user_id = $1 AND session_id = $2 AND kind = '' AND status <> 'proposed'
 ORDER BY id DESC
 LIMIT 1
 `
@@ -122,7 +230,7 @@ type GetLatestTaskPlanParams struct {
 	SessionID string    `json:"session_id"`
 }
 
-// The newest plan of the conversation, whatever became of it.
+// The newest plan of the model in the conversation, whatever became of it.
 func (q *Queries) GetLatestTaskPlan(ctx context.Context, arg GetLatestTaskPlanParams) (TaskPlan, error) {
 	row := q.db.QueryRowContext(ctx, getLatestTaskPlan, arg.UserID, arg.SessionID)
 	var i TaskPlan
@@ -136,6 +244,171 @@ func (q *Queries) GetLatestTaskPlan(ctx context.Context, arg GetLatestTaskPlanPa
 		&i.Status,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const getProposedTaskPlan = `-- name: GetProposedTaskPlan :one
+SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
+FROM task_plans
+WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
+`
+
+type GetProposedTaskPlanParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+func (q *Queries) GetProposedTaskPlan(ctx context.Context, arg GetProposedTaskPlanParams) (TaskPlan, error) {
+	row := q.db.QueryRowContext(ctx, getProposedTaskPlan, arg.UserID, arg.SessionID)
+	var i TaskPlan
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Goal,
+		&i.Steps,
+		&i.Ledger,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const getRunningTaskPlan = `-- name: GetRunningTaskPlan :one
+SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
+FROM task_plans
+WHERE user_id = $1 AND session_id = $2 AND status = 'active' AND kind <> ''
+ORDER BY id
+LIMIT 1
+`
+
+type GetRunningTaskPlanParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+func (q *Queries) GetRunningTaskPlan(ctx context.Context, arg GetRunningTaskPlanParams) (TaskPlan, error) {
+	row := q.db.QueryRowContext(ctx, getRunningTaskPlan, arg.UserID, arg.SessionID)
+	var i TaskPlan
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Goal,
+		&i.Steps,
+		&i.Ledger,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
+	)
+	return i, err
+}
+
+const listRunningTaskPlans = `-- name: ListRunningTaskPlans :many
+SELECT id, user_id, session_id, goal, steps, ledger, status, created_at, updated_at, kind
+FROM task_plans
+WHERE status = 'active' AND kind <> ''
+ORDER BY id
+`
+
+// The plans the server is walking, the oldest first.
+func (q *Queries) ListRunningTaskPlans(ctx context.Context) ([]TaskPlan, error) {
+	rows, err := q.db.QueryContext(ctx, listRunningTaskPlans)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskPlan{}
+	for rows.Next() {
+		var i TaskPlan
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Goal,
+			&i.Steps,
+			&i.Ledger,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const saveRunningTaskPlan = `-- name: SaveRunningTaskPlan :execrows
+UPDATE task_plans SET steps = $3, status = $4, updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'active' AND kind <> ''
+`
+
+type SaveRunningTaskPlanParams struct {
+	ID     int64           `json:"id"`
+	UserID uuid.UUID       `json:"user_id"`
+	Steps  json.RawMessage `json:"steps"`
+	Status string          `json:"status"`
+}
+
+// The steps of a plan the server walks, written after each of them, and its end. Only while the
+// plan is active: a plan the person stopped stays stopped (no row).
+func (q *Queries) SaveRunningTaskPlan(ctx context.Context, arg SaveRunningTaskPlanParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, saveRunningTaskPlan,
+		arg.ID,
+		arg.UserID,
+		arg.Steps,
+		arg.Status,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const startProposedTaskPlan = `-- name: StartProposedTaskPlan :one
+UPDATE task_plans p SET status = 'active', updated_at = now()
+WHERE p.id = $1 AND p.user_id = $2 AND p.status = 'proposed'
+  AND NOT EXISTS (
+      SELECT 1 FROM task_plans a
+      WHERE a.user_id = p.user_id AND a.session_id = p.session_id AND a.kind = p.kind AND a.status = 'active'
+  )
+RETURNING p.id, p.user_id, p.session_id, p.goal, p.steps, p.ledger, p.status, p.created_at, p.updated_at, p.kind
+`
+
+type StartProposedTaskPlanParams struct {
+	ID     int64     `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// The yes of the person: the proposal becomes the plan the server walks. No row: it was not
+// waiting any more (answered, replaced), or a plan of the same kind is being walked already.
+func (q *Queries) StartProposedTaskPlan(ctx context.Context, arg StartProposedTaskPlanParams) (TaskPlan, error) {
+	row := q.db.QueryRowContext(ctx, startProposedTaskPlan, arg.ID, arg.UserID)
+	var i TaskPlan
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Goal,
+		&i.Steps,
+		&i.Ledger,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Kind,
 	)
 	return i, err
 }

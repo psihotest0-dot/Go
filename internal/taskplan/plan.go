@@ -53,6 +53,9 @@ const (
 
 // Statuses of a plan.
 const (
+	// PlanProposed is a plan the server made and walks itself (Kind is set), waiting for the
+	// person's yes; it is not run and not shown to the model.
+	PlanProposed  = "proposed"
 	PlanActive    = "active"
 	PlanDone      = "done"
 	PlanCancelled = "cancelled"
@@ -87,6 +90,8 @@ type Step struct {
 	Evidence string `json:"evidence,omitempty"`
 	// Note is the reason of a failed or skipped step, or what the model said of a done one.
 	Note string `json:"note,omitempty"`
+	// Ref is what a step of a plan the server walks works on: the id of a document of the library.
+	Ref string `json:"ref,omitempty"`
 }
 
 // Evidence is an entry of the ledger: a successful call of a tool made after the plan.
@@ -100,13 +105,15 @@ type Evidence struct {
 
 // Plan is the plan of a task.
 type Plan struct {
-	ID        int64      `json:"id"`
-	Goal      string     `json:"goal"`
-	Steps     []Step     `json:"steps"`
-	Ledger    []Evidence `json:"-"`
-	Status    string     `json:"status"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID     int64      `json:"id"`
+	Goal   string     `json:"goal"`
+	Steps  []Step     `json:"steps"`
+	Ledger []Evidence `json:"-"`
+	Status string     `json:"status"`
+	// Kind is "" for a plan of the model, else the recipe the server walks (package taskrun).
+	Kind      string    `json:"kind,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 	// Warnings are what New mended in the plan it was given (not stored; for the model).
 	Warnings []string `json:"-"`
 }

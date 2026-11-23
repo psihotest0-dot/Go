@@ -62,7 +62,8 @@ var answerChecks = []answerCheck{
 		name: "stall", fileTools: true, op: "stall", result: "corrected",
 		logMsg: "the answer promises work for later and no tool was called; a correction is added",
 		note: func(_ context.Context, _ *Orchestrator, f answerFacts) string {
-			if len(f.executed) == 0 && promisesWork(f.content) {
+			// While the server walks a task of the conversation, work does go on (task_run.go).
+			if len(f.executed) == 0 && promisesWork(f.content) && !f.turn.taskRunningNow() {
 				return stallCorrection
 			}
 			return ""
