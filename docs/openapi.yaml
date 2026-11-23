@@ -885,6 +885,55 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /workspace/files/{name}/library:
+    post:
+      summary: Put the text of a file into the library
+      description: >-
+        The second store: the text of the file becomes a document of the
+        library, by the road of a document the server fetched itself (stored,
+        refused when the library has the same text, queued for the ingest). The
+        file stays in the folder, where it can still be changed or deleted; the
+        copy in the library is not changed from here.
+      parameters:
+      - $ref: '#/components/parameters/UserFileName'
+      - $ref: '#/components/parameters/UserId'
+      responses:
+        '201':
+          description: Added; the ingest runs in the background
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryAddResult'
+        '200':
+          description: The library has the same text already; nothing was added
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryAddResult'
+        '400':
+          description: A bad name, or an empty file; the body says why
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: The file is larger than what the library takes
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: The library cannot be reached from the files
+          content:
+            text/plain:
+              schema:
+                type: string
   /proposals:
     get:
       summary: Proposals that wait for the user
@@ -1771,6 +1820,21 @@ components:
         modified:
           type: string
           format: date-time
+    LibraryAddResult:
+      type: object
+      required: [file_id, file_name, duplicate, size]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        file_name:
+          type: string
+        duplicate:
+          type: boolean
+          description: The library had the same text already; nothing was added.
+        size:
+          type: integer
+          format: int64
     UserFile:
       type: object
       required: [name, version, content]
@@ -1879,6 +1943,12 @@ components:
             File writes only. `create` makes a new file, `replace` puts the text
             in place of a file that exists (the old text is kept as the previous
             version), `append` adds it to the end.
+        source:
+          type: string
+          description: >-
+            A whole page the server saved (the tool `save_page`): the address it
+            came from. `content` is then only the start of the page, with what is
+            left said at its end; the approval writes all of it.
         external_sources:
           type: array
           description: >-

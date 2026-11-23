@@ -106,11 +106,13 @@ func (r *DefaultToolRegistry) ExecuteTool(ctx context.Context, name string, args
 		return r.executeWebSearch(ctx, args)
 	case "web_fetch":
 		return r.executeWebFetch(ctx, args)
-	case filesStubTool, listFilesTool, readFileTool, writeFileTool, appendFileTool:
+	case filesStubTool, listFilesTool, readFileTool, writeFileTool, appendFileTool, savePageTool:
 		if r.files == nil {
 			return nil, fmt.Errorf("unknown tool: %s", name)
 		}
 		switch name {
+		case savePageTool:
+			return r.executeSavePage(ctx, userID, args)
 		case filesStubTool:
 			return r.executeFilesUnlock()
 		case listFilesTool:

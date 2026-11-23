@@ -328,6 +328,8 @@ func (o *Orchestrator) generateChecked(
 	if asksToAppend(userMessage) {
 		required = withoutTools(required, writeFileTool)
 	}
+	// The retry is for the text the answer said it wrote: saving a page is not what it claimed.
+	required = withoutTools(required, savePageTool)
 	retried, retriedCalls, err := o.retryUnbacked(ctx, messages, open, required, *retry, onDelta)
 	return retried, append(executed, retriedCalls...), err
 }
@@ -351,7 +353,7 @@ var (
 func usedFileTools(calls []openai.ToolCall) bool {
 	return slices.ContainsFunc(calls, func(c openai.ToolCall) bool {
 		switch c.Function.Name {
-		case filesStubTool, listFilesTool, readFileTool, writeFileTool, appendFileTool:
+		case filesStubTool, listFilesTool, readFileTool, writeFileTool, appendFileTool, savePageTool:
 			return true
 		}
 		return false

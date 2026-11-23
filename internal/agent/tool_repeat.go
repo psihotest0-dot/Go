@@ -29,7 +29,7 @@ const toolResultDuplicate = "duplicate"
 // changingTools are the tools whose call changes what a later call of another tool returns.
 var changingTools = map[string]bool{
 	"create_memory": true, "save_global_rule": true, styleNoteTool: true, addToLibraryTool: true,
-	writeFileTool: true, appendFileTool: true, planSetTool: true, planUpdateTool: true,
+	writeFileTool: true, appendFileTool: true, savePageTool: true, planSetTool: true, planUpdateTool: true,
 }
 
 // callKey is what makes two calls the same call.

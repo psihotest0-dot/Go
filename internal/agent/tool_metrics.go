@@ -33,6 +33,7 @@ var knownTools = map[string]string{
 	readFileTool:            readFileTool,
 	writeFileTool:           writeFileTool,
 	appendFileTool:          appendFileTool,
+	savePageTool:            savePageTool,
 	planStubTool:            planStubTool,
 	planSetTool:             planSetTool,
 	planUpdateTool:          planUpdateTool,

@@ -42,6 +42,9 @@ const (
 	DefaultMaxFileBytes  = 64 << 10
 	DefaultMaxFiles      = 200
 	DefaultMaxTotalBytes = 20 << 20
+	// DefaultMaxPageBytes is the largest text of a page the server saves whole (CreatePage): as
+	// large as the folder may be.
+	DefaultMaxPageBytes = 20 << 20
 	// DefaultMaxReadBytes is how much of a file one Read returns: about 800 tokens of
 	// Bulgarian text, so that reading does not eat the room of the answer.
 	DefaultMaxReadBytes = 4000
@@ -83,6 +86,9 @@ type Limits struct {
 	MaxFiles      int
 	MaxTotalBytes int64
 	MaxReadBytes  int
+	// MaxPageBytes bounds the text of a page saved whole by the server (CreatePage); the
+	// model's own writes stay within MaxFileBytes.
+	MaxPageBytes int
 }
 
 // DefaultLimits are 64 KB a file, 200 files, 20 MB together, 4 000 bytes a reading.
@@ -92,6 +98,7 @@ func DefaultLimits() Limits {
 		MaxFiles:      DefaultMaxFiles,
 		MaxTotalBytes: DefaultMaxTotalBytes,
 		MaxReadBytes:  DefaultMaxReadBytes,
+		MaxPageBytes:  DefaultMaxPageBytes,
 	}
 }
 
@@ -108,6 +115,9 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.MaxReadBytes <= 0 {
 		l.MaxReadBytes = d.MaxReadBytes
+	}
+	if l.MaxPageBytes <= 0 {
+		l.MaxPageBytes = d.MaxPageBytes
 	}
 	return l
 }
@@ -141,6 +151,9 @@ type Store struct {
 
 	mu    sync.Mutex
 	locks map[uuid.UUID]*sync.Mutex
+
+	// library takes a file of the folder into the library (WithLibrary); nil: it cannot.
+	library LibraryAdder
 }
 
 // Open makes the folder if it is not there and opens it. dir must be an absolute path,
@@ -202,11 +215,25 @@ func (s *Store) userRoot(userID uuid.UUID) (*os.Root, error) {
 // CheckContent says whether text may be written: not empty, valid UTF-8, no NUL or other
 // control characters except tab and line breaks, and not over the limit of one file.
 func (s *Store) CheckContent(content string) error {
-	if strings.TrimSpace(content) == "" {
-		return invalid("the text is empty")
-	}
 	if len(content) > s.limits.MaxFileBytes {
 		return invalid("the text is %d bytes; a file may hold %d. Write a shorter text, or add the rest to the file in parts", len(content), s.limits.MaxFileBytes)
+	}
+	return checkText(content)
+}
+
+// CheckPage is CheckContent for the text of a page the server saves whole (CreatePage): the
+// limit is MaxPageBytes.
+func (s *Store) CheckPage(content string) error {
+	if len(content) > s.limits.MaxPageBytes {
+		return invalid("the page is %d bytes; a saved page may hold %d", len(content), s.limits.MaxPageBytes)
+	}
+	return checkText(content)
+}
+
+// checkText: not empty, valid UTF-8, no control characters but tab and line breaks.
+func checkText(content string) error {
+	if strings.TrimSpace(content) == "" {
+		return invalid("the text is empty")
 	}
 	if !utf8.ValidString(content) {
 		return invalid("the text is not valid UTF-8")
@@ -318,7 +345,7 @@ func (s *Store) Read(userID uuid.UUID, name string, startLine, maxLines int) (Pa
 	}
 	defer root.Close()
 
-	data, err := readBounded(root, name, s.limits.MaxFileBytes*readCapFactor)
+	data, err := readBounded(root, name, s.readCap())
 	if err != nil {
 		return Part{}, err
 	}
@@ -426,6 +453,12 @@ func readBounded(root *os.Root, name string, max int) ([]byte, error) {
 	return data, nil
 }
 
+// readCap is the most that is read of one file: the larger of a file the owner put in the
+// folder by hand (readCapFactor times what the model may write) and a page saved whole.
+func (s *Store) readCap() int {
+	return max(s.limits.MaxFileBytes*readCapFactor, s.limits.MaxPageBytes)
+}
+
 // Create writes a new file. It never replaces one: if the name is taken it fails with
 // ErrExists, and the caller decides what to do (Replace, after the user agreed).
 func (s *Store) Create(userID uuid.UUID, name, content string) (Info, error) {
@@ -433,6 +466,26 @@ func (s *Store) Create(userID uuid.UUID, name, content string) (Info, error) {
 		return Info{}, err
 	}
 	if err := s.CheckContent(content); err != nil {
+		return Info{}, err
+	}
+	return s.create(userID, name, content)
+}
+
+// CreatePage writes a new file with the whole text of a page, which the server took from the
+// web (the tool save_page, after the user confirmed it): it may be as large as MaxPageBytes,
+// within the room of the folder. Like Create it never replaces a file.
+func (s *Store) CreatePage(userID uuid.UUID, name, content string) (Info, error) {
+	if err := ValidateName(name); err != nil {
+		return Info{}, err
+	}
+	if err := s.CheckPage(content); err != nil {
+		return Info{}, err
+	}
+	return s.create(userID, name, content)
+}
+
+func (s *Store) create(userID uuid.UUID, name, content string) (Info, error) {
+	if err := ValidateName(name); err != nil {
 		return Info{}, err
 	}
 	unlock := s.lock(userID)
@@ -489,7 +542,7 @@ func (s *Store) Replace(userID uuid.UUID, name, content string) (Info, error) {
 	defer root.Close()
 	sweep(root)
 
-	old, err := readBounded(root, name, s.limits.MaxFileBytes*readCapFactor)
+	old, err := readBounded(root, name, s.readCap())
 	if err != nil {
 		return Info{}, err
 	}
@@ -601,7 +654,7 @@ func (s *Store) Previous(userID uuid.UUID, name string) (string, error) {
 		return "", fmt.Errorf("userfiles: failed to open the previous versions: %w", err)
 	}
 	defer prev.Close()
-	data, err := readBounded(prev, name, s.limits.MaxFileBytes*readCapFactor)
+	data, err := readBounded(prev, name, s.readCap())
 	if err != nil {
 		return "", err
 	}
@@ -713,7 +766,7 @@ func (s *Store) Text(userID uuid.UUID, name string) (string, Info, error) {
 		return "", Info{}, err
 	}
 	defer root.Close()
-	data, err := readBounded(root, name, s.limits.MaxFileBytes*readCapFactor)
+	data, err := readBounded(root, name, s.readCap())
 	if err != nil {
 		return "", Info{}, err
 	}

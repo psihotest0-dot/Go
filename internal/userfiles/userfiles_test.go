@@ -404,7 +404,7 @@ func TestReadStaysWithinItsByteLimit(t *testing.T) {
 }
 
 func TestReadFilesTheOwnerPutThere(t *testing.T) {
-	s, dir := newStore(t, Limits{MaxFileBytes: 100})
+	s, dir := newStore(t, Limits{MaxFileBytes: 100, MaxPageBytes: 300})
 	_, err := s.Create(alice, "seed.txt", "x")
 	require.NoError(t, err)
 	udir := userDir(dir, alice)
@@ -421,7 +421,7 @@ func TestReadFilesTheOwnerPutThere(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(filepath.Join(udir, "huge.txt"), []byte(strings.Repeat("x", 401)), 0o600))
 	_, err = s.Read(alice, "huge.txt", 1, 10)
-	require.ErrorAs(t, err, &invalid, "more than four times what the model may write")
+	require.ErrorAs(t, err, &invalid, "more than four times what the model may write, and more than a saved page")
 }
 
 func TestOnlyUsableFilesAreListed(t *testing.T) {
@@ -657,4 +657,44 @@ func TestStat(t *testing.T) {
 	var invalid *InvalidError
 	_, err = s.Stat(alice, "../a.txt")
 	require.ErrorAs(t, err, &invalid)
+}
+
+// A page saved whole by the server may be larger than what the model may write, up to
+// MaxPageBytes and the room of the folder; it is read back whole.
+func TestAPageIsSavedWhole(t *testing.T) {
+	s, _ := newStore(t, Limits{MaxFileBytes: 100, MaxPageBytes: 1000, MaxTotalBytes: 1000})
+	page := strings.Repeat("a line of the page\n", 30) // 570 bytes
+
+	var invalid *InvalidError
+	_, err := s.Create(alice, "page.md", page)
+	require.ErrorAs(t, err, &invalid, "the model's own write stays within MaxFileBytes")
+
+	info, err := s.CreatePage(alice, "page.md", page)
+	require.NoError(t, err)
+	assert.Equal(t, int64(len(page)), info.Size)
+	text, _, err := s.Text(alice, "page.md")
+	require.NoError(t, err)
+	assert.Equal(t, page, text)
+	part, err := s.Read(alice, "page.md", 1, 5)
+	require.NoError(t, err)
+	assert.Equal(t, 30, part.TotalLines, "the model reads it in parts")
+
+	_, err = s.CreatePage(alice, "page.md", "short")
+	assert.ErrorIs(t, err, ErrExists, "a page never replaces a file")
+	_, err = s.CreatePage(alice, "big.md", strings.Repeat("x", 1001))
+	require.ErrorAs(t, err, &invalid, "not over MaxPageBytes")
+	_, err = s.CreatePage(alice, "second.md", page)
+	assert.ErrorIs(t, err, ErrQuotaExceeded, "within the room of the folder")
+	_, err = s.CreatePage(alice, "../out.md", "x")
+	require.ErrorAs(t, err, &invalid, "the name is checked")
+	_, err = s.CreatePage(alice, "empty.md", "  \n")
+	require.ErrorAs(t, err, &invalid, "not an empty page")
+	_, err = s.CreatePage(alice, "nul.md", "a\x00b")
+	require.ErrorAs(t, err, &invalid, "no control characters")
+}
+
+func TestAPageTakesTheDefaultLimit(t *testing.T) {
+	s, _ := newStore(t, Limits{})
+	assert.Equal(t, DefaultMaxPageBytes, s.limits.MaxPageBytes)
+	assert.NoError(t, s.CheckPage(strings.Repeat("x", DefaultMaxFileBytes+1)), "a page may be larger than a file of the model")
 }

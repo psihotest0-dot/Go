@@ -19,7 +19,7 @@ func toolNames(tools []openai.Tool) []string {
 	return names
 }
 
-var fileToolNames = []string{listFilesTool, readFileTool, writeFileTool, appendFileTool}
+var fileToolNames = []string{listFilesTool, readFileTool, writeFileTool, appendFileTool, savePageTool}
 
 func newGroupOrchestrator(mock *llm.MockLLM, reg ToolRegistry) *Orchestrator {
 	return &Orchestrator{llmClient: mock, tools: reg, groups: []toolGroup{filesGroup()}}
@@ -243,7 +243,7 @@ func TestTheForcedRoundOffersOnlyWhatMayBeUsed(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, mock.Requests, 4)
-	assert.Equal(t, []string{listFilesTool, writeFileTool, appendFileTool}, toolNames(mock.Requests[2].Tools))
+	assert.Equal(t, []string{listFilesTool, writeFileTool, appendFileTool, savePageTool}, toolNames(mock.Requests[2].Tools))
 	assert.Equal(t, "required", mock.Requests[2].ToolChoice)
 }
 

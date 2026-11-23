@@ -34,8 +34,8 @@ const (
 	webFetchMaxBytes int64 = 20 << 20
 	// webFetchTimeout bounds the whole local fetch: the request, the body and the text.
 	webFetchTimeout = 30 * time.Second
-	// webFetchMaxRunes bounds the text kept of a document; the budget of the tool results cuts
-	// it again, to what the turn has room for.
+	// webFetchMaxRunes bounds the text web_fetch gives the model; the budget of the tool results
+	// cuts it again, to what the turn has room for. save_page keeps the whole text.
 	webFetchMaxRunes = 200_000
 	// webFetchMinRunes: a page with less text than this is taken as empty (a page made by
 	// JavaScript, a refusal page), and the paid fetch is tried.
@@ -104,7 +104,22 @@ func (f *localPageFetcher) FetchText(ctx context.Context, rawURL string) (string
 	if title == "" {
 		title = strings.TrimSuffix(strings.TrimSuffix(doc.Name, ".pdf"), ".html")
 	}
-	return title, truncateRunes(text, webFetchMaxRunes), doc.Final, nil
+	return title, text, doc.Final, nil
+}
+
+// localFailure is the reason a local fetch gave nothing, as a word for the log, the counters and
+// localFetchReasons.
+func localFailure(err error) string {
+	var fe *webfetch.Error
+	switch {
+	case errors.As(err, &fe):
+		return string(fe.Reason)
+	case errors.Is(err, errPageEmpty):
+		return "empty"
+	case errors.Is(err, context.DeadlineExceeded):
+		return string(webfetch.ReasonTimeout)
+	}
+	return "failed"
 }
 
 // WithLocalWebFetch makes web_fetch read pages from this machine first.
@@ -118,22 +133,13 @@ func (r *DefaultToolRegistry) WithLocalWebFetch(f pageFetcher) *DefaultToolRegis
 func (r *DefaultToolRegistry) fetchLocally(ctx context.Context, pageURL string) (map[string]interface{}, string) {
 	title, text, final, err := r.pages.FetchText(ctx, pageURL)
 	if err != nil {
-		reason := "failed"
-		var fe *webfetch.Error
-		switch {
-		case errors.As(err, &fe):
-			reason = string(fe.Reason)
-		case errors.Is(err, errPageEmpty):
-			reason = "empty"
-		case errors.Is(err, context.DeadlineExceeded):
-			reason = string(webfetch.ReasonTimeout)
-		}
+		reason := localFailure(err)
 		metrics.WebToolRequests.WithLabelValues("web_fetch", "local_"+reason).Inc()
 		slog.InfoContext(ctx, "the local web_fetch gave nothing", "reason", reason, "host", hostOf(pageURL), "error", err)
 		return nil, reason
 	}
 	metrics.WebToolRequests.WithLabelValues("web_fetch", "local").Inc()
-	result := map[string]interface{}{"title": title, "content": text}
+	result := map[string]interface{}{"title": title, "content": truncateRunes(text, webFetchMaxRunes)}
 	if final != "" && final != pageURL {
 		result["url"] = final
 	}

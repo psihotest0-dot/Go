@@ -491,6 +491,11 @@ func (o *Orchestrator) runRounds(
 	forced := ""
 	if len(require) == 0 {
 		forced = forcedFirstTool(tools, lastUserContent(messages))
+		// The whole page behind a link as a file: save_page, which is in the group of the files
+		// (save_page_tool.go). It is forced only where that group is on offer.
+		if (hasTool(tools, filesStubTool) || hasTool(tools, savePageTool)) && asksToSavePage(lastUserContent(messages)) {
+			forced = savePageTool
+		}
 		// An explanation from the library searches first, as a question to the books does (explain.go).
 		if forced == "" && turnFrom(ctx).explaining() && onlyTool(tools, searchDocumentsTool) != nil {
 			forced = searchDocumentsTool
@@ -515,6 +520,10 @@ func (o *Orchestrator) runRounds(
 		switch {
 		case forced != "" && toolRounds == 0:
 			req.Tools = onlyTool(active, forced)
+			if req.Tools == nil && forced == savePageTool {
+				// Behind the stub of its group: offered on its own, the group stays locked.
+				req.Tools = []openai.Tool{savePageDefinition()}
+			}
 			req.ToolChoice = "required"
 		case len(asked) > 0:
 			req.Tools = asked

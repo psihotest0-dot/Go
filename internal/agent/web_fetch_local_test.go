@@ -209,10 +209,12 @@ func TestTheLocalFetcherTakesTheTextOfAPage(t *testing.T) {
 	assert.Equal(t, webFetchUserAgent, agent, "the fetch says what it is")
 }
 
-// A page longer than the room is cut; the budget of the turn cuts it again.
-func TestTheLocalFetcherBoundsTheText(t *testing.T) {
+// The fetcher keeps the whole text (save_page writes all of it); what web_fetch gives the model
+// is cut, and the budget of the turn cuts it again.
+func TestTheLocalFetcherKeepsTheWholeTextAndWebFetchCutsIt(t *testing.T) {
+	long := strings.Repeat("дума ", webFetchMaxRunes/4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "<html><body><p>"+strings.Repeat("дума ", webFetchMaxRunes/4)+"</p></body></html>")
+		_, _ = io.WriteString(w, "<html><body><p>"+long+"</p></body></html>")
 	}))
 	t.Cleanup(srv.Close)
 	f := &localPageFetcher{
@@ -222,8 +224,13 @@ func TestTheLocalFetcherBoundsTheText(t *testing.T) {
 	}
 	_, text, _, err := f.FetchText(t.Context(), srv.URL)
 	require.NoError(t, err)
-	assert.LessOrEqual(t, len([]rune(text)), webFetchMaxRunes)
-	assert.Greater(t, len([]rune(text)), webFetchMaxRunes-10)
+	assert.Greater(t, len([]rune(text)), webFetchMaxRunes, "all of the page")
+
+	r, _, ctx, _ := localWebEnv(t, &fakePages{title: "T", text: text})
+	res, err := r.executeWebFetch(ctx, map[string]interface{}{"url": "https://example.org/long"})
+	require.NoError(t, err)
+	_, page := pageResult(t, res)
+	assert.Equal(t, webFetchMaxRunes, len([]rune(page["content"].(string))), "the model gets the start")
 }
 
 // fakeDocs gives one document; fakeExtractor gives one text, or one error.

@@ -134,7 +134,7 @@ func toolLogLine(tool string, args map[string]interface{}, res interface{}, size
 			return named("not found")
 		}
 		return named("read")
-	case writeFileTool, appendFileTool:
+	case writeFileTool, appendFileTool, savePageTool:
 		switch status {
 		case statusSaved:
 			return named("saved")

@@ -21,10 +21,12 @@ import (
 //	GET    /workspace/files/{name}         the text of a file; ?version=previous for the
 //	                                       version a replacement took the place of
 //	DELETE /workspace/files/{name}         remove a file and its previous version
+//	POST   /workspace/files/{name}/library put the text of a file into the library (library.go)
 func (s *Store) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /workspace/files", s.listHandler)
 	mux.HandleFunc("GET /workspace/files/{name}", s.getHandler)
 	mux.HandleFunc("DELETE /workspace/files/{name}", s.deleteHandler)
+	mux.HandleFunc("POST /workspace/files/{name}/library", s.libraryHandler)
 }
 
 type listResponse struct {

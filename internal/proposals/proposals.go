@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -172,6 +173,9 @@ type WritePayload struct {
 	Content     string `json:"content"`
 	OldRunes    int    `json:"old_runes,omitempty"`
 	KeptPercent int    `json:"kept_percent,omitempty"`
+	// Source is the address of a page the server saved whole (ProposePage): the text is the
+	// page's, not the model's, and may be as large as a saved page.
+	Source string `json:"source,omitempty"`
 }
 
 // LossyKeptPercent is the share of the lines of a file that a replacement keeps, under which
@@ -234,6 +238,8 @@ type Proposal struct {
 	// FileName and FileMode are set for a file write; the text is in Content.
 	FileName string `json:"file_name,omitempty"`
 	FileMode string `json:"file_mode,omitempty"`
+	// Source is the address of a page saved whole (ProposePage); Content is then only its start.
+	Source string `json:"source,omitempty"`
 	// OldRunes and KeptPercent are those of the payload of a replacement (WritePayload); not
 	// part of the contract, the summary says them to the user and the tool to the model.
 	OldRunes    int `json:"-"`
@@ -285,6 +291,11 @@ func toProposal(row db.PendingAction) (Proposal, error) {
 			return Proposal{}, fmt.Errorf("proposal %d has an unreadable payload: %w", row.ID, err)
 		}
 		p.FileName, p.FileMode, p.Content = payload.Name, payload.Mode, payload.Content
+		if payload.Source != "" {
+			// A saved page may be megabytes: the client is shown its start; the whole text stays
+			// here and is what an approval writes.
+			p.Source, p.Content = payload.Source, pagePreview(payload.Content)
+		}
 		p.OldRunes, p.KeptPercent = payload.OldRunes, payload.KeptPercent
 		p.Summary = writeSummary(payload)
 	default:
@@ -313,6 +324,10 @@ func writeSummary(p WritePayload) string {
 		}
 	case WriteAppend:
 		what = "Добавяне към файла"
+	}
+	if p.Source != "" {
+		what = "Нов файл с цялата страница"
+		size = fmt.Sprintf(" (%d знака, %.0f KB, от %s)", utf8.RuneCountInString(p.Content), float64(len(p.Content))/1024, sourceHost(p.Source))
 	}
 	text := strings.Join(strings.Fields(p.Content), " ")
 	if utf8.RuneCountInString(text) > previewRunes {
@@ -376,6 +391,51 @@ func (s *Service) ProposeWrite(ctx context.Context, userID uuid.UUID, sessionID,
 		}
 	}
 	return s.propose(ctx, userID, sessionID, KindWriteFile, payload, external)
+}
+
+// pagePreviewRunes is how much of a saved page the client is shown before the approval.
+const pagePreviewRunes = 4000
+
+// pagePreview is the start of a saved page, with what is left of it said.
+func pagePreview(text string) string {
+	runes := []rune(text)
+	if len(runes) <= pagePreviewRunes {
+		return text
+	}
+	return string(runes[:pagePreviewRunes]) + fmt.Sprintf("\n\n[… още %d знака от страницата — ще бъдат записани всичките]", len(runes)-pagePreviewRunes)
+}
+
+// sourceHost is the site of a saved page, for the summary.
+func sourceHost(source string) string {
+	if u, err := url.Parse(source); err == nil && u.Hostname() != "" {
+		return u.Hostname()
+	}
+	return source
+}
+
+// ProposePage leaves the proposal of a new file with the whole text of a page that the server
+// took from the web (the tool save_page): the text is the page's, so it is checked as a saved
+// page (userfiles.CheckPage), and source is the address it came from. The name must be free.
+func (s *Service) ProposePage(ctx context.Context, userID uuid.UUID, sessionID, name, content, source string, external []string) (Proposal, error) {
+	if s.files == nil {
+		return Proposal{}, &InvalidError{"files are not enabled"}
+	}
+	if source == "" {
+		return Proposal{}, &InvalidError{"a saved page needs the address it came from"}
+	}
+	if err := userfiles.ValidateName(name); err != nil {
+		return Proposal{}, asInvalid(err)
+	}
+	if err := s.files.CheckPage(content); err != nil {
+		return Proposal{}, asInvalid(err)
+	}
+	switch _, err := s.files.Stat(userID, name); {
+	case err == nil:
+		return Proposal{}, userfiles.ErrExists
+	case !errors.Is(err, userfiles.ErrNotFound):
+		return Proposal{}, err
+	}
+	return s.propose(ctx, userID, sessionID, KindWriteFile, WritePayload{Mode: WriteCreate, Name: name, Content: content, Source: source}, external)
 }
 
 // asInvalid turns the refusal of the file store into the one of this package, so that the
@@ -604,7 +664,11 @@ func (s *Service) applyWrite(userID uuid.UUID, p WritePayload) error {
 	var err error
 	switch p.Mode {
 	case WriteCreate:
-		_, err = s.files.Create(userID, p.Name, p.Content)
+		if p.Source != "" {
+			_, err = s.files.CreatePage(userID, p.Name, p.Content)
+		} else {
+			_, err = s.files.Create(userID, p.Name, p.Content)
+		}
 	case WriteReplace:
 		_, err = s.files.Replace(userID, p.Name, p.Content)
 	case WriteAppend:

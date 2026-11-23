@@ -89,6 +89,7 @@ func fileToolDefinitions() []openai.Tool {
 				"name":    text("File name."),
 				"content": text("The text to add."),
 			}, "name", "content")),
+		savePageDefinition(),
 	}
 }
 
@@ -151,7 +152,7 @@ func (r *DefaultToolRegistry) executeFilesUnlock() (interface{}, error) {
 	return map[string]interface{}{
 		"status": "ok",
 		"message": "The file tools are now available: " + listFilesTool + ", " + readFileTool + ", " + writeFileTool + ", " + appendFileTool +
-			". Nothing is done for the user yet: call one of them now.",
+			", " + savePageTool + ". Nothing is done for the user yet: call one of them now.",
 	}, nil
 }
 

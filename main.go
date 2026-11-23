@@ -224,7 +224,8 @@ func run() error {
 			logger.Error("the file tools are off: the folder of the user's files cannot be opened", slog.String("dir", cfg.FilesDir), slog.Any("error", err))
 		} else {
 			defer store.Close()
-			fileStore = store
+			// The button "Запази в библиотеката" of the folder (POST /workspace/files/{name}/library).
+			fileStore = store.WithLibrary(apiService.NewLibraryAdder(riverClient))
 			proposalService.WithFiles(store)
 			toolRegistry.WithFiles(store)
 			orchestrator.WithFileTools()
