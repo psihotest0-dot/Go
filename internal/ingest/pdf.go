@@ -102,6 +102,18 @@ type PDFExtractor struct {
 	// ocrPageFn recognises one page. It is a field so that tests can count and
 	// time the pages without a scanned PDF and without tesseract.
 	ocrPageFn func(ctx context.Context, pdfPath string, page int) (string, error)
+
+	// noOCR leaves the pages without text as they are (WithoutOCR).
+	noOCR bool
+}
+
+// WithoutOCR is the extractor that takes only the text a PDF has: the pages that are scans stay
+// out. For a page read in a conversation (the web_fetch of the chat), where recognising a scan of
+// a few hundred pages would hold the answer for minutes.
+func (e *PDFExtractor) WithoutOCR() *PDFExtractor {
+	c := *e
+	c.noOCR = true
+	return &c
 }
 
 // NewPDFExtractor resolves the external PDF tools (PDFTOTEXT_PATH, PDFTOPPM_PATH,
@@ -261,7 +273,7 @@ func (e *PDFExtractor) Extract(ctx context.Context, r io.Reader) (string, error)
 	}
 
 	var ocr ocrOutcome
-	if len(scans) > 0 {
+	if len(scans) > 0 && !e.noOCR {
 		ocr, err = e.ocrPages(ctx, pdfPath, scans, newPageStore(checkpointDirFrom(ctx), e.dpi))
 		if err != nil {
 			return "", err

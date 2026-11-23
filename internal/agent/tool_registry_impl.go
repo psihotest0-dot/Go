@@ -45,6 +45,8 @@ type DefaultToolRegistry struct {
 	adder   libraryAdder
 	// plans keeps the plans of the tasks; nil means the plan tools are off.
 	plans *taskplan.Store
+	// pages fetches web_fetch's pages from this machine; nil means only the paid API (web_fetch_local.go).
+	pages pageFetcher
 }
 
 // WithAttachments lets the read_attachment tool read the files attached to a
@@ -277,8 +279,23 @@ func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[stri
 		return nil, &toolArgumentError{tool: "web_fetch", reason: err.Error()}
 	}
 
+	// From this machine first (web_fetch_local.go); the paid API when that gives nothing.
+	localReason := ""
+	if r.pages != nil {
+		var result map[string]interface{}
+		if result, localReason = r.fetchLocally(ctx, pageURL); result != nil {
+			turnFrom(ctx).markExternal(sourceWebFetch)
+			return result, nil
+		}
+	}
+
 	result, err := r.callWebTool(ctx, "web_fetch", "/fetch", map[string]interface{}{"url": pageURL})
 	if err != nil {
+		if localReason != "" {
+			// The page could be read neither here nor by the API: the model hears why from here.
+			slog.WarnContext(ctx, "the paid web_fetch failed after the local one", "error", err)
+			return nil, localFetchError(localReason)
+		}
 		return nil, err
 	}
 	turnFrom(ctx).markExternal(sourceWebFetch)

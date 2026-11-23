@@ -382,3 +382,26 @@ func TestRecogniseOneTurnsAPanicIntoAPageError(t *testing.T) {
 		t.Errorf("after the panic: %q, %v", got, err)
 	}
 }
+
+// WithoutOCR takes only the text a PDF has: the scanned pages are never recognised, and a PDF
+// that is all scans has no text.
+func TestPDFWithoutOCRDoesNotRecognisePages(t *testing.T) {
+	var calls atomic.Int32
+	e := pdfWithFakeOCR(t, 2, func(_ context.Context, page int) (string, error) {
+		calls.Add(1)
+		return pageText(page), nil
+	}).WithoutOCR()
+
+	_, err := e.Extract(context.Background(), bytes.NewReader(blankPagesPDF(3)))
+
+	if !errors.Is(err, ErrNoText) {
+		t.Fatalf("want ErrNoText, got %v", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("%d pages were recognised, want none", n)
+	}
+	withOCR := pdfWithFakeOCR(t, 2, func(_ context.Context, page int) (string, error) { return pageText(page), nil })
+	if text, err := withOCR.Extract(context.Background(), bytes.NewReader(blankPagesPDF(3))); err != nil || !strings.Contains(text, pageText(3)) {
+		t.Fatalf("the extractor it was made from still recognises the pages: %q, %v", text, err)
+	}
+}

@@ -1,9 +1,9 @@
-// Package webfetch downloads a document that a user pointed to - a PDF, or an article on a
-// web page - so that it can be added to the library (plan item P53).
+// Package webfetch downloads a document from the web - a PDF, or a page - from this machine.
 //
-// It is not the web_fetch tool of the chat. That one is made by a paid API, gives the model
-// the text of the page and cannot read a PDF. This one is made from this machine, never
-// shows the text to the model, and takes only what the ingest can read.
+// It serves two tools: add_to_library (plan item P53), which takes a document a user pointed to
+// into the library and only an article (a page with little text is an abstract), and, with
+// WEB_FETCH_LOCAL_ENABLED, the web_fetch of the chat (plan step 3.1), which gives the model the
+// text of any page or PDF; the paid API reads a page only when this cannot.
 //
 // The address comes from a person and the request is made from the server, so every
 // connection - the first and every redirect - is checked against the address it is really
@@ -93,8 +93,11 @@ const (
 // connection and must be called.
 type Document struct {
 	Name string
-	Kind Kind
-	Body io.Reader
+	// Title is the title the page gave the article (citation_title, else <title>), "" when there
+	// is none (a PDF linked directly).
+	Title string
+	Kind  Kind
+	Body  io.Reader
 	// Final is the address the document was taken from, for the log (host only is logged).
 	Final string
 
@@ -120,6 +123,9 @@ type Options struct {
 	// redirect; an error refuses it. The names that are not public ones are refused here
 	// (the addresses are refused by the dialer).
 	CheckURL func(rawURL string) error
+	// UserAgent is how the requests name themselves; empty: the one of the library (a link the
+	// person wrote).
+	UserAgent string
 	// AllowPrivate lets the dialer connect to private addresses. Tests only.
 	AllowPrivate bool
 }
@@ -131,6 +137,7 @@ type Fetcher struct {
 	maxPageBytes int64
 	minPageRunes int
 	checkURL     func(string) error
+	userAgent    string
 }
 
 // New builds a Fetcher.
@@ -140,6 +147,10 @@ func New(opts Options) *Fetcher {
 		maxPageBytes: opts.MaxPageBytes,
 		minPageRunes: opts.MinPageRunes,
 		checkURL:     opts.CheckURL,
+		userAgent:    opts.UserAgent,
+	}
+	if f.userAgent == "" {
+		f.userAgent = userAgent
 	}
 	if f.maxBytes <= 0 {
 		f.maxBytes = DefaultMaxBytes
@@ -233,6 +244,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*Document, error) {
 		if err == nil && (target.Scheme == "http" || target.Scheme == "https") {
 			doc, perr := f.fetchPDF(ctx, target.String(), nameFromTitle(meta.title, ".pdf"))
 			if perr == nil {
+				doc.Title = strings.Join(strings.Fields(meta.title), " ")
 				return doc, nil
 			}
 			var e *Error
@@ -257,7 +269,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*Document, error) {
 	if name == "" {
 		name = nameFromURL(final, ".html")
 	}
-	return &Document{Name: name, Kind: KindHTML, Body: bytes.NewReader(page), Final: final.String()}, nil
+	return &Document{Name: name, Title: strings.Join(strings.Fields(meta.title), " "), Kind: KindHTML, Body: bytes.NewReader(page), Final: final.String()}, nil
 }
 
 // fetchPDF downloads a PDF that a page named.
@@ -307,7 +319,7 @@ func (f *Fetcher) get(ctx context.Context, rawURL string) (*http.Response, error
 	if err != nil {
 		return nil, &Error{Reason: ReasonBadURL, Detail: "not an http or https link"}
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", f.userAgent)
 	req.Header.Set("Accept", "application/pdf, text/html;q=0.9, */*;q=0.1")
 
 	resp, err := f.client.Do(req)

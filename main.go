@@ -239,6 +239,11 @@ func run() error {
 		orchestrator.WithLibraryAdd()
 		logger.Info("the tool add_to_library is on")
 	}
+	// web_fetch from this machine first, the paid API after it (plan step 3.1).
+	if cfg.WebFetchLocalEnabled {
+		toolRegistry.WithLocalWebFetch(agent.NewLocalPageFetcher())
+		logger.Info("web_fetch reads pages from this machine first")
+	}
 
 	// The plan of a task (package taskplan): off unless TASK_PLAN_ENABLED. The server keeps the
 	// plan of a conversation and checks that a step is done before it is marked so.

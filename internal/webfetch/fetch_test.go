@@ -108,6 +108,7 @@ func TestAPDFIsTaken(t *testing.T) {
 	defer doc.Close()
 	assert.Equal(t, KindPDF, doc.Kind)
 	assert.Equal(t, "Bajgrowicz_Scaillet.pdf", doc.Name)
+	assert.Empty(t, doc.Title, "a PDF linked directly has no page to give it a title")
 	body, err := io.ReadAll(doc.Body)
 	require.NoError(t, err)
 	assert.Equal(t, pdfBytes, string(body))
@@ -148,6 +149,7 @@ func TestAPageThatNamesItsPDFGivesThePDF(t *testing.T) {
 	defer doc.Close()
 	assert.Equal(t, KindPDF, doc.Kind)
 	assert.Equal(t, "Betting Against Beta.pdf", doc.Name, "named after the title of the paper")
+	assert.Equal(t, "Betting Against Beta", doc.Title, "the title the page gave the article")
 	body, _ := io.ReadAll(doc.Body)
 	assert.Equal(t, pdfBytes, string(body))
 }
@@ -163,6 +165,7 @@ func TestAPageWithTheTextOfAnArticleIsTakenAsHTML(t *testing.T) {
 	defer doc.Close()
 	assert.Equal(t, KindHTML, doc.Kind)
 	assert.Equal(t, "Staff Report 1.html", doc.Name)
+	assert.Equal(t, "Staff Report 1", doc.Title)
 	body, _ := io.ReadAll(doc.Body)
 	assert.Contains(t, string(body), "Overnight returns")
 }
@@ -410,4 +413,24 @@ func TestAPDFIsKnownByItsStartAndItsLeadingBlanks(t *testing.T) {
 	assert.True(t, isPDF([]byte("\r\n  %PDF-1.4")))
 	assert.False(t, isPDF([]byte("<!doctype html>")))
 	assert.False(t, isPDF([]byte("")))
+}
+
+// The requests say what they are: the library's own name, or the one given.
+func TestTheRequestsNameThemselves(t *testing.T) {
+	var agent string
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		agent = r.Header.Get("User-Agent")
+		w.Header().Set("Content-Type", "application/pdf")
+		_, _ = io.WriteString(w, pdfBytes)
+	})
+
+	doc, err := fetch(t, newTestFetcher(Options{}), srv.URL+"/a.pdf")
+	require.NoError(t, err)
+	doc.Close()
+	assert.Equal(t, userAgent, agent)
+
+	doc, err = fetch(t, newTestFetcher(Options{UserAgent: "reader/2.0"}), srv.URL+"/a.pdf")
+	require.NoError(t, err)
+	doc.Close()
+	assert.Equal(t, "reader/2.0", agent)
 }

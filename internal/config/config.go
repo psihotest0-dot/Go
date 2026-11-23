@@ -152,6 +152,10 @@ type Config struct {
 	// downloads the documents behind links the user wrote and adds them to the library
 	// (plan item P53). Off by default: without it nothing changes.
 	LibraryAddEnabled bool
+	// WebFetchLocalEnabled (WEB_FETCH_LOCAL_ENABLED) makes the web_fetch of the chat read a page
+	// or a PDF from this machine first, and the paid API only when that gives nothing (plan step
+	// 3.1, internal/agent/web_fetch_local.go). Off by default: without it nothing changes.
+	WebFetchLocalEnabled bool
 	// TaskPlanEnabled (TASK_PLAN_ENABLED) turns on the plan of a task: the assistant makes a
 	// plan of a task with several steps, the server keeps it and checks that a step is done
 	// before it is marked so (package taskplan). Off by default: without it nothing changes.
@@ -373,6 +377,7 @@ func Load() *Config {
 		FilesEnabled:               boolEnv("FILES_ENABLED", false),
 		FilesDir:                   filesDir(),
 		LibraryAddEnabled:          boolEnv("LIBRARY_ADD_ENABLED", false),
+		WebFetchLocalEnabled:       boolEnv("WEB_FETCH_LOCAL_ENABLED", false),
 		TaskPlanEnabled:            boolEnv("TASK_PLAN_ENABLED", false),
 		AnswerPlanEnabled:          boolEnv("ANSWER_PLAN_ENABLED", false),
 		MemoryThemesEnabled:        boolEnv("MEMORY_THEMES_ENABLED", false),
