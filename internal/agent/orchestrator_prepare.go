@@ -81,6 +81,10 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	turn.setExplain(o.explainSubjectFor(req.Content))
 	// "Успя ли?" about work on the files or a plan: the code answers from the folder and the plan.
 	turn.setStatusAnswer(o.statusAnswerFor(ctx, userID, req.Content, chatCtx.History, chatCtx.HistoryAt, taskPlan))
+	// "Какво можеш?": the code answers with what is on now, by the same road (help_answer.go).
+	if turn.statusAnswerText() == "" {
+		turn.setStatusAnswer(o.helpAnswerFor(req.Content))
+	}
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
 	}

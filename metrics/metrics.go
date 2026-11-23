@@ -258,6 +258,13 @@ var (
 	// forced_tool, greeting...). Only while ANSWER_PLAN_ENABLED is on. AnswerPlanMarks counts
 	// the memory marks ([1], [2]...) of the planned answers: "used" for a mark of a given
 	// memory, "unknown" for a number the plan did not give.
+	// HelpAnswers counts the answers of the code to "какво можеш / какви инструменти имаш"
+	// (internal/agent/help_answer.go). Only while HELP_ANSWER_ENABLED is on.
+	HelpAnswers = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "help_answers_total",
+		Help: "Answers of the code to a question about what the assistant can do.",
+	})
+
 	// ExplainDossiers counts the dossiers of the explanation from the library (step 2.8,
 	// internal/agent/explain.go), by result: "built", "empty" (no search found anything),
 	// "failed" (every search failed), "scoped" (the question named a file: an ordinary search

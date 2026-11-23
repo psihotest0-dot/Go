@@ -260,6 +260,10 @@ func run() error {
 		orchestrator.WithStatusAnswer()
 		logger.Info("the answer to a question about the work comes from the code")
 	}
+	if cfg.HelpAnswerEnabled {
+		orchestrator.WithHelpAnswer()
+		logger.Info("the answer to what the assistant can do comes from the code")
+	}
 	if cfg.TaskPlanEnabled {
 		plans := taskplan.NewStore(database)
 		toolRegistry.WithPlans(plans)

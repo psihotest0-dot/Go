@@ -189,6 +189,10 @@ type Config struct {
 	// "докъде стигна") after a request about the files, or with a plan of a task in progress, is
 	// answered by the code from the folder and the plan, not by the model (step 3.2). Off by default.
 	StatusAnswerEnabled bool
+	// HelpAnswerEnabled (HELP_ANSWER_ENABLED): "какво можеш / какви инструменти имаш" is answered by
+	// the code with what is on now and a sentence to write for each (internal/agent/help_answer.go).
+	// Off by default.
+	HelpAnswerEnabled bool
 	// OracleToken is the bearer token the trading bot presents to POST
 	// /oracle/evaluate (ORACLE_TOKEN). Empty, or shorter than internal/oracle
 	// accepts, means the Oracle routes are not served at all.
@@ -386,6 +390,7 @@ func Load() *Config {
 		ExplainDossierEnabled:      boolEnv("EXPLAIN_DOSSIER_ENABLED", false),
 		ExplainLLM:                 strings.ToLower(strings.TrimSpace(os.Getenv("EXPLAIN_LLM"))),
 		StatusAnswerEnabled:        boolEnv("STATUS_ANSWER_ENABLED", false),
+		HelpAnswerEnabled:          boolEnv("HELP_ANSWER_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),
