@@ -169,6 +169,10 @@ type Config struct {
 	// without the tone examples, the repeated description of the tools and of the web, and
 	// without read_attachment when no file is attached. Off by default.
 	LeanPromptEnabled bool
+	// ContextAfterHistoryEnabled (CONTEXT_AFTER_HISTORY_ENABLED) puts the memories and the book
+	// summaries of a turn after the history, for the prompt cache of the model servers (step 2.11,
+	// internal/agent/turn_context.go). Off by default.
+	ContextAfterHistoryEnabled bool
 	// ExplainDossierEnabled (EXPLAIN_DOSSIER_ENABLED) turns on the explanation from the library
 	// (step 2.8, internal/agent/explain.go): for "не разбирам X" / "обясни ми X" the code gathers
 	// the passages and the model writes the explanation from them. Off by default.
@@ -360,22 +364,23 @@ func Load() *Config {
 		LLMTopP:                floatEnv("LLM_TOP_P", 0.8, 0.01, 1),
 		LLMPresencePenalty:     floatEnv("LLM_PRESENCE_PENALTY", 0, 0, 2),
 
-		EmbedderURL:           os.Getenv("EMBEDDER_URL"),
-		EmbedderTimeout:       time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
-		DatabaseURL:           dbURL,
-		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
-		EnableAdaptiveSkip:    adaptiveSkip,
-		EnableDistillation:    distillation,
-		FilesEnabled:          boolEnv("FILES_ENABLED", false),
-		FilesDir:              filesDir(),
-		LibraryAddEnabled:     boolEnv("LIBRARY_ADD_ENABLED", false),
-		TaskPlanEnabled:       boolEnv("TASK_PLAN_ENABLED", false),
-		AnswerPlanEnabled:     boolEnv("ANSWER_PLAN_ENABLED", false),
-		MemoryThemesEnabled:   boolEnv("MEMORY_THEMES_ENABLED", false),
-		LeanPromptEnabled:     boolEnv("LEAN_PROMPT_ENABLED", false),
-		ExplainDossierEnabled: boolEnv("EXPLAIN_DOSSIER_ENABLED", false),
-		ExplainLLM:            strings.ToLower(strings.TrimSpace(os.Getenv("EXPLAIN_LLM"))),
-		StatusAnswerEnabled:   boolEnv("STATUS_ANSWER_ENABLED", false),
+		EmbedderURL:                os.Getenv("EMBEDDER_URL"),
+		EmbedderTimeout:            time.Duration(positiveIntEnv("EMBEDDER_TIMEOUT_SECONDS", int(DefaultEmbedderTimeout/time.Second))) * time.Second,
+		DatabaseURL:                dbURL,
+		TelegramBotToken:           os.Getenv("TELEGRAM_BOT_TOKEN"),
+		EnableAdaptiveSkip:         adaptiveSkip,
+		EnableDistillation:         distillation,
+		FilesEnabled:               boolEnv("FILES_ENABLED", false),
+		FilesDir:                   filesDir(),
+		LibraryAddEnabled:          boolEnv("LIBRARY_ADD_ENABLED", false),
+		TaskPlanEnabled:            boolEnv("TASK_PLAN_ENABLED", false),
+		AnswerPlanEnabled:          boolEnv("ANSWER_PLAN_ENABLED", false),
+		MemoryThemesEnabled:        boolEnv("MEMORY_THEMES_ENABLED", false),
+		LeanPromptEnabled:          boolEnv("LEAN_PROMPT_ENABLED", false),
+		ContextAfterHistoryEnabled: boolEnv("CONTEXT_AFTER_HISTORY_ENABLED", false),
+		ExplainDossierEnabled:      boolEnv("EXPLAIN_DOSSIER_ENABLED", false),
+		ExplainLLM:                 strings.ToLower(strings.TrimSpace(os.Getenv("EXPLAIN_LLM"))),
+		StatusAnswerEnabled:        boolEnv("STATUS_ANSWER_ENABLED", false),
 
 		TelegramAllowedChatIDs: parseChatIDs(os.Getenv("TELEGRAM_ALLOWED_CHAT_IDS")),
 		OracleToken:            strings.TrimSpace(os.Getenv("ORACLE_TOKEN")),

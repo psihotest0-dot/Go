@@ -246,6 +246,10 @@ func run() error {
 		orchestrator.WithLeanPrompt()
 		logger.Info("the lean prompt is on")
 	}
+	if cfg.ContextAfterHistoryEnabled {
+		orchestrator.WithContextAfterHistory()
+		logger.Info("the memories and the summaries of a turn go after the history")
+	}
 	if cfg.StatusAnswerEnabled {
 		orchestrator.WithStatusAnswer()
 		logger.Info("the answer to a question about the work comes from the code")

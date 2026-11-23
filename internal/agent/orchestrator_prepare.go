@@ -127,14 +127,24 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	}
 	chatCtx.RollingSum = o.rollingSummary(ctx, userID, req.SessionID, chatCtx.windowStart(len(history)))
 
+	// The memories and the summaries of the turn after the history, for the prompt cache
+	// (turn_context.go). The pruned history ends with the person's message as the full one does.
+	var turnContext *openai.ChatCompletionMessage
+	if o.contextAfterHistory {
+		if turnContext, err = takeTurnContext(&chatCtx, history); err != nil {
+			return preparedTurn{}, fmt.Errorf("failed to render the context of the turn: %w", err)
+		}
+	}
+
 	systemMessage, err := buildSystemPrompt(chatCtx)
 	if err != nil {
 		return preparedTurn{}, fmt.Errorf("failed to render system prompt: %w", err)
 	}
 
-	messages := make([]openai.ChatCompletionMessage, 0, len(history)+1)
+	messages := make([]openai.ChatCompletionMessage, 0, len(history)+2)
 	messages = append(messages, systemMessage)
 	messages = append(messages, history...)
+	messages = withTurnContext(messages, turnContext)
 
 	o.trace(ctx, userID, req.SessionID, "prune", map[string]interface{}{
 		"total_messages": len(chatCtx.History) + 1,

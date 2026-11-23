@@ -1,0 +1,11 @@
+{{- /* internal/prompts/chat_turn_context.tmpl: the memories and the book summaries the server found for the person's next message (CONTEXT_AFTER_HISTORY_ENABLED, plan step 2.11) */ -}}
+The server found this for the user's next message. The user did not write it.
+{{if .RelevantMemories}}
+### Лична памет за потребителя (Memories):
+{{range .RelevantMemories}}{{.}}
+
+{{end}}{{end}}{{if .Chunks}}
+### Идеи и прозрения от книгите (Internalized Concepts):
+{{range .Chunks}}{{.}}
+
+{{end}}{{end}}
