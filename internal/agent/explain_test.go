@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	pgvector "github.com/pgvector/pgvector-go"
 	openai "github.com/sashabaranov/go-openai"
@@ -223,7 +224,11 @@ func TestSearchDocumentsGivesTheDossierOfAnExplanation(t *testing.T) {
 	require.NoError(t, err)
 	out := resultMap(t, res)
 	assert.Equal(t, "success", out["status"])
-	assert.Equal(t, explainRecipe(true), out["note"], "the recipe is the note of the result")
+	note, _ := out["note"].(string)
+	assert.Contains(t, note, `These passages come from 2 books of the user: `, "the recipe is the note of the result")
+	assert.Contains(t, note, `"go"`, "it names the books of the dossier")
+	assert.Contains(t, note, `"concurrency"`)
+	assert.Contains(t, note, "Use at least two of these books")
 	assert.ElementsMatch(t, explainQueries("горутини в Go", "what are goroutines in Go", "горутините в Go", true), log.seen(),
 		"the two queries of the model and the templates, each searched once")
 
@@ -286,4 +291,37 @@ func TestPrepareTurnMarksAnExplanation(t *testing.T) {
 	prep, err = o.prepareTurn(context.Background(), e.userID, ChatRequest{SessionID: "ex-2", Content: "здравей, как си"}, false)
 	require.NoError(t, err)
 	assert.False(t, prep.turn.explaining(), "not every turn is an explanation")
+}
+
+func TestABookIsNamedByItsTitleNotItsFileName(t *testing.T) {
+	for file, want := range map[string]string{
+		"books.site_some-book-about-go.pdf":              "some book about go",
+		"Author-Name_-_Zaglavie_na_knigata_-_1234-b.pdf": "Author Name Zaglavie na knigata",
+		"Заглавие - Автор - books.me.pdf":                "Заглавие - Автор",
+		"A Book of C++ 3rd Edition.epub":                 "A Book of C++ 3rd Edition",
+		"why-something.pdf":                              "why something", "Node.js-Design.pdf": "Node.js Design", "Some C++ Cookbook - Publisher (2020).pdf": "Some C++ Cookbook - Publisher",
+		"the bookof Things.epub": "the bookof Things",
+		"книга.pdf":              "книга",
+		".pdf":                   ".pdf",
+	} {
+		assert.Equal(t, want, bookTitle(file), file)
+	}
+	assert.Equal(t, 90, utf8.RuneCountInString(bookTitle(strings.Repeat("дума ", 40)+".pdf")), "a long title is cut")
+}
+
+// The recipe names each book of the dossier once and asks for two of them; with one book it
+// only asks for its name.
+func TestTheRecipeNamesTheBooksOfTheDossier(t *testing.T) {
+	picked := []retrieval.SearchResult{{FileName: "books.site_some-book-about-go.pdf"}, {FileName: "another-go-book.pdf"}, {FileName: "books.site_some-book-about-go.pdf"}}
+	recipe := explainRecipe(true, picked)
+	assert.Contains(t, recipe, `These passages come from 2 books of the user: "some book about go", "another go book". `)
+	assert.Contains(t, recipe, "in Bulgarian:")
+	assert.Contains(t, recipe, "Use at least two of these books, and for each thing you take say which book it is from, by its title.")
+	assert.Contains(t, recipe, "Take the facts only from the passages.")
+
+	one := explainRecipe(false, picked[:1])
+	assert.Contains(t, one, `These passages come from 1 books of the user: "some book about go". `)
+	assert.Contains(t, one, "in the language of the person's message:")
+	assert.NotContains(t, one, "at least two")
+	assert.Contains(t, one, "Say which book it is from, by its title.")
 }

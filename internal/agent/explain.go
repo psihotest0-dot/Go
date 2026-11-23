@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -201,16 +202,58 @@ func explainQueries(query, queryEN, subject string, bulgarian bool) []string {
 	return out
 }
 
-// explainRecipe is the note of the dossier: how the model is to write the explanation.
-func explainRecipe(bulgarian bool) string {
+// explainRecipe is the note of the dossier: how the model is to write the explanation. It names
+// the books of the dossier and asks for at least two of them. The recipe of 2026-11-22 said only
+// "connect two or three of the sources and say which book says what", and the model named one
+// book of five as a rule (the owner's explanation of stoicism, 2026-11-23). Measured the same day
+// (go-monolith-backups\measurements\explain_fix_2026-11-23): 12 questions × 2 on the real Gemma -
+// at least two books named in 11 of 24 answers with the old recipe, 17 of 24 with this one (1.67
+// -> 1.96 books on average), the answers ~9 % longer. Putting the best passage of each book first
+// did not help (the same average).
+func explainRecipe(bulgarian bool, picked []retrieval.SearchResult) string {
 	language := "Bulgarian"
 	if !bulgarian {
 		language = "the language of the person's message"
 	}
-	return "These passages were gathered from the user's books to explain the subject to the person, " +
-		"who said they do not understand it. Explain it simply, in " + language + ": what it is, how it works, " +
-		"and one short example. Connect two or three of the sources and say which book says what. " +
-		"Take the facts only from the passages."
+	var titles []string
+	seen := map[string]bool{}
+	for _, r := range picked {
+		if !seen[r.FileName] {
+			seen[r.FileName] = true
+			titles = append(titles, `"`+bookTitle(r.FileName)+`"`)
+		}
+	}
+	use := "Use at least two of these books, and for each thing you take say which book it is from, by its title. "
+	if len(titles) < 2 {
+		use = "Say which book it is from, by its title. "
+	}
+	return "These passages come from " + strconv.Itoa(len(titles)) + " books of the user: " + strings.Join(titles, ", ") + ". " +
+		"Explain the subject simply to the person, who said they do not understand it, in " + language +
+		": what it is, how it works, and one short example. " + use + "Take the facts only from the passages."
+}
+
+var (
+	// titleJunk: what a file name has that is not the title of the book - the extension, the
+	// name of a site before it ("site.xx_…") or after it ("… - site.xx"), the number a site gave it
+	// ("…-1234-b"), a year in brackets. The same titles as the rule with the names of the two sites
+	// of the owner's books, on all 130 files of his library (2026-11-23).
+	titleJunk  = regexp.MustCompile(`(?i)(\.(pdf|epub|docx?|txt|md|fb2|mobi)$|^(?-i:[a-z0-9-]+\.[a-z]{2,4})_|\s+-\s+(?-i:[a-z0-9-]+\.[a-z]{2,4})$|[-_\s]+\d{3,6}-b$|\s*\(\d{4}\))`)
+	titleSpace = regexp.MustCompile(`[_\s]+`)
+)
+
+// bookTitle is a file name as one would call the book ("books.site_some-book-about-go.pdf"
+// -> "some book about go", "Заглавие - Автор - books.me.pdf" -> "Заглавие - Автор").
+func bookTitle(file string) string {
+	// Twice: "...-1371-b.pdf" loses the extension first and the number of the site then.
+	t := titleJunk.ReplaceAllString(titleJunk.ReplaceAllString(file, ""), "")
+	if !strings.Contains(t, " ") {
+		t = strings.ReplaceAll(t, "-", " ")
+	}
+	t = strings.TrimSpace(titleSpace.ReplaceAllString(t, " "))
+	if t == "" {
+		return file
+	}
+	return truncateRunes(t, 90)
 }
 
 // pickDossier is the dossier of the merged results of its searches (the best score first): at
@@ -316,7 +359,7 @@ func (r *DefaultToolRegistry) explainDossier(ctx context.Context, userID uuid.UU
 	turnFrom(ctx).addSources(found)
 	return map[string]interface{}{
 		"status":  "success",
-		"note":    explainRecipe(bulgarian),
+		"note":    explainRecipe(bulgarian, picked),
 		"results": results,
 	}, nil
 }
