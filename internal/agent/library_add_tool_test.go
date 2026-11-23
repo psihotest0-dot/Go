@@ -589,3 +589,81 @@ func TestEditDistance(t *testing.T) {
 		assert.Equal(t, c.want, editDistance(c.a, c.b), "%q %q", c.a, c.b)
 	}
 }
+
+// The title the user gave names the file; the document keeps its extension.
+func TestTheTitleTheUserGaveNamesTheFile(t *testing.T) {
+	text := `добави файла от този линк в библиотеката под заглавие "Theory of Small Machines" - https://a.org/TSM_selection.pdf`
+	ctx, _ := libraryAddCtx(t, text)
+	f := &fakeFetcher{docs: map[string]*webfetch.Document{"https://a.org/TSM_selection.pdf": pdfDoc("TSM_selection.pdf")}}
+	a := &fakeAdder{}
+	r := addTool(f, a)
+
+	out, err := r.ExecuteTool(ctx, addToLibraryTool, map[string]interface{}{
+		"urls": []interface{}{"https://a.org/TSM_selection.pdf"},
+		"name": "Theory of Small Machines",
+	})
+
+	require.NoError(t, err)
+	rows := rowsOf(t, out.(map[string]interface{}))
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Theory of Small Machines.pdf", rows[0].File, "the model is told the name it got")
+	assert.Contains(t, a.added, "Theory of Small Machines.pdf")
+	assert.Contains(t, out.(map[string]interface{})["note"], "named as the user named it")
+}
+
+// Several links take their titles in order; a link without one keeps the name of its page.
+func TestSeveralLinksTakeTheirTitlesInOrder(t *testing.T) {
+	ctx, _ := libraryAddCtx(t, "https://a.org/one.pdf https://b.org/two.pdf https://c.org/three.pdf")
+	a := &fakeAdder{}
+	r := addTool(&fakeFetcher{docs: map[string]*webfetch.Document{
+		"https://a.org/one.pdf":   pdfDoc("one.pdf"),
+		"https://b.org/two.pdf":   pdfDoc("two.pdf"),
+		"https://c.org/three.pdf": pdfDoc("three.pdf"),
+	}}, a)
+
+	_, err := r.ExecuteTool(ctx, addToLibraryTool, map[string]interface{}{
+		"urls":  []interface{}{"https://a.org/one.pdf", "https://b.org/two.pdf", "https://c.org/three.pdf"},
+		"names": []interface{}{"Първа книга", "", "Трета"},
+		"name":  "ignored for several links",
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, a.added, "Първа книга.pdf")
+	assert.Contains(t, a.added, "two.pdf", "no title: the name of the page")
+	assert.Contains(t, a.added, "Трета.pdf")
+	assert.Len(t, a.added, 3)
+}
+
+func TestLibraryFileNames(t *testing.T) {
+	for _, c := range []struct{ title, doc, want string }{
+		{"Theory of Small Machines", "TSM_selection.pdf", "Theory of Small Machines.pdf"},
+		{"  Основи на нещата, том 1 ", "w.pdf", "Основи на нещата, том 1.pdf"},
+		{"Книга.pdf", "x.pdf", "Книга.pdf"},
+		{"Книга.PDF", "x.pdf", "Книга.pdf"},
+		{"Notes.txt", "page.html", "Notes.txt.html"},
+		{"../../etc/passwd", "x.pdf", "etc passwd.pdf"},
+		{`a\b:c*d?e"f<g>h|i`, "x.pdf", "a b c d e f g h i.pdf"},
+		{"", "page.html", "page.html"},
+		{"///", "page.html", "page.html"},
+		{"...", "x.pdf", "x.pdf"},
+		{"Rock & Roll (2nd ed.)!", "x.pdf", "Rock & Roll (2nd ed.)!.pdf"},
+		{strings.Repeat("дълго ", 40), "x.pdf", strings.TrimSpace(string([]rune(strings.Repeat("дълго ", 40))[:maxLibraryNameRunes])) + ".pdf"},
+	} {
+		assert.Equal(t, c.want, libraryFileName(c.title, c.doc), "%q", c.title)
+	}
+}
+
+func TestTheNamesArgumentIsRead(t *testing.T) {
+	links, names, err := urlListArg(map[string]interface{}{"urls": "https://a.org/x.pdf", "name": " Заглавие "})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"https://a.org/x.pdf"}, links)
+	assert.Equal(t, map[string]string{"https://a.org/x.pdf": "Заглавие"}, names)
+
+	_, names, err = urlListArg(map[string]interface{}{"urls": []interface{}{"https://a.org/x", "https://a.org/x", "https://b.org/y"}, "names": []interface{}{"A", "dup", "B"}})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"https://a.org/x": "A", "https://b.org/y": "B"}, names, "a repeated link keeps its first title")
+
+	_, names, err = urlListArg(map[string]interface{}{"urls": []interface{}{"https://a.org/x"}, "names": []interface{}{7}})
+	require.NoError(t, err)
+	assert.Empty(t, names, "a title that is not text is left out")
+}

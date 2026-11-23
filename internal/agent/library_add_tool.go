@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/sashabaranov/go-openai"
@@ -41,7 +44,8 @@ const (
 	// libraryAddTokens is what the definition of the tool costs in a request, taken out of
 	// the room of the history in a turn that offers it (the budgets of a turn without a
 	// link are not changed).
-	libraryAddTokens = 230
+	// 230 measured; the name and the names of 2026-11-23 add 61 (185 -> 246 tokens of the JSON).
+	libraryAddTokens = 295
 	// maxReasonRunes bounds a reason shown to the model.
 	maxReasonRunes = 220
 )
@@ -69,6 +73,15 @@ func addToLibraryDefinition() openai.Tool {
 						"type":        "array",
 						"items":       map[string]any{"type": "string"},
 						"description": fmt.Sprintf("The links to add, exactly as the user wrote them (at most %d at a time).", maxAddURLs),
+					},
+					"name": map[string]any{
+						"type":        "string",
+						"description": "For one link: the title the user gave the document, as they wrote it. Leave it out if the user gave no title.",
+					},
+					"names": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "For several links: the titles the user gave, in the order of urls (\"\" for a link without one).",
 					},
 				},
 				"required": []string{"urls"},
@@ -129,7 +142,7 @@ func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uu
 	if r.fetcher == nil || r.adder == nil {
 		return nil, fmt.Errorf("unknown tool: %s", addToLibraryTool)
 	}
-	links, err := urlListArg(args)
+	links, names, err := urlListArg(args)
 	if err != nil {
 		return nil, err
 	}
@@ -143,9 +156,9 @@ func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uu
 	// wrote by a few characters is that link, copied wrongly (resolveURL); two spellings of
 	// one link are fetched once.
 	type target struct {
-		link      string
-		corrected bool
-		known     bool
+		link, name string
+		corrected  bool
+		known      bool
 	}
 	targets := make([]target, 0, len(links))
 	seen := map[string]bool{}
@@ -159,14 +172,14 @@ func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uu
 			continue
 		}
 		seen[link] = true
-		targets = append(targets, target{link: link, corrected: corrected, known: true})
+		targets = append(targets, target{link: link, name: names[sent], corrected: corrected, known: true})
 	}
 
 	rows := make([]addRow, len(targets))
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, addConcurrency)
 	for i, tg := range targets {
-		link := tg.link
+		link, name := tg.link, tg.name
 		rows[i] = addRow{URL: shortURL(link)}
 		if tg.corrected {
 			rows[i].Note = "the link differed from the one the user wrote in a few characters; the link of the user was used"
@@ -196,7 +209,7 @@ func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uu
 				metrics.LibraryAdd.WithLabelValues("timeout").Inc()
 				return
 			}
-			r.addOne(ctx, userID, link, &rows[i])
+			r.addOne(ctx, userID, link, name, &rows[i])
 		}()
 	}
 	wg.Wait()
@@ -218,12 +231,13 @@ func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uu
 	return map[string]interface{}{
 		"results": rows,
 		"summary": fmt.Sprintf("%d of %d queued, %d already in the library, %d not added", queued, len(rows), duplicates, len(rows)-queued-duplicates),
-		"note":    "queued = saved and waiting to be processed (it can be searched in a few minutes), not ready. You cannot tell the user when it is ready: say that they can ask you later. File names come from the pages. Tell the user plainly which links were not added and why.",
+		"note":    "queued = saved and waiting to be processed (it can be searched in a few minutes), not ready. You cannot tell the user when it is ready: say that they can ask you later. A file is named as the user named it, else after its page; tell the user the name it got. Tell the user plainly which links were not added and why.",
 	}, nil
 }
 
-// addOne fetches one link and adds what it holds, and writes the outcome in row.
-func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link string, row *addRow) {
+// addOne fetches one link and adds what it holds, and writes the outcome in row. name is the title
+// the user gave the document, "" for the name the page gives it.
+func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link, name string, row *addRow) {
 	ctx, cancel := context.WithTimeout(ctx, addOneDeadline)
 	defer cancel()
 
@@ -234,7 +248,7 @@ func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link
 	}
 	defer doc.Close()
 
-	added, err := r.adder.Add(ctx, userID, doc.Name, doc.Body)
+	added, err := r.adder.Add(ctx, userID, libraryFileName(name, doc.Name), doc.Body)
 	if err != nil {
 		r.refuse(ctx, link, row, err)
 		return
@@ -279,11 +293,12 @@ func (r *DefaultToolRegistry) refuse(ctx context.Context, link string, row *addR
 	slog.InfoContext(ctx, "library add: not added", "host", hostOf(link), "result", result)
 }
 
-// urlListArg reads the "urls" argument: a list of strings, without blanks or repeats.
-func urlListArg(args map[string]interface{}) ([]string, error) {
+// urlListArg reads the "urls" argument: a list of strings, without blanks or repeats; and the titles
+// the user gave ("names", in the order of urls, or "name" for one link), by link.
+func urlListArg(args map[string]interface{}) ([]string, map[string]string, error) {
 	raw, ok := args["urls"]
 	if !ok {
-		return nil, missingArgError(addToLibraryTool, "urls", `{"urls": ["https://…"]}`)
+		return nil, nil, missingArgError(addToLibraryTool, "urls", `{"urls": ["https://…"]}`)
 	}
 	var list []string
 	switch v := raw.(type) {
@@ -299,24 +314,92 @@ func urlListArg(args map[string]interface{}) ([]string, error) {
 		// A model that sends one link as a string.
 		list = []string{v}
 	}
+	given := stringListArg(args["names"])
+	if one, ok := stringArg(args, "name"); ok && len(list) == 1 {
+		given = []string{one}
+	}
 	seen := map[string]bool{}
+	names := map[string]string{}
 	var links []string
-	for _, s := range list {
+	for i, s := range list {
 		s = trimURLEnd(strings.TrimSpace(s))
 		if s == "" || seen[s] {
 			continue
 		}
 		seen[s] = true
 		links = append(links, s)
+		if i < len(given) && strings.TrimSpace(given[i]) != "" {
+			names[s] = strings.TrimSpace(given[i])
+		}
 	}
 	if len(links) == 0 {
-		return nil, missingArgError(addToLibraryTool, "urls", `{"urls": ["https://…"]}`)
+		return nil, nil, missingArgError(addToLibraryTool, "urls", `{"urls": ["https://…"]}`)
 	}
 	if len(links) > maxAddURLs {
-		return nil, &toolArgumentError{tool: addToLibraryTool, reason: fmt.Sprintf(
+		return nil, nil, &toolArgumentError{tool: addToLibraryTool, reason: fmt.Sprintf(
 			"%d links is too many for one call; call again with at most %d, then with the rest", len(links), maxAddURLs)}
 	}
-	return links, nil
+	return links, names, nil
+}
+
+// stringListArg is a list of strings from a JSON array (other items left out), or one string.
+func stringListArg(raw interface{}) []string {
+	switch v := raw.(type) {
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, _ := item.(string)
+			out = append(out, s)
+		}
+		return out
+	case []string:
+		return v
+	case string:
+		return []string{v}
+	}
+	return nil
+}
+
+// maxLibraryNameRunes bounds the name a title gives a file of the library.
+const maxLibraryNameRunes = 120
+
+// libraryFileName is the name of a document of the library: the title the user gave it, with the
+// extension of the document (a PDF stays a PDF whatever the title says), or the name the page
+// gave it when there is no title, or nothing is left of it. The title keeps letters, digits and
+// the marks of a title; a path, a control character or a mark of a shell does not come through.
+// (The owner, 2026-11-23: a book added "под заглавие …" was named after the last part of its
+// link, an abbreviation.)
+func libraryFileName(title, docName string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return docName
+	}
+	ext := path.Ext(docName)
+	if strings.EqualFold(path.Ext(title), ext) {
+		title = strings.TrimSpace(title[:len(title)-len(ext)])
+	}
+	var b strings.Builder
+	space := false
+	for _, r := range title {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("-_.,()'&!+", r):
+			if space && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteRune(r)
+			space = false
+		default:
+			space = true
+		}
+	}
+	stem := strings.Trim(b.String(), " .")
+	if utf8.RuneCountInString(stem) > maxLibraryNameRunes {
+		stem = strings.TrimRight(string([]rune(stem)[:maxLibraryNameRunes]), " .")
+	}
+	if stem == "" {
+		return docName
+	}
+	return stem + ext
 }
 
 // shortURL is a link as the table shows it: long ones are cut.
