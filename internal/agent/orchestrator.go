@@ -54,6 +54,9 @@ type Orchestrator struct {
 	// mirror repeats the answers given in the app to a conversation shared with Telegram in the
 	// Telegram chat (see ReplyMirror); nothing while it is not set.
 	mirror atomic.Pointer[ReplyMirror]
+	// outside tells the other channel of a shared conversation what the server did on its own (the
+	// report of a task it walked); see NotifyOutside.
+	outside atomic.Pointer[OutsideNotifier]
 	// budgets are the token limits requests are built with; the zero value
 	// means the built-in ones (see limits).
 	budgets budgets

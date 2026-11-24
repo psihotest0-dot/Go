@@ -243,6 +243,9 @@ func Run(ctx context.Context, token string, allowedChatIDs []int64, orch *agent.
 			// here; the repeat stops with the bot.
 			orch.SetReplyMirror(bot.Mirror)
 			defer orch.SetReplyMirror(nil)
+			// So is the report of a task the server walked in the background (package taskrun).
+			orch.SetOutsideNotifier(bot.Notify)
+			defer orch.SetOutsideNotifier(nil)
 			bot.Start(ctx)
 			return
 		}
@@ -837,6 +840,29 @@ func (b *Bot) Mirror(ctx context.Context, userID uuid.UUID, sessionID, question,
 		b.sendReply(chatID, "📱 Ти (в приложението):\n"+cutRunes(question, maxMirroredQuestionRunes))
 	}
 	b.sendAnswer(chatID, answer)
+	metrics.TelegramMirror.WithLabelValues("sent").Inc()
+}
+
+// Notify sends to the chat of a shared conversation a text the server wrote there on its own (the
+// report of a task it walked), with the same checks as Mirror: the chat is allowed and linked to
+// the user.
+func (b *Bot) Notify(ctx context.Context, userID uuid.UUID, sessionID, text string) {
+	chatID, ok := api.ParseTelegramSession(sessionID)
+	if !ok || !b.isAllowed(chatID) {
+		metrics.TelegramMirror.WithLabelValues("not_allowed").Inc()
+		return
+	}
+	linked, isLinked, err := b.store.LinkedUser(ctx, chatID)
+	if err != nil {
+		metrics.TelegramMirror.WithLabelValues("failed").Inc()
+		slog.Error("Failed to look up the telegram link for a report of a task", slog.Any("error", err), slog.Int64("chat_id", chatID))
+		return
+	}
+	if !isLinked || linked != userID {
+		metrics.TelegramMirror.WithLabelValues("not_linked").Inc()
+		return
+	}
+	b.sendAnswer(chatID, text)
 	metrics.TelegramMirror.WithLabelValues("sent").Inc()
 }
 

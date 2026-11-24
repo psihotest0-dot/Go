@@ -279,7 +279,8 @@ func run() error {
 			logger.Error("the tasks of the server stay off: they need the file tools (FILES_ENABLED)")
 		} else {
 			runPlans := taskplan.NewStore(database)
-			runner := taskrun.New(database, runPlans, retrievalService, llmClient, fileStore)
+			// The report of a task walked in a conversation shared with Telegram goes to the chat too.
+			runner := taskrun.New(database, runPlans, retrievalService, llmClient, fileStore).WithNotifier(orchestrator.NotifyOutside)
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {

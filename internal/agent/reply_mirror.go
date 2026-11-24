@@ -31,6 +31,39 @@ func (o *Orchestrator) SetReplyMirror(m ReplyMirror) {
 	o.mirror.Store(&m)
 }
 
+// OutsideNotifier sends a text the server wrote on its own in a conversation shared with
+// Telegram (the report of a task it walked in the background, package taskrun) to that chat. It
+// must not panic or block for long.
+type OutsideNotifier func(ctx context.Context, userID uuid.UUID, sessionID, text string)
+
+// SetOutsideNotifier sets who sends such texts; nil stops it. The Telegram bot sets itself as it
+// does for the mirror.
+func (o *Orchestrator) SetOutsideNotifier(n OutsideNotifier) {
+	if n == nil {
+		o.outside.Store(nil)
+		return
+	}
+	o.outside.Store(&n)
+}
+
+// NotifyOutside sends text to the other channel of a conversation shared with Telegram (a session
+// "tg-<chat id>"); for any other conversation, or with nobody set, it does nothing - the text is
+// in the conversation already. It is the notifier of the runner of tasks (main.go).
+func (o *Orchestrator) NotifyOutside(ctx context.Context, userID uuid.UUID, sessionID, text string) {
+	n := o.outside.Load()
+	if n == nil || !api.IsTelegramSession(sessionID) || text == "" {
+		return
+	}
+	nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mirrorTimeout)
+	defer cancel()
+	defer func() {
+		if rcv := recover(); rcv != nil {
+			slog.ErrorContext(ctx, "panic while sending a text of the server to Telegram", "panic", rcv)
+		}
+	}()
+	(*n)(nctx, userID, sessionID, text)
+}
+
 // mirrorReply tells the mirror about an answer that has just been given in the app. It is for the
 // app's own turns only: the answers of the Telegram bot go to the chat by themselves
 // (ProcessChatTurn does not call it). Only a conversation shared with Telegram is repeated, and only
