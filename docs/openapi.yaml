@@ -2039,10 +2039,11 @@ components:
           description: '`done`: no step is left to do. `cancelled`: another plan took its place, or the person stopped it.'
         kind:
           type: string
-          enum: [key_facts, summary]
+          enum: [key_facts, summary, full]
           description: >-
             Missing for a plan of the assistant. Set for a plan the server walks itself: what it
-            makes of each document (a file with its key facts, or with a summary).
+            makes of each document (a file with its key facts, with a summary, or - `full` - with
+            detailed notes of the whole text, read part by part and added to the file after each).
         steps:
           type: array
           items:
@@ -2086,6 +2087,17 @@ components:
           type: string
           format: uuid
           description: In a plan the server walks, the document of the library the step works on.
+        parts:
+          type: integer
+          description: >-
+            A plan of the kind `full`: the document is read whole, in this many parts of about
+            10 000 characters. Missing for every other step.
+        parts_done:
+          type: integer
+          description: 'A plan of the kind `full` - how many parts are read and written.'
+        file:
+          type: string
+          description: 'A plan of the kind `full` - the file the notes of the next part go to.'
     TelegramSessionList:
       type: object
       required:

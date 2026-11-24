@@ -216,6 +216,13 @@ func planStatusText(p *taskplan.Plan) string {
 	}
 	if next := p.Next(); next != nil {
 		fmt.Fprintf(&b, "\nСледва: %d. %s", next.ID, next.Text)
+		if next.Parts > 0 {
+			// A whole document read in parts (taskrun, the kind "full").
+			fmt.Fprintf(&b, " — прочетени %d от %d части", next.PartsDone, next.Parts)
+			if next.File != "" {
+				fmt.Fprintf(&b, ", бележките растат във „%s“", next.File)
+			}
+		}
 	}
 	return b.String()
 }

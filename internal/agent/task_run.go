@@ -35,6 +35,9 @@ const (
 )
 
 var (
+	// wholeWords: the whole of each document is to be read, in parts (taskrun.KindFull): "изцяло",
+	// "целия документ", "на части", "подробни бележки", "всичко от", "in full".
+	wholeWords = regexp.MustCompile(`(?i)(?:изцяло|целия|целият|цялата|цялото|на\s+части|част\s+по\s+част|от\s+начало(?:то)?\s+до\s+края?|подробн\p{L}*\s+(?:бележк|извлеч|записк)|извлечи\s+всичко|всичко\s+от|\bin\s+full\b|\bwhole\b|\bentire\b|detailed\s+notes)`)
 	// keyFactsWords and summaryWords say what is to be made of each document.
 	keyFactsWords = regexp.MustCompile(`(?i)(?:ключов\p{L}*\s+(?:\p{L}{1,3}\s+)?(?:факт|точк|момент|извод|данн)|основн\p{L}*\s+(?:\p{L}{1,3}\s+)?(?:факт|извод|данн)|key\s+(?:facts|points|findings)|main\s+findings)`)
 	summaryWords  = regexp.MustCompile(`(?i)(?:резюм|обобщ|summar)`)
@@ -67,6 +70,8 @@ func taskRunKind(message string) string {
 		return ""
 	}
 	switch {
+	case wholeWords.MatchString(message):
+		return taskrun.KindFull
 	case keyFactsWords.MatchString(message):
 		return taskrun.KindKeyFacts
 	case summaryWords.MatchString(message):
@@ -205,6 +210,9 @@ func (o *Orchestrator) addedDocuments(ctx context.Context, userID uuid.UUID, sin
 
 // taskRunGoal is the goal of the plan, the way the report and the status answer name it.
 func taskRunGoal(kind string, n int) string {
+	if kind == taskrun.KindFull {
+		return fmt.Sprintf("подробни бележки по целия текст на всеки от %d документа", n)
+	}
 	if kind == taskrun.KindSummary {
 		return fmt.Sprintf("резюме на всеки от %d документа", n)
 	}
@@ -223,8 +231,11 @@ func estimate(n int) string {
 // proposalText is the question before the start.
 func proposalText(kind string, names []string, steps int) string {
 	noun := "файл с ключовите факти"
-	if kind == taskrun.KindSummary {
+	switch kind {
+	case taskrun.KindSummary:
 		noun = "файл с резюме"
+	case taskrun.KindFull:
+		noun = "файл с подробни бележки по целия текст (чета го от началото до края, на части по ~10 000 знака)"
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Мога да направя %s за всеки от тези %d документа, добавени в библиотеката в този разговор:\n", noun, steps)
@@ -240,6 +251,13 @@ func proposalText(kind string, names []string, steps int) string {
 	}
 	if len(names) > steps {
 		fmt.Fprintf(&b, "(Наведнъж правя до %d; останалите %d — след това.)\n", steps, len(names)-steps)
+	}
+	if kind == taskrun.KindFull {
+		// The length is known only after the ingest: the estimate is per part.
+		fmt.Fprintf(&b, "\nВърви на заден план, около %d s на част (статия от 20 страници ≈ 6–8 части, ≈ 2 минути). Бележките се допълват във файла след всяка част, "+
+			"така че го виждаш да расте; всяко число се проверява срещу текста на своята част. Документ над %d части (≈ %d знака — дълга книга) не чета целия. "+
+			"Всеки файл е нов (нищо в папката не се заменя). Документ, който още се обработва, изчаквам.\n\nДа започна ли?", taskrun.SecondsPerPart, taskrun.MaxParts, taskrun.MaxParts*taskrun.PartRunes)
+		return b.String()
 	}
 	fmt.Fprintf(&b, "\nЩе отнеме около %s и върви на заден план. Всеки файл е нов (нищо в папката не се заменя) и е писан само от откъсите на своя документ; "+
 		"числата се проверяват срещу тях. Документ, който още се обработва, изчаквам.\n\nДа започна ли?", estimate(steps))

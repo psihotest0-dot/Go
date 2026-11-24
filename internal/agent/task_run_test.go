@@ -26,15 +26,43 @@ func TestWhichMessagesAskTheServerForATaskOverManyDocuments(t *testing.T) {
 		"сега за всеки от добавените източници направи отделен файл с ключовите му факти, за да ги ползвам при стратегии": taskrun.KindKeyFacts,
 		"за всяка от статиите запиши във файл основните изводи":                                                           taskrun.KindKeyFacts,
 		"направи резюме на всеки от документите в отделен файл":                                                           taskrun.KindSummary,
-		"make a file with the key facts for each paper":                  taskrun.KindKeyFacts,
-		"за всеки от източниците обобщи ключовите факти тук в чата":      "", // no file: an answer in the chat
-		"направи файл с ключовите факти на тази статия":                  "", // one document
-		"за всеки случай запиши във файл ключовите факти":                "", // "just in case"
-		"за всеки от добавените източници направи отделен файл с превод": "", // a recipe the server has not
+		"make a file with the key facts for each paper":                                              taskrun.KindKeyFacts,
+		"за всеки от източниците обобщи ключовите факти тук в чата":                                  "", // no file: an answer in the chat
+		"направи файл с ключовите факти на тази статия":                                              "", // one document
+		"за всеки случай запиши във файл ключовите факти":                                            "", // "just in case"
+		"за всеки от добавените източници направи отделен файл с превод":                             "", // a recipe the server has not
+		"за всеки от добавените източници извлечи всичко подробно в отделен файл":                    taskrun.KindFull,
+		"прочети изцяло всяка от добавените статии и запиши подробни бележки във файл":               taskrun.KindFull,
+		"за всеки от добавените източници направи отделен файл с подробни бележки по целия документ": taskrun.KindFull,
+		"make a file with detailed notes of the whole of each paper":                                 taskrun.KindFull,
 	}
 	for message, want := range cases {
 		assert.Equal(t, want, taskRunKind(message), message)
 	}
+}
+
+func TestTheWholeDocumentIsProposedWithItsOwnWords(t *testing.T) {
+	e := newTaskRunEnv(t)
+	storeTurnMessages(t, e.attachmentEnv, "tr", [2]string{"user", "добави ги"}, [2]string{"assistant", "Добавих ги."})
+	e.addDocument(t, "paper-a.pdf", "")
+
+	out := e.say(t, "tr", "за всеки от добавените източници извлечи всичко подробно в отделен файл")
+	assert.Contains(t, out, "подробни бележки по целия текст")
+	assert.Contains(t, out, "на части")
+	assert.Contains(t, out, "Да започна ли?")
+	proposed, err := e.plans.Proposed(context.Background(), e.userID, "tr")
+	require.NoError(t, err)
+	require.NotNil(t, proposed)
+	assert.Equal(t, taskrun.KindFull, proposed.Kind)
+}
+
+func TestTheStatusOfAWholeDocumentSaysItsParts(t *testing.T) {
+	p := &taskplan.Plan{Goal: "подробни бележки", Steps: []taskplan.Step{
+		{ID: 1, Text: "a.pdf", Status: taskplan.StepDoing, Parts: 8, PartsDone: 3, File: "a - подробни бележки.md"},
+	}}
+	text := planStatusText(p)
+	assert.Contains(t, text, "прочетени 3 от 8 части")
+	assert.Contains(t, text, "a - подробни бележки.md")
 }
 
 func TestTheShortAnswersOfThePerson(t *testing.T) {

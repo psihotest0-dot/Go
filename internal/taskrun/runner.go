@@ -76,6 +76,7 @@ type Searcher interface {
 // Files is the folder the files are written to (userfiles.Store).
 type Files interface {
 	Create(userID uuid.UUID, name, content string) (userfiles.Info, error)
+	Append(userID uuid.UUID, name, text string) (userfiles.Info, error)
 }
 
 // Notifier tells the person something outside the conversation's own history (Telegram); nil: nothing.
@@ -181,6 +182,9 @@ func (r *Runner) advance(ctx context.Context, p taskplan.RunPlan) bool {
 		if !r.save(ctx, p) {
 			return false
 		}
+		if p.Kind == KindFull {
+			return r.advanceFull(ctx, p, step, file)
+		}
 		stepCtx, cancel := context.WithTimeout(ctx, stepTimeout)
 		started := r.now()
 		evidence, err := r.work(stepCtx, p, rec, file)
@@ -208,6 +212,36 @@ func (r *Runner) advance(ctx context.Context, p taskplan.RunPlan) bool {
 	}
 	r.report(ctx, p)
 	return true
+}
+
+// advanceFull reads one part of a whole document (full.go) and saves the plan: one part is one
+// unit of work, so a stop or a restart comes between two parts.
+func (r *Runner) advanceFull(ctx context.Context, p taskplan.RunPlan, step *taskplan.Step, file db.IngestedFile) bool {
+	partCtx, cancel := context.WithTimeout(ctx, stepTimeout)
+	started := r.now()
+	err := r.fullPart(partCtx, p, step, file)
+	cancel()
+	if ctx.Err() != nil {
+		return false // the backend stops; the part is read again after the restart
+	}
+	switch {
+	case err != nil:
+		why := err.Error()
+		if step.File != "" {
+			why += fmt.Sprintf(" (прочетени %d от %d части; записаното е във %s)", step.PartsDone, step.Parts, step.File)
+		}
+		step.Status, step.Note = taskplan.StepFailed, why
+		metrics.TaskRunSteps.WithLabelValues(p.Kind, resultFailed).Inc()
+		slog.Warn("a step of a task failed", "plan_id", p.ID, "step", step.ID, "reason", why)
+	case step.PartsDone >= step.Parts:
+		step.Status, step.Evidence = taskplan.StepDone, fullEvidence(step)
+		metrics.TaskRunSteps.WithLabelValues(p.Kind, resultDone).Inc()
+		slog.Info("a whole document of a task is read", "plan_id", p.ID, "step", step.ID, "parts", step.Parts)
+	default:
+		slog.Info("a part of a document of a task is read", "plan_id", p.ID, "step", step.ID,
+			"part", step.PartsDone, "parts", step.Parts, "seconds", int(r.now().Sub(started).Seconds()))
+	}
+	return r.save(ctx, p)
 }
 
 // save writes the plan; false when the person stopped it meanwhile (or the write failed).
@@ -318,10 +352,15 @@ func (r *Runner) work(ctx context.Context, p taskplan.RunPlan, rec recipe, file 
 
 // ask is one request to the model, without tools and without thinking.
 func (r *Runner) ask(ctx context.Context, messages []openai.ChatCompletionMessage) (string, error) {
+	return r.askWith(ctx, messages, answerTokens)
+}
+
+// askWith is ask with a bound of the answer of its own.
+func (r *Runner) askWith(ctx context.Context, messages []openai.ChatCompletionMessage, maxTokens int) (string, error) {
 	resp, err := r.llm.Chat(llm.WithBackground(ctx), openai.ChatCompletionRequest{
 		Messages: messages,
 		//lint:ignore SA1019 llama-server reads max_tokens; max_completion_tokens is OpenAI's own name.
-		MaxTokens: answerTokens,
+		MaxTokens: maxTokens,
 		// A rewrite of the passages: thinking would spend the answer on reasoning.
 		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
 		Temperature:        0.3,

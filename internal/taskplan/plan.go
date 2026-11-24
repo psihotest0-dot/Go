@@ -92,6 +92,12 @@ type Step struct {
 	Note string `json:"note,omitempty"`
 	// Ref is what a step of a plan the server walks works on: the id of a document of the library.
 	Ref string `json:"ref,omitempty"`
+	// Parts and PartsDone are how far the reading of a whole document is (a task of the kind
+	// "full", package taskrun): the document is read in Parts parts, PartsDone of them are written;
+	// File is the file the next part goes to. Zero for every other step.
+	Parts     int    `json:"parts,omitempty"`
+	PartsDone int    `json:"parts_done,omitempty"`
+	File      string `json:"file,omitempty"`
 }
 
 // Evidence is an entry of the ledger: a successful call of a tool made after the plan.
