@@ -80,6 +80,26 @@ func taskRunKind(message string) string {
 	return ""
 }
 
+var (
+	// oneDocumentNoun, notesWords: the reading of ONE whole document asks for notes ("подробни
+	// бележки", "извлечи всичко") of a document ("статията", "документа", "книгата", "PDF-а").
+	oneDocumentNoun = regexp.MustCompile(`(?i)(?:статия|статията|документ\p{L}*|книга|книгата|текст\p{L}*|източник\p{L}*|pdf\p{L}*|\barticle\b|\bpaper\b|\bdocument\b|\bbook\b)`)
+	notesWords      = regexp.MustCompile(`(?i)(?:бележк|извлеч|записк|\bnotes\b|\bextract)`)
+)
+
+// wholeOneDocument tells whether a message asks for the whole of one document read into a file of
+// notes (taskrun.KindFull over the newest document added in the conversation): "прочети цялата
+// статия и запиши подробни бележки във файл". It needs the whole, a document, notes and a file or
+// a word for saving, and no link: "запиши цялата статия във файл: <линк>" is the page word for word
+// (save_page), and a link is still to be added (add_to_library).
+func wholeOneDocument(message string) bool {
+	if utf8.RuneCountInString(message) > maxMultiStepRunes || pageLink.MatchString(message) {
+		return false
+	}
+	return wholeWords.MatchString(message) && oneDocumentNoun.MatchString(message) && notesWords.MatchString(message) &&
+		(fileMention.MatchString(message) || asksToSave(message))
+}
+
 // shortReply is the message trimmed, when it is short enough to be a yes, a no or a stop.
 func shortReply(message string) (string, bool) {
 	message = strings.TrimSpace(message)
@@ -158,6 +178,10 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 	}
 
 	kind := taskRunKind(message)
+	one := false
+	if kind == "" && wholeOneDocument(message) {
+		kind, one = taskrun.KindFull, true
+	}
 	if kind == "" || since.IsZero() {
 		return ""
 	}
@@ -166,8 +190,17 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 		slog.WarnContext(ctx, "could not list the documents of the task; the model answers", "err", err)
 		return ""
 	}
+	if one && len(names) > 0 {
+		// One document: the newest one added in the conversation (the steps hold at most
+		// taskplan.MaxSteps of the oldest, so it is taken from the names).
+		steps, names, err = o.newestAddedDocument(ctx, userID, since)
+		if err != nil {
+			slog.WarnContext(ctx, "could not list the documents of the task; the model answers", "err", err)
+			return ""
+		}
+	}
 	if len(steps) == 0 {
-		if !libraryItems.MatchString(message) {
+		if !one && !libraryItems.MatchString(message) {
 			// "за всеки от файловете в папката…": not the library; the model answers.
 			return ""
 		}
@@ -208,9 +241,28 @@ func (o *Orchestrator) addedDocuments(ctx context.Context, userID uuid.UUID, sin
 	return steps, names, nil
 }
 
+// newestAddedDocument is the step of the document added last since the time given, and its name.
+func (o *Orchestrator) newestAddedDocument(ctx context.Context, userID uuid.UUID, since time.Time) ([]taskplan.Step, []string, error) {
+	rows, err := o.db.Queries.GetIngestedFiles(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The rows come the newest first.
+	for _, r := range rows {
+		if !r.CreatedAt.Valid || r.CreatedAt.Time.Before(since) || r.Status == "failed" {
+			continue
+		}
+		return []taskplan.Step{{ID: 1, Text: r.FileName, Ref: r.ID.String(), Status: taskplan.StepPending}}, []string{r.FileName}, nil
+	}
+	return nil, nil, nil
+}
+
 // taskRunGoal is the goal of the plan, the way the report and the status answer name it.
 func taskRunGoal(kind string, n int) string {
 	if kind == taskrun.KindFull {
+		if n == 1 {
+			return "подробни бележки по целия текст на документа"
+		}
 		return fmt.Sprintf("подробни бележки по целия текст на всеки от %d документа", n)
 	}
 	if kind == taskrun.KindSummary {
@@ -238,7 +290,11 @@ func proposalText(kind string, names []string, steps int) string {
 		noun = "файл с подробни бележки по целия текст (чета го от началото до края, на части по ~10 000 знака)"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Мога да направя %s за всеки от тези %d документа, добавени в библиотеката в този разговор:\n", noun, steps)
+	if steps == 1 {
+		fmt.Fprintf(&b, "Мога да направя %s за документа, добавен в библиотеката в този разговор:\n", noun)
+	} else {
+		fmt.Fprintf(&b, "Мога да направя %s за всеки от тези %d документа, добавени в библиотеката в този разговор:\n", noun, steps)
+	}
 	for i, n := range names {
 		if i == steps {
 			break
