@@ -457,6 +457,12 @@ func (o *Orchestrator) generateRounds(
 	tools []openai.Tool,
 	onDelta deltaFunc,
 ) (string, []openai.ToolCall, error) {
+	// The button of the message (turn_mode.go): the first round must call a tool of its mode.
+	if mode := turnFrom(ctx).modeName(); mode != "" {
+		if open, required := o.modeTools(tools, mode, turnFrom(ctx)); len(required) > 0 {
+			return o.runRounds(ctx, finalMessages, open, onDelta, required)
+		}
+	}
 	return o.runRounds(ctx, finalMessages, tools, onDelta, nil)
 }
 

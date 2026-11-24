@@ -191,6 +191,11 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !validMode(req.Mode) {
+		http.Error(w, "mode must be one of books, web, library, files, memory, style", http.StatusBadRequest)
+		return
+	}
+
 	if err := validateUserMessage(req.Content); err != nil {
 		slog.WarnContext(ctx, "message too long",
 			slog.Any("error", err),

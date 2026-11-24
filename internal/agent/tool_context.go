@@ -107,6 +107,8 @@ type turnState struct {
 	statusText string
 	// taskRunning: the server walks a task of this conversation in the background (task_run.go).
 	taskRunning bool
+	// mode is the button of the message (turn_mode.go), "" for none.
+	mode string
 }
 
 // markPlanActive records that this turn works on a plan in progress.

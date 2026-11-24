@@ -376,6 +376,26 @@ func (b *Bot) isAllowed(chatID int64) bool {
 	return ok
 }
 
+// modeCommands are the commands of the modes, the buttons of the app (agent/turn_mode.go).
+var modeCommands = map[string]string{
+	"books":  agent.ModeBooks,
+	"web":    agent.ModeWeb,
+	"add":    agent.ModeLibrary,
+	"notes":  agent.ModeFiles,
+	"memory": agent.ModeMemory,
+	"style":  agent.ModeStyle,
+}
+
+// modeCommandExample is what the reply to a command with nothing after it shows.
+var modeCommandExample = map[string]string{
+	"books":  "какво казва Сенека за гнева?",
+	"web":    "цената на златото днес",
+	"add":    "https://…",
+	"notes":  "запиши в бележки.md: …",
+	"memory": "запомни, че …",
+	"style":  "отсега нататък отговаряй по-кратко",
+}
+
 // parseCommand splits "/cmd@botname args" into ("cmd", "args"). Text that is not
 // a command yields an empty command.
 func parseCommand(text string) (command, args string) {
@@ -463,6 +483,17 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 		return
 	}
 
+	// A command of a mode ("/web цената на златото"): the text after it goes down that road
+	// (agent/turn_mode.go), as the buttons of the app send it.
+	content, mode := msg.Text, ""
+	if m, ok := modeCommands[command]; ok {
+		if args == "" {
+			b.sendReply(chatID, "Напиши след командата какво искаш, например „/"+command+" "+modeCommandExample[command]+"“.")
+			return
+		}
+		content, mode = args, m
+	}
+
 	if !b.acquireSlot(ctx) {
 		return
 	}
@@ -474,8 +505,9 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 	defer stopTyping()
 	turn, err := b.processor.ProcessChatTurn(turnCtx, userID, agent.ChatRequest{
 		SessionID: api.TelegramSessionID(chatID),
-		Content:   msg.Text,
+		Content:   content,
 		UsePaid:   b.usePaid,
+		Mode:      mode,
 	})
 	// Before anything is sent: a "typing" action that arrives after the reply
 	// would show the indicator for another five seconds with nothing coming.

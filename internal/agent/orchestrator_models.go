@@ -39,6 +39,9 @@ type ChatRequest struct {
 	// an answer that used the person's memories (П55, step 2.5), for the line "Лили си спомни".
 	// A client that does not know the frame must not ask for it.
 	PlanEvents bool `json:"plan_events,omitempty"`
+	// Mode is the button the person chose for this message (turn_mode.go): "books", "web",
+	// "library", "files", "memory" or "style" - the turn must call a tool of it. Left out: none.
+	Mode string `json:"mode,omitempty"`
 }
 
 type chatContext struct {
