@@ -331,6 +331,16 @@ func run() error {
 		billService = bills.NewService(database, ingest.NewPDFExtractor().WithOCRLanguages(billLangs),
 			ingest.NewImageOCRExtractor().WithLanguages(billLangs), bills.NewExtractor(llmClient), reminderStore, reminderWake)
 		orchestrator.WithBills(billService)
+		if cfg.BillsReportEnabled {
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("the monthly report of the bills panicked; it waits for a restart", slog.Any("error", r))
+					}
+				}()
+				billService.RunReports(ctx, orchestrator.NotifyOutside)
+			}()
+		}
 		logger.Info("the bills are on", "reminders", reminderStore != nil, "ocr_languages", billLangs)
 	}
 

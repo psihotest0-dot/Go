@@ -13,6 +13,37 @@ import (
 	"github.com/google/uuid"
 )
 
+const claimBillReport = `-- name: ClaimBillReport :execrows
+INSERT INTO bill_reports (user_id, month, session_id) VALUES ($1, $2, $3)
+ON CONFLICT (user_id, month) DO NOTHING
+`
+
+type ClaimBillReportParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Month     time.Time `json:"month"`
+	SessionID string    `json:"session_id"`
+}
+
+// The report of a month is claimed once; a second claim changes nothing.
+func (q *Queries) ClaimBillReport(ctx context.Context, arg ClaimBillReportParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimBillReport, arg.UserID, arg.Month, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const countKeptBills = `-- name: CountKeptBills :one
+SELECT count(*) FROM bills WHERE user_id = $1 AND status = 'kept'
+`
+
+func (q *Queries) CountKeptBills(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countKeptBills, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteStaleProposedBills = `-- name: DeleteStaleProposedBills :execrows
 DELETE FROM bills WHERE status = 'proposed' AND created_at < $1
 `
@@ -152,6 +183,74 @@ func (q *Queries) KeptBillWithFile(ctx context.Context, arg KeptBillWithFilePara
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const keptBillsBetween = `-- name: KeptBillsBetween :many
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at FROM bills
+WHERE user_id = $1 AND status = 'kept'
+  AND COALESCE(due_date, invoice_date, paid_date) BETWEEN $2::date AND $3::date
+ORDER BY COALESCE(due_date, invoice_date, paid_date), id
+`
+
+type KeptBillsBetweenParams struct {
+	UserID  uuid.UUID `json:"user_id"`
+	FromDay time.Time `json:"from_day"`
+	ToDay   time.Time `json:"to_day"`
+}
+
+// The bills of a period, by their day: the due day, else the day of the bill, else the day paid.
+func (q *Queries) KeptBillsBetween(ctx context.Context, arg KeptBillsBetweenParams) ([]Bill, error) {
+	rows, err := q.db.QueryContext(ctx, keptBillsBetween, arg.UserID, arg.FromDay, arg.ToDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Bill{}
+	for rows.Next() {
+		var i Bill
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Issuer,
+			&i.Kind,
+			&i.AmountCents,
+			&i.Currency,
+			&i.InvoiceDate,
+			&i.DueDate,
+			&i.PaidDate,
+			&i.Payment,
+			&i.Repeat,
+			&i.Summary,
+			&i.FileName,
+			&i.FileHash,
+			&i.Status,
+			&i.ReminderID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const latestBillSession = `-- name: LatestBillSession :one
+SELECT session_id FROM bills WHERE user_id = $1 AND status = 'kept' ORDER BY created_at DESC LIMIT 1
+`
+
+func (q *Queries) LatestBillSession(ctx context.Context, userID uuid.UUID) (string, error) {
+	row := q.db.QueryRowContext(ctx, latestBillSession, userID)
+	var session_id string
+	err := row.Scan(&session_id)
+	return session_id, err
 }
 
 const listKeptBills = `-- name: ListKeptBills :many
@@ -353,6 +452,47 @@ func (q *Queries) SimilarKeptBills(ctx context.Context, arg SimilarKeptBillsPara
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unclaimBillReport = `-- name: UnclaimBillReport :exec
+DELETE FROM bill_reports WHERE user_id = $1 AND month = $2
+`
+
+type UnclaimBillReportParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Month  time.Time `json:"month"`
+}
+
+func (q *Queries) UnclaimBillReport(ctx context.Context, arg UnclaimBillReportParams) error {
+	_, err := q.db.ExecContext(ctx, unclaimBillReport, arg.UserID, arg.Month)
+	return err
+}
+
+const usersWithKeptBills = `-- name: UsersWithKeptBills :many
+SELECT DISTINCT user_id FROM bills WHERE status = 'kept'
+`
+
+func (q *Queries) UsersWithKeptBills(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := q.db.QueryContext(ctx, usersWithKeptBills)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

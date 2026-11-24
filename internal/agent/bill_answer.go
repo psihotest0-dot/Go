@@ -55,6 +55,11 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 			metrics.Bills.WithLabelValues("declined").Inc()
 		}
 	}
+	// A question about the bills (a sum, the unpaid ones, a comparison) before "платих": "колко
+	// платих за ток тази година?" is a question, "платих тока" is not.
+	if text, handled := o.bills.Answer(ctx, userID, message); handled {
+		return text
+	}
 	if utf8.RuneCountInString(message) <= billPaidMaxRunes && billPaidWords.MatchString(message) {
 		if text, handled := o.bills.MarkPaid(ctx, userID, message); handled {
 			return text

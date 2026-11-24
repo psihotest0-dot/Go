@@ -352,6 +352,21 @@ func pickBills(unpaid []Bill, message string) []int {
 			return []int{n - 1}
 		}
 	}
+	// A kind the message names ("тока", "зъболекаря"): the bills of that kind.
+	for _, k := range kindWords {
+		if !k.re.MatchString(message) {
+			continue
+		}
+		var ofKind []int
+		for i, b := range unpaid {
+			if b.Kind == k.kind {
+				ofKind = append(ofKind, i)
+			}
+		}
+		if len(ofKind) > 0 {
+			return ofKind
+		}
+	}
 	want := stems(message)
 	best, bestScore := []int(nil), 0
 	for i, b := range unpaid {

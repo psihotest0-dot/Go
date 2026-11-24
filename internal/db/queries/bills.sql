@@ -42,3 +42,27 @@ WHERE id = $1 AND user_id = $2 AND status = 'kept' AND paid_date IS NULL;
 
 -- name: DeleteStaleProposedBills :execrows
 DELETE FROM bills WHERE status = 'proposed' AND created_at < $1;
+
+-- name: KeptBillsBetween :many
+-- The bills of a period, by their day: the due day, else the day of the bill, else the day paid.
+SELECT * FROM bills
+WHERE user_id = $1 AND status = 'kept'
+  AND COALESCE(due_date, invoice_date, paid_date) BETWEEN sqlc.arg(from_day)::date AND sqlc.arg(to_day)::date
+ORDER BY COALESCE(due_date, invoice_date, paid_date), id;
+
+-- name: CountKeptBills :one
+SELECT count(*) FROM bills WHERE user_id = $1 AND status = 'kept';
+
+-- name: UsersWithKeptBills :many
+SELECT DISTINCT user_id FROM bills WHERE status = 'kept';
+
+-- name: LatestBillSession :one
+SELECT session_id FROM bills WHERE user_id = $1 AND status = 'kept' ORDER BY created_at DESC LIMIT 1;
+
+-- name: ClaimBillReport :execrows
+-- The report of a month is claimed once; a second claim changes nothing.
+INSERT INTO bill_reports (user_id, month, session_id) VALUES ($1, $2, $3)
+ON CONFLICT (user_id, month) DO NOTHING;
+
+-- name: UnclaimBillReport :exec
+DELETE FROM bill_reports WHERE user_id = $1 AND month = $2;

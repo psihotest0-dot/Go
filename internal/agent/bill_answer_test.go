@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
@@ -148,4 +151,77 @@ func TestPaidSaysNothingOfAReminderItDidNotHave(t *testing.T) {
 	out := e.say(t, "платих телефона")
 	assert.Contains(t, out, "Отбелязах като платена ✅")
 	assert.NotContains(t, out, "Напомнянето")
+}
+
+// keepBill reads a made-up bill with these fields and keeps it.
+func (e *billEnv) keepBill(t *testing.T, f bills.Fields, file string) {
+	t.Helper()
+	e.reads(t, f)
+	text := "Beispiel GmbH\nRechnungsdatum " + f.InvoiceDate + "\nFällig am " + f.DueDate + "\nZu zahlender Betrag " + f.Amount + " €"
+	svc := bills.NewService(e.db, fakeText{text}, fakeText{text}, bills.NewExtractor(e.model), e.store, nil)
+	bills.SetClock(svc, func() time.Time { return reminderNow })
+	_, err := svc.Read(context.Background(), e.userID, e.session, file, []byte("%PDF-1.4 "+file))
+	require.NoError(t, err)
+	require.Contains(t, e.say(t, "да"), "Записах сметката")
+}
+
+func TestTheAccountantAnswersFromTheKeptBills(t *testing.T) {
+	e := newBillEnv(t)
+	phoneNov := bills.Fields{IsBill: true, Issuer: "Beispiel Mobil", Kind: "phone_internet", Amount: "47,18", InvoiceDate: "12.11.2026", DueDate: "19.11.2026", Payment: bills.DirectDebit, Repeat: "monthly"}
+	phoneOct := phoneNov
+	phoneOct.Amount, phoneOct.InvoiceDate, phoneOct.DueDate = "52,40", "12.10.2026", "19.10.2026"
+	power := bills.Fields{IsBill: true, Issuer: "Beispiel Strom", Kind: "electricity", Amount: "80,00", InvoiceDate: "20.11.2026", DueDate: "30.11.2026", Payment: bills.Transfer, Repeat: "monthly"}
+	e.keepBill(t, phoneNov, "a.pdf")
+	e.keepBill(t, phoneOct, "b.pdf")
+	e.keepBill(t, power, "c.pdf")
+
+	out := e.say(t, "колко са ми сметките този месец?")
+	assert.Contains(t, out, "Сметките за ноември 2026: общо 127,18 € (2 сметки)")
+	assert.Contains(t, out, "• ток — 80,00 € (1 сметка)")
+	assert.Contains(t, out, "💡 Най-голямото перо е ток — 80,00 € (62 % от всичко).")
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+
+	out = e.say(t, "колко платих за телефон тази година")
+	assert.Contains(t, out, "Сметките за телефон и интернет за 2026 г.: общо 99,58 € (2 сметки)")
+
+	out = e.say(t, "сравни сметките за ноември с октомври")
+	assert.Contains(t, out, "ноември 2026 — 127,18 € (2 сметки); октомври 2026 — 52,40 € (1 сметка)")
+
+	out = e.say(t, "кои сметки не съм платил?")
+	assert.Contains(t, out, "Неплатени: 1 сметка, общо 80,00 €")
+	assert.Contains(t, out, "Beispiel Strom")
+
+	// "платих тока" is no question: it marks the bill paid.
+	assert.Contains(t, e.say(t, "платих тока"), "Отбелязах като платена ✅")
+	assert.Contains(t, e.say(t, "кои сметки не съм платил?"), "Нямаш неплатени сметки")
+}
+
+func TestTheAccountantWithoutBills(t *testing.T) {
+	e := newBillEnv(t)
+	assert.Contains(t, e.say(t, "колко са ми сметките този месец?"), "Още нямаш записани сметки")
+}
+
+func TestTheMonthlyReportGoesOnceAMonth(t *testing.T) {
+	e := newBillEnv(t)
+	phone := bills.Fields{IsBill: true, Issuer: "Beispiel Mobil", Kind: "phone_internet", Amount: "47,18", InvoiceDate: "12.11.2026", DueDate: "19.11.2026", Payment: bills.DirectDebit, Repeat: "monthly"}
+	e.keepBill(t, phone, "a.pdf")
+	sent := 0
+	notify := func(context.Context, uuid.UUID, string, string) { sent++ }
+
+	// Before 09:00 on the 1st: nothing.
+	bills.SetClock(e.svc, func() time.Time { return time.Date(2026, 12, 1, 8, 30, 0, 0, reminders.Location()) })
+	require.NoError(t, e.svc.ReportPass(context.Background(), notify))
+	bills.SetClock(e.svc, func() time.Time { return time.Date(2026, 12, 1, 9, 5, 0, 0, reminders.Location()) })
+	require.NoError(t, e.svc.ReportPass(context.Background(), notify))
+	require.NoError(t, e.svc.ReportPass(context.Background(), notify))
+	msgs, err := e.db.Queries.GetMessagesBySession(context.Background(), db.GetMessagesBySessionParams{UserID: e.userID, SessionID: e.session, Limit: 50})
+	require.NoError(t, err)
+	reports := 0
+	for _, m := range msgs {
+		if strings.HasPrefix(m.Content, "📊 Сметките за ноември 2026: общо 47,18 €") {
+			reports++
+		}
+	}
+	assert.Equal(t, 1, reports, "one report, in the conversation of the bills")
+	assert.Equal(t, 0, sent, "no Telegram chat is linked to the test user")
 }
