@@ -322,9 +322,16 @@ func run() error {
 	// text and kept after "да"; with the reminders on, its due day gets a reminder.
 	var billService *bills.Service
 	if cfg.BillsEnabled {
-		billService = bills.NewService(database, ingest.NewPDFExtractor(), ingest.NewImageOCRExtractor(), bills.NewExtractor(llmClient), reminderStore, reminderWake)
+		// The bills are mostly German: their scans are read with German first, when Tesseract has it
+		// (deu.traineddata); the library keeps Bulgarian and English.
+		billLangs := ingest.DefaultOCRLanguages
+		if ingest.OCRLanguagesInstalled(ctx, bills.OCRLanguages) {
+			billLangs = bills.OCRLanguages
+		}
+		billService = bills.NewService(database, ingest.NewPDFExtractor().WithOCRLanguages(billLangs),
+			ingest.NewImageOCRExtractor().WithLanguages(billLangs), bills.NewExtractor(llmClient), reminderStore, reminderWake)
 		orchestrator.WithBills(billService)
-		logger.Info("the bills are on", "reminders", reminderStore != nil)
+		logger.Info("the bills are on", "reminders", reminderStore != nil, "ocr_languages", billLangs)
 	}
 
 	// The plan of an answer to a personal message (П55, internal/answerplan): off unless

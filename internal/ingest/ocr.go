@@ -68,12 +68,52 @@ func acquireOCR(ctx context.Context) (release func(), err error) {
 	}
 }
 
+// DefaultOCRLanguages are the languages of the library's scans: Bulgarian and English.
+const DefaultOCRLanguages = "bul+eng"
+
 // ImageOCRExtractor is an extractor that uses Tesseract OCR to extract text from images via CLI.
-type ImageOCRExtractor struct{}
+type ImageOCRExtractor struct {
+	// langs are Tesseract's languages ("" is DefaultOCRLanguages).
+	langs string
+}
 
 // NewImageOCRExtractor creates a new ImageOCRExtractor.
 func NewImageOCRExtractor() *ImageOCRExtractor {
 	return &ImageOCRExtractor{}
+}
+
+// WithLanguages is the extractor that recognises langs ("deu+eng+bul" for the German bills).
+func (e *ImageOCRExtractor) WithLanguages(langs string) *ImageOCRExtractor {
+	c := *e
+	c.langs = langs
+	return &c
+}
+
+// OCRLanguagesInstalled tells whether Tesseract has every language of langs ("deu+eng").
+func OCRLanguagesInstalled(ctx context.Context, langs string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tesseract", "--list-langs").CombinedOutput()
+	if err != nil {
+		return false
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Fields(string(out)) {
+		have[strings.TrimSpace(line)] = true
+	}
+	for _, l := range strings.Split(langs, "+") {
+		if !have[l] {
+			return false
+		}
+	}
+	return true
+}
+
+func ocrLanguages(langs string) string {
+	if langs == "" {
+		return DefaultOCRLanguages
+	}
+	return langs
 }
 
 // Name returns the name of the extractor.
@@ -94,7 +134,7 @@ func (e *ImageOCRExtractor) Extract(ctx context.Context, r io.Reader) (string, e
 		return "", err
 	}
 	defer release()
-	text, err := runTesseract(ctx, r, false)
+	text, err := runTesseract(ctx, r, false, ocrLanguages(e.langs))
 	if err != nil {
 		return "", err
 	}
@@ -106,13 +146,13 @@ func (e *ImageOCRExtractor) Extract(ctx context.Context, r io.Reader) (string, e
 // singleThread set, Tesseract's own OpenMP threads are limited to one: when
 // several pages are recognised at once, four processes with four threads each
 // only fight over the cores.
-func runTesseract(ctx context.Context, r io.Reader, singleThread bool) (string, error) {
+func runTesseract(ctx context.Context, r io.Reader, singleThread bool, langs string) (string, error) {
 	// A hung tesseract must not block the ingest job until its own hour-long timeout.
 	ctx, cancel := context.WithTimeout(ctx, ocrTimeout)
 	defer cancel()
 
-	// Execute tesseract CLI, reading from stdin and writing to stdout, using bul and eng languages.
-	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", "bul+eng", "--psm", "3", "-c", "preserve_interword_spaces=1")
+	// Execute tesseract CLI, reading from stdin and writing to stdout, in the languages given.
+	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", langs, "--psm", "3", "-c", "preserve_interword_spaces=1")
 	if singleThread {
 		cmd.Env = append(os.Environ(), "OMP_THREAD_LIMIT=1")
 	}

@@ -23,6 +23,10 @@ import (
 	"go-monolith/metrics"
 )
 
+// OCRLanguages are the languages a scanned bill is read in when Tesseract has them all: the bills
+// are mostly German (the owner lives in Germany), some Bulgarian.
+const OCRLanguages = "deu+eng+bul"
+
 // MaxFileBytes bounds an uploaded bill (a scan of a few pages is 1-3 MB).
 const MaxFileBytes = 20 << 20
 

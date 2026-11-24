@@ -105,6 +105,17 @@ type PDFExtractor struct {
 
 	// noOCR leaves the pages without text as they are (WithoutOCR).
 	noOCR bool
+	// ocrLangs are Tesseract's languages ("" is DefaultOCRLanguages).
+	ocrLangs string
+}
+
+// WithOCRLanguages is the extractor whose scanned pages are recognised in langs ("deu+eng+bul" for
+// the German bills).
+func (e *PDFExtractor) WithOCRLanguages(langs string) *PDFExtractor {
+	c := *e
+	c.ocrLangs = langs
+	c.ocrPageFn = c.ocrPage
+	return &c
 }
 
 // WithoutOCR is the extractor that takes only the text a PDF has: the pages that are scans stay
@@ -436,7 +447,7 @@ func (e *PDFExtractor) ocrPage(ctx context.Context, pdfPath string, page int) (s
 		return "", fmt.Errorf("pdftoppm failed for page %d: %w (stderr: %s)", page, err, strings.TrimSpace(stderr))
 	}
 
-	text, err := runTesseract(ctx, bytes.NewReader(png), true)
+	text, err := runTesseract(ctx, bytes.NewReader(png), true, ocrLanguages(e.ocrLangs))
 	if err != nil {
 		return "", fmt.Errorf("page %d: %w", page, err)
 	}
