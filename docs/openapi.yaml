@@ -311,6 +311,48 @@ paths:
           $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/bills:
+    post:
+      summary: Read a bill into a conversation
+      description: >-
+        The PDF of a bill or a picture of one (OCR for a scan) is read by the local model;
+        the amount and the dates are kept only when the text holds them. The upload and the
+        answer - what was read and the question whether to keep it - are written into the
+        conversation; the person's "да" in the chat keeps the bill (with a reminder of its
+        due day when the reminders are on). Served only when BILLS_ENABLED. At most 20 MB.
+      parameters:
+      - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              - session_id
+              properties:
+                file:
+                  type: string
+                  format: binary
+                session_id:
+                  type: string
+      responses:
+        '200':
+          description: The answer, also written into the conversation
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - message
+                properties:
+                  message:
+                    type: string
+        '400':
+          description: No file or no session_id
+        '413':
+          description: The file is over 20 MB
   /v1/files:
     description: >-
       Files are served under `/v1/files` and, because the chat clients call the

@@ -48,3 +48,9 @@ WHERE (status = 'proposed' AND created_at < $1) OR (status IN ('done', 'cancelle
 -- name: TelegramChatOfUser :one
 -- The chat a reminder goes to when it was made in a conversation of the app only.
 SELECT telegram_chat_id FROM telegram_users WHERE user_id = $1 ORDER BY telegram_chat_id LIMIT 1;
+
+-- name: CreateActiveReminder :one
+-- A reminder the person already said yes to (the due day of a bill they kept).
+INSERT INTO reminders (user_id, session_id, text, repeat, first_date, at_minute, day_before, status, next_at, next_early)
+VALUES ($1, $2, $3, '', $4, $5, false, 'active', $6, false)
+RETURNING *;

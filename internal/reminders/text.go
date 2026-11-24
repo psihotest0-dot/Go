@@ -152,3 +152,16 @@ func onDay(t time.Time, loc *time.Location) string {
 	minute := t.In(loc).Hour()*60 + t.In(loc).Minute()
 	return fmt.Sprintf("%s, %02d.%02d.%d, в %s", onWeekday(d.Weekday()), d.Day, int(d.Month), d.Year, Clock(minute))
 }
+
+// OnText is AtText said after a verb: "утре, сряда, 25.11.2026, в 09:00" or "в петък, 04.12.2026, в 09:00".
+func OnText(t time.Time, now time.Time, loc *time.Location) string {
+	if rel := relativeDay(DayOf(t, loc), DayOf(now, loc)); rel != "" {
+		return AtText(t, now, loc)
+	}
+	return onDay(t, loc)
+}
+
+// OnDateText is "в петък, 01.01.2027", "във вторник, 05.01.2027".
+func OnDateText(d Day) string {
+	return fmt.Sprintf("%s, %02d.%02d.%d", onWeekday(d.Weekday()), d.Day, int(d.Month), d.Year)
+}

@@ -23,6 +23,28 @@ type AgentTrace struct {
 	CreatedAt sql.NullTime          `json:"created_at"`
 }
 
+type Bill struct {
+	ID          int64         `json:"id"`
+	UserID      uuid.UUID     `json:"user_id"`
+	SessionID   string        `json:"session_id"`
+	Issuer      string        `json:"issuer"`
+	Kind        string        `json:"kind"`
+	AmountCents int64         `json:"amount_cents"`
+	Currency    string        `json:"currency"`
+	InvoiceDate sql.NullTime  `json:"invoice_date"`
+	DueDate     sql.NullTime  `json:"due_date"`
+	PaidDate    sql.NullTime  `json:"paid_date"`
+	Payment     string        `json:"payment"`
+	Repeat      string        `json:"repeat"`
+	Summary     string        `json:"summary"`
+	FileName    string        `json:"file_name"`
+	FileHash    string        `json:"file_hash"`
+	Status      string        `json:"status"`
+	ReminderID  sql.NullInt64 `json:"reminder_id"`
+	CreatedAt   time.Time     `json:"created_at"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
 type ChatAttachment struct {
 	ID          uuid.UUID `json:"id"`
 	UserID      uuid.UUID `json:"user_id"`

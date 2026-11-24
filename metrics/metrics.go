@@ -330,6 +330,14 @@ var (
 		Help: "Reminders by event (proposed, corrected_*, kept, declined, problem_*, extract_failed, listed, cancelled, sent_on_time, sent_late).",
 	}, []string{"event"})
 
+	// Bills counts the bills read from documents by event: proposed, kept, reminder (a reminder of
+	// its due day was kept), declined, paid, same_file, unsupported, unread, no_text, not_a_bill,
+	// amount_missing, extract_failed, dropped_<date> (a date the model gave that the text does not hold).
+	Bills = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bills_total",
+		Help: "Bills read from documents by event (proposed, kept, reminder, declined, paid, same_file, unread, not_a_bill, amount_missing, dropped_*).",
+	}, []string{"event"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever

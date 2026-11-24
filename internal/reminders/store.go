@@ -132,3 +132,17 @@ func (s *Store) TelegramChat(ctx context.Context, userID uuid.UUID) (int64, bool
 	}
 	return id, true, nil
 }
+
+// CreateAt keeps a reminder for one time at once, without a proposal: the person said yes to it
+// already (the due day of a bill they kept).
+func (s *Store) CreateAt(ctx context.Context, userID uuid.UUID, session, text string, at time.Time, loc *time.Location) (Reminder, error) {
+	local := at.In(loc)
+	row, err := s.q.CreateActiveReminder(ctx, db.CreateActiveReminderParams{
+		UserID: userID, SessionID: session, Text: text, FirstDate: DayOf(at, loc).UTC(),
+		AtMinute: int32(local.Hour()*60 + local.Minute()), NextAt: at,
+	})
+	if err != nil {
+		return Reminder{}, fmt.Errorf("keep the reminder: %w", err)
+	}
+	return fromRow(row), nil
+}

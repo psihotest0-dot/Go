@@ -128,6 +128,11 @@ type Bot struct {
 	// slots is the global limit on concurrent chat turns.
 	slots chan struct{}
 
+	// bills reads a bill sent as a document or a picture (nil: the bills are off); download fetches
+	// the file of a message.
+	bills    billReader
+	download func(ctx context.Context, fileID string) ([]byte, error)
+
 	// typingEvery is typingInterval; a field so that tests can shorten it.
 	typingEvery time.Duration
 
@@ -185,6 +190,10 @@ func NewBot(token string, allowedChatIDs []int64, orch *agent.Orchestrator, pool
 
 	bot := newBot(api, orch, pgUserStore{pool: pool}, desk, allowedChatIDs)
 	bot.api = api
+	if svc := orch.Bills(); svc != nil {
+		bot.bills = svc
+		bot.download = func(ctx context.Context, fileID string) ([]byte, error) { return downloadFile(ctx, api, token, fileID) }
+	}
 	bot.usePaid = usePaidFor(localOnly)
 	return bot, nil
 }
@@ -449,11 +458,13 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 		b.sendReply(chatID, "Мога да комуникирам само в лични чатове.")
 		return
 	}
-	if msg.Voice != nil || msg.Audio != nil || len(msg.Photo) > 0 || msg.Document != nil {
+	// A bill: a PDF or a picture, when the bills are on (bill.go).
+	bill := b.bills != nil && (msg.Document != nil || len(msg.Photo) > 0)
+	if !bill && (msg.Voice != nil || msg.Audio != nil || len(msg.Photo) > 0 || msg.Document != nil) {
 		b.sendReply(chatID, "Засега разбирам само текст. Моля, качвай файлове през уеб приложението.")
 		return
 	}
-	if msg.Sticker != nil || msg.Text == "" {
+	if !bill && (msg.Sticker != nil || msg.Text == "") {
 		return
 	}
 
@@ -462,7 +473,7 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 		return
 	}
 
-	if err := agent.ValidateUserMessage(msg.Text); err != nil {
+	if err := agent.ValidateUserMessage(msg.Text); err != nil && !bill {
 		b.sendReply(chatID, "Съобщението е твърде дълго. Моля, изпрати по-кратко.")
 		return
 	}
@@ -480,6 +491,11 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 			b.sendReply(chatID, "Възникна грешка при обработка на потребителя.")
 			return
 		}
+	}
+
+	if bill {
+		b.handleBill(ctx, chatID, userID, msg)
+		return
 	}
 
 	switch command {

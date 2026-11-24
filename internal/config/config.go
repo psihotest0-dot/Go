@@ -171,6 +171,10 @@ type Config struct {
 	// code with the date and kept after "да"; the server sends it to Telegram and into the
 	// conversation in its hour. Off by default.
 	RemindersEnabled bool
+	// BillsEnabled (BILLS_ENABLED) turns on the bills (package bills): POST /v1/bills and a document
+	// sent to the Telegram bot are read into a bill, said back and kept after "да", with a reminder
+	// of the due day when the reminders are on. Off by default.
+	BillsEnabled bool
 	// AnswerPlanEnabled (ANSWER_PLAN_ENABLED) turns on the plan of an answer to a personal
 	// message (П55 phase 1, internal/answerplan): the code picks the person's memories for the
 	// reply and the model writes it from them. Off by default: without it nothing changes.
@@ -396,6 +400,7 @@ func Load() *Config {
 		TaskPlanEnabled:            boolEnv("TASK_PLAN_ENABLED", false),
 		TaskRunEnabled:             boolEnv("TASK_RUN_ENABLED", false),
 		RemindersEnabled:           boolEnv("REMINDERS_ENABLED", false),
+		BillsEnabled:               boolEnv("BILLS_ENABLED", false),
 		AnswerPlanEnabled:          boolEnv("ANSWER_PLAN_ENABLED", false),
 		MemoryThemesEnabled:        boolEnv("MEMORY_THEMES_ENABLED", false),
 		LeanPromptEnabled:          boolEnv("LEAN_PROMPT_ENABLED", false),

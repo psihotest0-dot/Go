@@ -73,6 +73,52 @@ func (q *Queries) CancelReminder(ctx context.Context, arg CancelReminderParams) 
 	return result.RowsAffected()
 }
 
+const createActiveReminder = `-- name: CreateActiveReminder :one
+INSERT INTO reminders (user_id, session_id, text, repeat, first_date, at_minute, day_before, status, next_at, next_early)
+VALUES ($1, $2, $3, '', $4, $5, false, 'active', $6, false)
+RETURNING id, user_id, session_id, text, repeat, first_date, at_minute, day_before, status, next_at, next_early, sent_count, last_sent_at, created_at, updated_at
+`
+
+type CreateActiveReminderParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+	Text      string    `json:"text"`
+	FirstDate time.Time `json:"first_date"`
+	AtMinute  int32     `json:"at_minute"`
+	NextAt    time.Time `json:"next_at"`
+}
+
+// A reminder the person already said yes to (the due day of a bill they kept).
+func (q *Queries) CreateActiveReminder(ctx context.Context, arg CreateActiveReminderParams) (Reminder, error) {
+	row := q.db.QueryRowContext(ctx, createActiveReminder,
+		arg.UserID,
+		arg.SessionID,
+		arg.Text,
+		arg.FirstDate,
+		arg.AtMinute,
+		arg.NextAt,
+	)
+	var i Reminder
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Text,
+		&i.Repeat,
+		&i.FirstDate,
+		&i.AtMinute,
+		&i.DayBefore,
+		&i.Status,
+		&i.NextAt,
+		&i.NextEarly,
+		&i.SentCount,
+		&i.LastSentAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteOldReminders = `-- name: DeleteOldReminders :execrows
 DELETE FROM reminders
 WHERE (status = 'proposed' AND created_at < $1) OR (status IN ('done', 'cancelled') AND updated_at < $2)

@@ -101,6 +101,10 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		if turn.statusAnswerText() == "" {
 			turn.setStatusAnswer(o.helpAnswerFor(req.Content))
 		}
+		// The yes to a bill that was read, and "платих …": the code answers (bill_answer.go).
+		if turn.statusAnswerText() == "" {
+			turn.setStatusAnswer(o.billAnswer(ctx, userID, req.SessionID, req.Content))
+		}
 		// A reminder, its yes, its correction, the list and "махни …": the code answers (reminder_answer.go).
 		if turn.statusAnswerText() == "" {
 			turn.setStatusAnswer(o.reminderAnswer(ctx, userID, req.SessionID, req.Content, chatCtx.History, false))

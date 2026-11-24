@@ -24,8 +24,10 @@ import (
 	"go-monolith/internal/answerplan"
 	"go-monolith/internal/api"
 	"go-monolith/internal/attachments"
+	"go-monolith/internal/bills"
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
+	"go-monolith/internal/ingest"
 	"go-monolith/internal/jobs"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/logfile"
@@ -297,9 +299,12 @@ func run() error {
 
 	// The reminders (package reminders): off unless REMINDERS_ENABLED. The local model reads a
 	// request; the sender writes a reminder into its conversation and sends it to Telegram.
+	var reminderStore *reminders.Store
+	var reminderWake func()
 	if cfg.RemindersEnabled {
-		reminderStore := reminders.NewStore(database)
+		reminderStore = reminders.NewStore(database)
 		reminderRunner := reminders.NewRunner(database, reminderStore, orchestrator.NotifyOutside)
+		reminderWake = reminderRunner.Wake
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -310,6 +315,16 @@ func run() error {
 		}()
 		orchestrator.WithReminders(reminderStore, reminders.NewExtractor(llmClient), reminderRunner.Wake)
 		logger.Info("the reminders are on")
+	}
+
+	// The bills (package bills): off unless BILLS_ENABLED. A PDF or a picture of a bill is read by the
+	// local model (a bill holds an address and an account: never the paid one), checked against its
+	// text and kept after "да"; with the reminders on, its due day gets a reminder.
+	var billService *bills.Service
+	if cfg.BillsEnabled {
+		billService = bills.NewService(database, ingest.NewPDFExtractor(), ingest.NewImageOCRExtractor(), bills.NewExtractor(llmClient), reminderStore, reminderWake)
+		orchestrator.WithBills(billService)
+		logger.Info("the bills are on", "reminders", reminderStore != nil)
 	}
 
 	// The plan of an answer to a personal message (П55, internal/answerplan): off unless
@@ -357,6 +372,9 @@ func run() error {
 	apiService.RegisterSessionRoutes(protectedMux)
 	apiService.RegisterTaskPlanRoutes(protectedMux)
 	attachmentService.RegisterRoutes(protectedMux)
+	if billService != nil {
+		billService.RegisterRoutes(protectedMux)
+	}
 	if fileStore != nil {
 		fileStore.RegisterRoutes(protectedMux)
 	}
