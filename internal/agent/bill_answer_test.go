@@ -136,3 +136,16 @@ func TestAPageWithoutDatesIsFlaggedAsTheSameBill(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "Прилича на вече записана сметка")
 }
+
+func TestPaidSaysNothingOfAReminderItDidNotHave(t *testing.T) {
+	e := newBillEnv(t)
+	f := madeUpFields
+	f.Payment, f.DueDate = bills.Transfer, ""
+	e.reads(t, f)
+	_, err := e.svc.Read(context.Background(), e.userID, e.session, "rechnung.pdf", []byte("%PDF-1.4 x"))
+	require.NoError(t, err)
+	e.say(t, "да")
+	out := e.say(t, "платих телефона")
+	assert.Contains(t, out, "Отбелязах като платена ✅")
+	assert.NotContains(t, out, "Напомнянето")
+}

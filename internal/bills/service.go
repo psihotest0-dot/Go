@@ -316,11 +316,14 @@ func (s *Service) MarkPaid(ctx context.Context, userID uuid.UUID, message string
 		if err != nil || n == 0 {
 			return "Не успях да отбележа сметката като платена. Опитай пак след малко.", true
 		}
+		text := "Отбелязах като платена ✅ " + oneLine(unpaid[i], s.loc) + "."
 		if raw[i].ReminderID.Valid && s.reminders != nil {
-			_, _ = s.reminders.Cancel(ctx, userID, raw[i].ReminderID.Int64)
+			if cancelled, _ := s.reminders.Cancel(ctx, userID, raw[i].ReminderID.Int64); cancelled {
+				text += " Напомнянето ѝ е махнато."
+			}
 		}
 		metrics.Bills.WithLabelValues("paid").Inc()
-		return "Отбелязах като платена ✅ " + oneLine(unpaid[i], s.loc) + ". Напомнянето ѝ е махнато.", true
+		return text, true
 	}
 	var b strings.Builder
 	if len(pick) == 0 {
