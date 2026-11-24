@@ -41,6 +41,20 @@ func DeleteUser(t testing.TB, pool TxBeginner, id uuid.UUID) {
 		t.Errorf("dbtest.DeleteUser: delete user %s: %v", id, err)
 		return
 	}
+	// The user took the last chunks of the table with it: the indexes are built again on the empty
+	// table, so that the next test does not inherit an HNSW graph worn by the fill and empty of the
+	// tests before it (see RebuildChunkIndexes). An empty table makes it a matter of milliseconds.
+	var empty bool
+	if err := tx.QueryRow(ctx, "SELECT NOT EXISTS (SELECT 1 FROM document_chunks)").Scan(&empty); err != nil {
+		t.Errorf("dbtest.DeleteUser: count the chunks: %v", err)
+		return
+	}
+	if empty {
+		if _, err := tx.Exec(ctx, "REINDEX TABLE document_chunks"); err != nil {
+			t.Errorf("dbtest.DeleteUser: rebuild the chunk indexes: %v", err)
+			return
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Errorf("dbtest.DeleteUser: commit: %v", err)
 	}

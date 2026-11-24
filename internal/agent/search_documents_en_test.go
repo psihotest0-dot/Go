@@ -12,6 +12,7 @@ import (
 
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
+	"go-monolith/internal/dbtest"
 	"go-monolith/internal/llm"
 	"go-monolith/internal/retrieval"
 )
@@ -142,6 +143,8 @@ func TestSearchDocumentsMergesWhatTheEnglishQueryFound(t *testing.T) {
 		arg.Metadatas = append(arg.Metadatas, "{}")
 	}
 	require.NoError(t, e.db.Queries.CreateDocumentChunksBatch(ctx, arg))
+	// The vector half must find the passages; see dbtest.RebuildChunkIndexes.
+	dbtest.RebuildChunkIndexes(t, e.db.Pool)
 
 	contents := func(args map[string]interface{}) []string {
 		turnCtx, _ := e.turn("s", false)
