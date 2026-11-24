@@ -127,6 +127,24 @@ type PendingAction struct {
 	DecidedAt       sql.NullTime    `json:"decided_at"`
 }
 
+type Reminder struct {
+	ID         int64        `json:"id"`
+	UserID     uuid.UUID    `json:"user_id"`
+	SessionID  string       `json:"session_id"`
+	Text       string       `json:"text"`
+	Repeat     string       `json:"repeat"`
+	FirstDate  time.Time    `json:"first_date"`
+	AtMinute   int32        `json:"at_minute"`
+	DayBefore  bool         `json:"day_before"`
+	Status     string       `json:"status"`
+	NextAt     time.Time    `json:"next_at"`
+	NextEarly  bool         `json:"next_early"`
+	SentCount  int32        `json:"sent_count"`
+	LastSentAt sql.NullTime `json:"last_sent_at"`
+	CreatedAt  time.Time    `json:"created_at"`
+	UpdatedAt  time.Time    `json:"updated_at"`
+}
+
 type SessionSummary struct {
 	UserID                uuid.UUID `json:"user_id"`
 	SessionID             string    `json:"session_id"`

@@ -387,6 +387,7 @@ var modeCommands = map[string]string{
 	"notes":  agent.ModeFiles,
 	"memory": agent.ModeMemory,
 	"style":  agent.ModeStyle,
+	"remind": agent.ModeReminder,
 }
 
 // modeCommandExample is what the reply to a command with nothing after it shows.
@@ -397,6 +398,7 @@ var modeCommandExample = map[string]string{
 	"notes":  "запиши в бележки.md: …",
 	"memory": "запомни, че …",
 	"style":  "отсега нататък отговаряй по-кратко",
+	"remind": "утре в 9 да платя тока",
 }
 
 // parseCommand splits "/cmd@botname args" into ("cmd", "args"). Text that is not
@@ -489,6 +491,10 @@ func (b *Bot) handleMessageIn(ctx context.Context, msg *tgbotapi.Message, t *tur
 	// A command of a mode ("/web цената на златото"): the text after it goes down that road
 	// (agent/turn_mode.go), as the buttons of the app send it.
 	content, mode := msg.Text, ""
+	if command == "reminders" {
+		// The list of the reminders: the code answers it (agent/reminder_answer.go).
+		content = "какви напомняния имам?"
+	}
 	if m, ok := modeCommands[command]; ok {
 		if args == "" {
 			b.sendReply(chatID, "Напиши след командата какво искаш, например „/"+command+" "+modeCommandExample[command]+"“.")

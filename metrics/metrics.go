@@ -321,6 +321,15 @@ var (
 		Help: "Tasks the server walks, by kind and event (proposed, started, declined, stopped, done).",
 	}, []string{"kind", "event"})
 
+	// Reminders counts the reminders by event (plan item И8): proposed (said back to the person),
+	// corrected_<field> (the code changed a field the model read: date, time, from_now, next_day),
+	// kept (the person said yes), declined, problem_<kind>, extract_failed, listed, cancelled,
+	// sent_on_time, sent_late.
+	Reminders = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "reminders_total",
+		Help: "Reminders by event (proposed, corrected_*, kept, declined, problem_*, extract_failed, listed, cancelled, sent_on_time, sent_late).",
+	}, []string{"event"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever

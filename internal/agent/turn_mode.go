@@ -32,12 +32,13 @@ const (
 
 // modeLabels are the names of the modes as the buttons have them, for the answers of the code.
 var modeLabels = map[string]string{
-	ModeBooks:   "Книги",
-	ModeWeb:     "Интернет",
-	ModeLibrary: "Библиотека",
-	ModeFiles:   "Бележките на Лили",
-	ModeMemory:  "Памет",
-	ModeStyle:   "Как да говорим",
+	ModeBooks:    "Книги",
+	ModeWeb:      "Интернет",
+	ModeLibrary:  "Библиотека",
+	ModeFiles:    "Бележките на Лили",
+	ModeMemory:   "Памет",
+	ModeStyle:    "Как да говорим",
+	ModeReminder: "Напомняне",
 }
 
 // validMode tells whether a request may carry the mode: "" (none) or one of the modes.
@@ -107,5 +108,5 @@ func (t *turnState) modeName() string {
 
 // knownModes lists the modes in the order of the buttons (for the help text and the tests).
 func knownModes() []string {
-	return []string{ModeBooks, ModeWeb, ModeLibrary, ModeFiles, ModeMemory, ModeStyle}
+	return []string{ModeBooks, ModeWeb, ModeLibrary, ModeFiles, ModeMemory, ModeStyle, ModeReminder}
 }

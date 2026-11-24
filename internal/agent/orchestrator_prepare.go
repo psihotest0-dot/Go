@@ -101,6 +101,10 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		if turn.statusAnswerText() == "" {
 			turn.setStatusAnswer(o.helpAnswerFor(req.Content))
 		}
+		// A reminder, its yes, its correction, the list and "махни …": the code answers (reminder_answer.go).
+		if turn.statusAnswerText() == "" {
+			turn.setStatusAnswer(o.reminderAnswer(ctx, userID, req.SessionID, req.Content, chatCtx.History, false))
+		}
 	}
 	if plan.hasText() {
 		turn.markExternal(sourceAttachments)
@@ -140,7 +144,14 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		turn.setUserURLs(userURLs)
 	}
 	// The button of the message: its tools must be on offer, or the code says why not.
-	if req.Mode != "" {
+	if req.Mode == ModeReminder {
+		// The button of the reminders has no tools: the code reads the request (reminder_answer.go).
+		text := o.reminderAnswer(ctx, userID, req.SessionID, req.Content, chatCtx.History, true)
+		if text == "" {
+			text = modeOffText(req.Mode)
+		}
+		turn.setStatusAnswer(text)
+	} else if req.Mode != "" {
 		if _, required := o.modeTools(tools, req.Mode, turn); len(required) > 0 {
 			turn.setMode(req.Mode)
 		} else {

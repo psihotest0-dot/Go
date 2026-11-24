@@ -32,6 +32,7 @@ import (
 	"go-monolith/internal/oracle"
 	"go-monolith/internal/prompts"
 	"go-monolith/internal/proposals"
+	"go-monolith/internal/reminders"
 	"go-monolith/internal/retrieval"
 	"go-monolith/internal/taskplan"
 	"go-monolith/internal/taskrun"
@@ -292,6 +293,23 @@ func run() error {
 			orchestrator.WithTaskRun(runPlans, runner)
 			logger.Info("the server walks tasks over many documents itself")
 		}
+	}
+
+	// The reminders (package reminders): off unless REMINDERS_ENABLED. The local model reads a
+	// request; the sender writes a reminder into its conversation and sends it to Telegram.
+	if cfg.RemindersEnabled {
+		reminderStore := reminders.NewStore(database)
+		reminderRunner := reminders.NewRunner(database, reminderStore, orchestrator.NotifyOutside)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("the sender of the reminders panicked; the reminders wait for a restart", slog.Any("error", r))
+				}
+			}()
+			reminderRunner.Run(ctx)
+		}()
+		orchestrator.WithReminders(reminderStore, reminders.NewExtractor(llmClient), reminderRunner.Wake)
+		logger.Info("the reminders are on")
 	}
 
 	// The plan of an answer to a personal message (П55, internal/answerplan): off unless

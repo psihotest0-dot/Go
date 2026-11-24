@@ -93,6 +93,8 @@ type Orchestrator struct {
 	statusAnswer bool
 	// helpAnswer is HELP_ANSWER_ENABLED: "какво можеш?" is answered by the code (help_answer.go).
 	helpAnswer bool
+	// reminders: the reminders of the chat (reminder_answer.go); nil means off.
+	reminders *reminderDesk
 	// runPlans keeps the plans of the tasks the server walks itself and runner walks them
 	// (TASK_RUN_ENABLED, task_run.go); nil: off.
 	runPlans *taskplan.Store

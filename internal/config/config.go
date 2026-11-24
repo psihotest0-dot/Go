@@ -166,6 +166,11 @@ type Config struct {
 	// file from the passages of each document, with its numbers checked. Needs FILES_ENABLED. Off by
 	// default.
 	TaskRunEnabled bool
+	// RemindersEnabled (REMINDERS_ENABLED) turns on the reminders (plan item И8, package
+	// reminders): "напомни ми утре в 9 да платя тока" is read by the local model, said back by the
+	// code with the date and kept after "да"; the server sends it to Telegram and into the
+	// conversation in its hour. Off by default.
+	RemindersEnabled bool
 	// AnswerPlanEnabled (ANSWER_PLAN_ENABLED) turns on the plan of an answer to a personal
 	// message (П55 phase 1, internal/answerplan): the code picks the person's memories for the
 	// reply and the model writes it from them. Off by default: without it nothing changes.
@@ -390,6 +395,7 @@ func Load() *Config {
 		WebFetchLocalEnabled:       boolEnv("WEB_FETCH_LOCAL_ENABLED", false),
 		TaskPlanEnabled:            boolEnv("TASK_PLAN_ENABLED", false),
 		TaskRunEnabled:             boolEnv("TASK_RUN_ENABLED", false),
+		RemindersEnabled:           boolEnv("REMINDERS_ENABLED", false),
 		AnswerPlanEnabled:          boolEnv("ANSWER_PLAN_ENABLED", false),
 		MemoryThemesEnabled:        boolEnv("MEMORY_THEMES_ENABLED", false),
 		LeanPromptEnabled:          boolEnv("LEAN_PROMPT_ENABLED", false),
