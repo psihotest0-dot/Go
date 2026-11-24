@@ -43,7 +43,14 @@ var (
 	noWords   = regexp.MustCompile(`(?i)^(?:не|недей|няма\s+нужда|откажи|отказ|забрави|no|nope|cancel)(?:[\s,!.]|$)`)
 	stopWords = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:спри|стоп|прекрати|прекъсни|откажи\s+(?:задачата|работата)|stop|cancel)(?:[^\p{L}]|$)`)
 	notWord   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])не(?:[^\p{L}]|$)`)
+	// libraryItems: the message is about documents of the library (added ones, sources), not
+	// about the files of the folder.
+	libraryItems = regexp.MustCompile(`(?i)(добав|източни[кц]|библиотек|\badded\b|\bsources?\b|\blibrary\b)`)
 )
+
+// noAddedDocumentsText answers a task over the added documents in a conversation that added none.
+const noAddedDocumentsText = "В този разговор не е добавен нито един документ в библиотеката, а такава задача правя само върху документите, добавени тук. " +
+	"Първо ме помоли: „Добави в библиотеката: <линк>“ (може и няколко линка наведнъж), после пак ми кажи какво да направя с тях."
 
 // taskRunWaker is the runner of the tasks (taskrun.Runner).
 type taskRunWaker interface{ Wake() }
@@ -155,7 +162,14 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 		return ""
 	}
 	if len(steps) == 0 {
-		return ""
+		if !libraryItems.MatchString(message) {
+			// "за всеки от файловете в папката…": not the library; the model answers.
+			return ""
+		}
+		// Left to the model, such a message got "Създадох два нови файла" with nothing made (the
+		// live check of 2026-11-24): the walk is for the documents added here, so the code says so.
+		metrics.TaskRuns.WithLabelValues(kind, "no_documents").Inc()
+		return noAddedDocumentsText
 	}
 	goal := taskRunGoal(kind, len(steps))
 	if _, err := o.runPlans.Propose(ctx, userID, session, kind, goal, steps); err != nil {

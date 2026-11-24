@@ -496,6 +496,12 @@ func (o *Orchestrator) runRounds(
 		if (hasTool(tools, filesStubTool) || hasTool(tools, savePageTool)) && asksToSavePage(lastUserContent(messages)) {
 			forced = savePageTool
 		}
+		// A link for the library: add_to_library, which a turn offers when the conversation has a
+		// link the person wrote (library_add_tool.go). It wins over a forced look at the books
+		// ("добави книгата … в библиотеката"): the message is about the link.
+		if hasTool(tools, addToLibraryTool) && asksToAddToLibrary(lastUserContent(messages)) {
+			forced = addToLibraryTool
+		}
 		// An explanation from the library searches first, as a question to the books does (explain.go).
 		if forced == "" && turnFrom(ctx).explaining() && onlyTool(tools, searchDocumentsTool) != nil {
 			forced = searchDocumentsTool

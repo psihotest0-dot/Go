@@ -188,17 +188,29 @@ func TestANoDropsTheProposal(t *testing.T) {
 	assert.Nil(t, proposed)
 }
 
-func TestWithoutAddedDocumentsTheModelAnswers(t *testing.T) {
+func TestWithoutAddedDocumentsTheCodeSaysSo(t *testing.T) {
 	e := newTaskRunEnv(t)
 	e.addDocument(t, "old-book.pdf", "2 days")
 	storeTurnMessages(t, e.attachmentEnv, "tr", [2]string{"user", "здрасти"}, [2]string{"assistant", "Здравей!"})
 
-	e.say(t, "tr", askForFacts)
+	out := e.say(t, "tr", askForFacts)
 
-	assert.NotEmpty(t, e.model.Requests, "the model answers")
+	assert.Contains(t, out, "не е добавен нито един документ")
+	assert.Contains(t, out, "Добави в библиотеката: ")
+	assert.Empty(t, e.model.Requests, "the model is not asked: left to it, it said it had made the files")
 	proposed, err := e.plans.Proposed(context.Background(), e.userID, "tr")
 	require.NoError(t, err)
 	assert.Nil(t, proposed)
+}
+
+func TestATaskOverTheFilesOfTheFolderIsLeftToTheModel(t *testing.T) {
+	e := newTaskRunEnv(t)
+	storeTurnMessages(t, e.attachmentEnv, "tr", [2]string{"user", "здрасти"}, [2]string{"assistant", "Здравей!"})
+
+	out := e.say(t, "tr", "за всеки от файловете в папката направи отделен файл с резюме")
+
+	assert.NotContains(t, out, "не е добавен нито един документ")
+	assert.NotEmpty(t, e.model.Requests, "not the library: the model answers")
 }
 
 func TestTheTaskOfAnotherConversationIsNotThisOne(t *testing.T) {

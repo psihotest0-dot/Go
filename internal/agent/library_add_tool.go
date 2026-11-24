@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +118,25 @@ func NewLibraryFetcher(maxBytes int64) *webfetch.Fetcher {
 func (r *DefaultToolRegistry) WithLibraryAdd(f documentFetcher, a libraryAdder) *DefaultToolRegistry {
 	r.fetcher, r.adder = f, a
 	return r
+}
+
+var (
+	libraryWord    = regexp.MustCompile(`(?i)(библиотек|\blibrary\b)`)
+	libraryAddVerb = regexp.MustCompile(`(?i)(добав|свал|качи|качва|качете|сложи|постав|запиш|запаз|прибав|\badd\b|\bput\b|\bsave\b|download|import|upload)`)
+)
+
+// asksToAddToLibrary tells whether a message asks for the document behind a link it holds to go
+// into the library. Left to itself the model called add_to_library for the first such message of
+// a conversation, and answered "Добавих и този линк" without a call for the next one - 2 of 2 in
+// the live check of 2026-11-24 (go-monolith-backups\measurements\live_2026-11-24), with no
+// warning under it, since the warning comes from the tool; 6 of 6 in fresh conversations. Such a
+// message has a link, the library and a word for adding.
+func asksToAddToLibrary(message string) bool {
+	if !pageLink.MatchString(message) {
+		return false
+	}
+	text := pageLink.ReplaceAllString(message, " ")
+	return libraryWord.MatchString(text) && libraryAddVerb.MatchString(text)
 }
 
 // offersLibraryAdd tells whether a turn offers add_to_library: the tool is on, and the
