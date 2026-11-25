@@ -197,11 +197,13 @@ var (
 	// that the bot was asked to repeat in the Telegram chat: "sent" (handed to Telegram),
 	// "not_allowed" (the chat is not on TELEGRAM_ALLOWED_CHAT_IDS), "not_linked" (the chat is not
 	// linked to this user - nothing is sent to a chat that is not the user's) and "failed" (the
-	// link could not be read).
+	// link could not be read). The texts the server writes on its own (a reminder, a report) count
+	// here too, and "held" (it came before the bot was connected and waits for it), "dropped" (more
+	// than 50 waited) and "expired" (it waited more than a day).
 	TelegramMirror = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "telegram_mirror_total",
-		Help: "Answers given in the app that were repeated in the Telegram chat of the conversation.",
-	}, []string{"result"}) // result: sent, not_allowed, not_linked, failed
+		Help: "Answers given in the app that were repeated in the Telegram chat of the conversation, and texts of the server held for the bot.",
+	}, []string{"result"}) // result: sent, not_allowed, not_linked, failed, held, dropped, expired
 
 	// WebToolRequests counts the paid web_search / web_fetch calls.
 	WebToolRequests = promauto.NewCounterVec(prometheus.CounterOpts{

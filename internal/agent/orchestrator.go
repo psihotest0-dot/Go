@@ -56,8 +56,10 @@ type Orchestrator struct {
 	// Telegram chat (see ReplyMirror); nothing while it is not set.
 	mirror atomic.Pointer[ReplyMirror]
 	// outside tells the other channel of a shared conversation what the server did on its own (the
-	// report of a task it walked); see NotifyOutside.
+	// report of a task it walked, a reminder); see NotifyOutside.
 	outside atomic.Pointer[OutsideNotifier]
+	// pendingOutside holds such texts while nobody is set to send them (outside_queue.go).
+	pendingOutside outsideQueue
 	// budgets are the token limits requests are built with; the zero value
 	// means the built-in ones (see limits).
 	budgets budgets

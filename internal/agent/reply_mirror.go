@@ -37,23 +37,38 @@ func (o *Orchestrator) SetReplyMirror(m ReplyMirror) {
 type OutsideNotifier func(ctx context.Context, userID uuid.UUID, sessionID, text string)
 
 // SetOutsideNotifier sets who sends such texts; nil stops it. The Telegram bot sets itself as it
-// does for the mirror.
+// does for the mirror. The texts that came while nobody was set go out now (outside_queue.go).
 func (o *Orchestrator) SetOutsideNotifier(n OutsideNotifier) {
 	if n == nil {
 		o.outside.Store(nil)
 		return
 	}
 	o.outside.Store(&n)
+	o.sendHeldOutside(n)
 }
 
 // NotifyOutside sends text to the other channel of a conversation shared with Telegram (a session
-// "tg-<chat id>"); for any other conversation, or with nobody set, it does nothing - the text is
-// in the conversation already. It is the notifier of the runner of tasks (main.go).
+// "tg-<chat id>"); for any other conversation it does nothing - the text is in the conversation
+// already. With nobody set (the bot has not connected yet, or is connecting again) the text waits
+// for the bot (outside_queue.go). It is the notifier of the reminders, the monthly report of the
+// bills and the runner of tasks (main.go).
 func (o *Orchestrator) NotifyOutside(ctx context.Context, userID uuid.UUID, sessionID, text string) {
-	n := o.outside.Load()
-	if n == nil || !api.IsTelegramSession(sessionID) || text == "" {
+	if !api.IsTelegramSession(sessionID) || text == "" {
 		return
 	}
+	var n OutsideNotifier
+	if p := o.outside.Load(); p != nil {
+		n = *p
+	} else if held, ok := o.holdOutside(userID, sessionID, text); ok {
+		n = held // set meanwhile
+	} else {
+		return
+	}
+	o.sendOutside(ctx, n, userID, sessionID, text)
+}
+
+// sendOutside hands one text to n, with a bound on the time and a guard against its panic.
+func (o *Orchestrator) sendOutside(ctx context.Context, n OutsideNotifier, userID uuid.UUID, sessionID, text string) {
 	nctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mirrorTimeout)
 	defer cancel()
 	defer func() {
@@ -61,7 +76,7 @@ func (o *Orchestrator) NotifyOutside(ctx context.Context, userID uuid.UUID, sess
 			slog.ErrorContext(ctx, "panic while sending a text of the server to Telegram", "panic", rcv)
 		}
 	}()
-	(*n)(nctx, userID, sessionID, text)
+	n(nctx, userID, sessionID, text)
 }
 
 // mirrorReply tells the mirror about an answer that has just been given in the app. It is for the
