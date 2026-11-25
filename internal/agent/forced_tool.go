@@ -128,6 +128,9 @@ func forcedFirstTool(tools []openai.Tool, message string) string {
 	switch {
 	case asksForManySteps(message) && onlyTool(tools, planStubTool) != nil:
 		return planStubTool
+	// "Опитай да намериш в интернет…": asked to look, not to choose (lookup_guard.go).
+	case asksToSearchWeb(message) && onlyTool(tools, "web_search") != nil:
+		return "web_search"
 	case asksAboutLibrary(message) && onlyTool(tools, listDocumentsTool) != nil:
 		return listDocumentsTool
 	case (asksForKnowledge(message) || asksForPassage(message)) && onlyTool(tools, searchDocumentsTool) != nil:

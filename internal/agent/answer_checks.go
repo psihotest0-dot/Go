@@ -93,6 +93,18 @@ var answerChecks = []answerCheck{
 		},
 	},
 	{
+		// "Търсих в библиотеката…" with no tool called, where the turn could not be asked again
+		// with the tools of that place (lookup_guard.go).
+		name: "lookup", op: "lookup", result: "corrected",
+		logMsg: "the answer says it looked somewhere and no tool was called; a correction is added",
+		note: func(_ context.Context, _ *Orchestrator, f answerFacts) string {
+			if len(f.executed) == 0 && lookupClaim(f.content, f.userMessage) != "" {
+				return lookupCorrection
+			}
+			return ""
+		},
+	},
+	{
 		// An "extraction" of a source no tool opened (extraction_claim.go). Not under an answer
 		// that has a "⚠️" of its own already.
 		name: "extraction", op: "extraction", result: "noted",

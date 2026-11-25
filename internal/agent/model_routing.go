@@ -88,7 +88,9 @@ func (o *Orchestrator) routeToPaid(ctx context.Context, messages []openai.ChatCo
 		}
 		return false, "explain_local"
 	}
-	if o.libraryPaid && forcedFirstTool(tools, lastUserContent(messages)) != "" {
+	// A look on the internet the person asked for is forced too (lookup_guard.go), but it is not a
+	// question to the library: it stays where the turn is.
+	if forced := forcedFirstTool(tools, lastUserContent(messages)); o.libraryPaid && forced != "" && forced != "web_search" {
 		return true, "library"
 	}
 	return false, "default"

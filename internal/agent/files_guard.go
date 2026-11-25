@@ -252,6 +252,11 @@ func (o *Orchestrator) generateGuarded(
 	if err != nil {
 		return content, executed, err
 	}
+	// "Търсих в библиотеката…" and no tool called: asked again with the tools of that place (lookup_guard.go).
+	content, executed, err = o.retryUnbackedLookup(ctx, finalMessages, tools, content, executed, onDelta)
+	if err != nil {
+		return content, executed, err
+	}
 	userMessage := lastUserContent(finalMessages)
 	note := o.checkAnswer(ctx, answerFacts{
 		content: content, executed: executed, turn: turnFrom(ctx),
