@@ -53,6 +53,65 @@ func TestPromisesWork(t *testing.T) {
 	}
 }
 
+// The real answer of 2026-11-24, 21:35 (Telegram): an outline in the chat and a file promised, no tool.
+const realFilePromise = "Разбрах, ще изготвя този справочник за теб.\n\nЕто как ще изглежда структурата на справочника, който ще създам за теб:\n\n" +
+	"1. **Ниво 1: Готови инструменти**\n2. **Ниво 2: Модели**\n\nЩе създам този файл в папката ти като `OCR_Project_Guide.md`, за да имаш удобен референцен документ."
+
+func TestPromisesFile(t *testing.T) {
+	for _, a := range []string{
+		realFilePromise,
+		"Ще създам нов файл за този източник, така че да имаме чист и отделен анализ.", // 2026-11-21, 09:35
+		"Добре, ще го запиша във файла бележки.md.",
+		"Ще подготвя документа и ще го сложа в папката ти.",
+	} {
+		assert.True(t, promisesFile(a), a)
+	}
+	for _, a := range []string{
+		"",
+		"Ще създам файла, ако ми кажеш името.",                   // a condition
+		"Ще го запиша във файл, когато ми пратиш текста.",        // a condition
+		"Да създам ли файл с тези бележки?",                      // a question
+		"Ще ти обясня какво пише във файла: три реда за Python.", // no file to make
+		"Създадох файла бележки.md.",                             // done (another check)
+		"Ще създам файла бележки.md. Искаш ли друго име?",        // hands the turn back
+		"Ще създам план за деня: първо разходка, после работа.",  // no file
+	} {
+		assert.False(t, promisesFile(a), a)
+	}
+}
+
+// The promise of a file with no tool called is asked again with the file tools, as a promise of work is.
+func TestAPromiseOfAFileIsAskedAgainWithTheFileTools(t *testing.T) {
+	e, store := newFilesToolEnv(t)
+	ctx, _ := e.turn("s", false)
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{textChunk(realFilePromise)},
+		{toolCallChunk(0, "call_1", writeFileTool, `{"name":"OCR_Project_Guide.md","content":"# Справочник"}`)},
+		{textChunk("Записах справочника в OCR_Project_Guide.md.")},
+	}}
+	o := newGroupOrchestrator(mock, e.reg)
+	content, executed, err := o.generateResponse(ctx,
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "От интернет имах предвид да,започни"}}, o.turnTools(), nil)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Записах справочника в OCR_Project_Guide.md.", content)
+	assert.Equal(t, []string{writeFileTool}, toolCallNames(executed))
+	assert.Equal(t, "# Справочник", e.fileText(t, store, "OCR_Project_Guide.md"))
+	require.Len(t, mock.Requests, 3)
+	assert.Equal(t, "required", mock.Requests[1].ToolChoice)
+}
+
+// Where the turn is not asked again ("успя ли?"), a promised file gets the line under the answer.
+func TestAPromiseOfAFileThatIsNotAskedAgainIsCorrected(t *testing.T) {
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(realFilePromise)}}}
+	o := newGroupOrchestrator(mock, &fakeToolRegistry{})
+	content, _, err := o.generateResponse(t.Context(),
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "успя ли ?"}}, o.turnTools(), nil)
+	require.NoError(t, err)
+	require.Len(t, mock.Requests, 1, "no retry")
+	assert.Equal(t, realFilePromise+"\n\n"+stallCorrection, content)
+}
+
 func TestAsksForStatusAndToSave(t *testing.T) {
 	for m, want := range map[string]bool{
 		"успя ли ?":                       true,

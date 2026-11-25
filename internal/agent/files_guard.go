@@ -170,6 +170,28 @@ func promisesWork(answer string) bool {
 	return false
 }
 
+// fileWillVerb: "ще създам", "ще го запиша", "ще изготвя" - a file promised for later.
+var fileWillVerb = regexp.MustCompile(`(?i)(?:^|[^\p{L}])ще\s+(?:(?:го|я|ги|ти|те)\s+)?(?:създам|запиша|запазя|изготвя|подготвя|направя|напиша|съставя|сложа|добавя|допиша|оформя)(?:[^\p{L}]|$)`)
+
+// promisesFile tells whether an answer promises a file for later: "Ще създам този файл в папката ти
+// като `OCR_Project_Guide.md`…" (the owner's Telegram, 2026-11-24, 21:35) closed an outline of the
+// file in the chat, and no tool was called; promisesWork wants "веднага" or "в момента" and missed
+// it. The verb and the file are in one sentence, which is not a condition or a question, and the
+// answer does not hand the turn back with a question. Meant for an answer after which no tool was
+// called. A plain filter: a false alarm costs one more request to the model, with the file tools.
+func promisesFile(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" || strings.HasSuffix(answer, "?") {
+		return false
+	}
+	for _, sentence := range sentenceEnd.Split(answer, -1) {
+		if fileWillVerb.MatchString(sentence) && fileMention.MatchString(sentence) && !lookupCondition.MatchString(sentence) {
+			return true
+		}
+	}
+	return false
+}
+
 // asksForStatus tells whether a message asks how far some work is.
 func asksForStatus(message string) bool { return statusQuestion.MatchString(message) }
 
@@ -312,7 +334,7 @@ func (o *Orchestrator) generateChecked(
 	// stalled: the answer promises work for later or says it is going on, and no tool of
 	// any kind was called in the turn. ignored: the message asked for a change of a file, no
 	// tool of any kind was called, and the answer neither asks nor refuses (leavesTheWork).
-	stalled := len(executed) == 0 && promisesWork(content)
+	stalled := len(executed) == 0 && (promisesWork(content) || promisesFile(content))
 	ignored := len(executed) == 0 && !asksForStatus(userMessage) && asksToWrite(userMessage) && leavesTheWork(content)
 
 	var retry *fileRetry
