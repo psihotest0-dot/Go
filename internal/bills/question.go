@@ -25,6 +25,10 @@ const (
 	// asked on 2026-11-25, said they were only in a text file of its own - it does not know that the
 	// code keeps them in the database.
 	AskWhere = "where"
+	// AskRepeat: the monthly and the yearly payments side by side ("раздели ги на годишно плащане
+	// колко дължа и колко за месечните", 2026-11-25, 18:04). It was read as the unpaid ones ("дължа")
+	// and then as the sum of this year, which has neither the standing bills nor next year's.
+	AskRepeat = "repeat"
 )
 
 // Period is a span of days, From and To included, and how the answer names it.
@@ -50,7 +54,7 @@ const questionMaxRunes = 160
 
 var (
 	// billContext: the message is about the person's bills or what they pay.
-	billContext = regexp.MustCompile(`(?i)(?:сметк|фактур|платих|плащам|платил|плащал|харч|разход|дълж|неплатен|изтегл|струваха|струва\s+ми|bills?\b|invoices?\b|spent|expenses)`)
+	billContext = regexp.MustCompile(`(?i)(?:сметк|фактур|платих|плащам|плащан|платил|плащал|харч|разход|дълж|неплатен|изтегл|струваха|струва\s+ми|bills?\b|invoices?\b|spent|expenses)`)
 	totalWords  = regexp.MustCompile(`(?i)(?:колко|сбор|общо|сума|сумата|how\s+much|total)`)
 	listWords   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:кои|какви|покажи|изреди|списък|list|which)(?:[^\p{L}]|$)`)
 	unpaidWords = regexp.MustCompile(`(?i)(?:неплатен|не\s+съм\s+(?:ги\s+|я\s+)?платил|не\s+са\s+платени|дълж|чакат\s+плащане|unpaid|not\s+paid)`)
@@ -58,7 +62,10 @@ var (
 	// whereKept: where they are kept - "къде записа сметките", "имат ли копие в базата данни",
 	// "пазиш ли ги", "в базата ли са". whereAsk: and it is a question.
 	whereKept = regexp.MustCompile(`(?i)(?:баз[аи]|база\s+данни|копие|пазиш|пазят|пази\s+ли|съхран|записа(?:ла)?(?:[^\p{L}]|$)|database|stored|kept)`)
-	whereAsk  = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:къде|ли|where|do\s+you|are\s+they)(?:[^\p{L}]|$)|\?`)
+	// repeatWords: the payments by how often they come; repeatAsk: asked to be summed or split.
+	repeatWords = regexp.MustCompile(`(?i)(?:годишн|месечн|на\s+месец|на\s+година|yearly|monthly|per\s+(?:month|year))`)
+	repeatAsk   = regexp.MustCompile(`(?i)(?:колко|сума|сбор|изчисл|пресметн|сметни|раздел|общо|how\s+much|total|split)`)
+	whereAsk    = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:къде|ли|where|do\s+you|are\s+they)(?:[^\p{L}]|$)|\?`)
 
 	thisMonth = regexp.MustCompile(`(?i)(?:този|тоя|текущия|this)\s+(?:месец|month)`)
 	lastMonth = regexp.MustCompile(`(?i)(?:миналия|предишния|last|previous)\s+(?:месец|month)`)
@@ -126,6 +133,9 @@ func ReadQuestion(message string, today reminders.Day) (Question, bool) {
 	switch {
 	case whereKept.MatchString(m) && whereAsk.MatchString(m):
 		q.Ask = AskWhere
+		return q, true
+	case repeatWords.MatchString(m) && repeatAsk.MatchString(m):
+		q.Ask = AskRepeat
 		return q, true
 	case unpaidWords.MatchString(m):
 		q.Ask = AskUnpaid

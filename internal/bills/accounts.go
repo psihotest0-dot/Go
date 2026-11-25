@@ -109,6 +109,15 @@ func (s *Service) Answer(ctx context.Context, userID uuid.UUID, message string) 
 		metrics.Bills.WithLabelValues("question_" + q.Ask).Inc()
 		return s.whereText(ctx, userID, n, standing), true
 	}
+	if q.Ask == AskRepeat {
+		text, err := s.repeatText(ctx, userID)
+		if err != nil {
+			slog.WarnContext(ctx, "the payments by how often they come could not be summed", "err", err)
+			return "Не успях да прочета сметките (грешка в базата). Опитай пак след малко.", true
+		}
+		metrics.Bills.WithLabelValues("question_" + q.Ask).Inc()
+		return text, true
+	}
 	if n == 0 && standing != "" {
 		return "Още нямаш записани плащания — първото от постоянните сметки се записва няколко дни преди деня му.\n" + standing, true
 	}
@@ -127,6 +136,126 @@ func (s *Service) Answer(ctx context.Context, userID uuid.UUID, message string) 
 	}
 	metrics.Bills.WithLabelValues("question_" + q.Ask).Inc()
 	return text, true
+}
+
+// repeatLine is one payment of the answer by how often they come.
+type repeatLine struct {
+	text  string
+	cents int64
+}
+
+// repeatText is the monthly and the yearly payments and what they make in a year: the standing
+// bills, and of the other kept bills that come monthly, quarterly or yearly the latest of each
+// issuer (a bill of an issuer with a standing bill of the same kind is that standing bill's).
+func (s *Service) repeatText(ctx context.Context, userID uuid.UUID) (string, error) {
+	standing, err := s.KeptStanding(ctx, userID)
+	if err != nil {
+		return "", err
+	}
+	rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: allKeptLimit})
+	if err != nil {
+		return "", err
+	}
+	var monthly, quarterly, yearly []repeatLine
+	for _, st := range standing {
+		line := repeatLine{text: fmt.Sprintf("%s — %s (постоянна, %s)", title(Bill{Issuer: st.Issuer, Kind: st.Kind}), Money(st.Cents, st.Currency), standingWhen(st)), cents: st.Cents}
+		if st.Month == 0 {
+			monthly = append(monthly, line)
+		} else {
+			yearly = append(yearly, line)
+		}
+	}
+	seen := map[string]bool{}
+	once := 0
+	for _, r := range rows { // the latest first
+		// The payments of standing bills, kept or removed: a removed one is no longer paid.
+		if r.FileName == standingFileName {
+			continue
+		}
+		b := fromRow(r)
+		switch b.Repeat {
+		case "monthly", "quarterly", "yearly":
+		default:
+			once++
+			continue
+		}
+		covered := false
+		for _, st := range standing {
+			if st.Kind == b.Kind && sameIssuer(st.Issuer, b.Issuer) {
+				covered = true
+			}
+		}
+		key := b.Repeat + "|" + strings.ToLower(b.Issuer) + "|" + b.Kind
+		if covered || seen[key] {
+			continue
+		}
+		seen[key] = true
+		line := repeatLine{text: fmt.Sprintf("%s — %s (последната сметка: %s)", title(b), Money(b.Cents, b.Currency), oneLineDate(b)), cents: b.Cents}
+		switch b.Repeat {
+		case "monthly":
+			monthly = append(monthly, line)
+		case "quarterly":
+			quarterly = append(quarterly, line)
+		default:
+			yearly = append(yearly, line)
+		}
+	}
+	if len(monthly)+len(quarterly)+len(yearly) == 0 {
+		return "Нямам записани месечни или годишни плащания — само еднократни сметки.", nil
+	}
+	var b strings.Builder
+	total := func(lines []repeatLine) int64 {
+		var c int64
+		for _, l := range lines {
+			c += l.cents
+		}
+		return c
+	}
+	section := func(head string, lines []repeatLine) {
+		if len(lines) == 0 {
+			return
+		}
+		fmt.Fprintf(&b, "%s: %s\n", head, Money(total(lines), "EUR"))
+		for _, l := range lines {
+			b.WriteString("• " + l.text + "\n")
+		}
+	}
+	section("Месечни плащания (на месец)", monthly)
+	section("На всеки три месеца (на тримесечие)", quarterly)
+	section("Годишни плащания (на година)", yearly)
+	year := total(monthly)*12 + total(quarterly)*4 + total(yearly)
+	fmt.Fprintf(&b, "\nЗа една година: %s", Money(year, "EUR"))
+	var parts []string
+	if len(monthly) > 0 {
+		parts = append(parts, Money(total(monthly), "EUR")+" × 12")
+	}
+	if len(quarterly) > 0 {
+		parts = append(parts, Money(total(quarterly), "EUR")+" × 4")
+	}
+	if len(yearly) > 0 {
+		parts = append(parts, Money(total(yearly), "EUR"))
+	}
+	if len(parts) > 1 || len(monthly)+len(quarterly) > 0 {
+		b.WriteString(" (" + strings.Join(parts, " + ") + ")")
+	}
+	b.WriteString(".")
+	if once > 0 {
+		fmt.Fprintf(&b, "\nЕднократните сметки (%d) не са в тази сметка.", once)
+	}
+	return b.String(), nil
+}
+
+// oneLineDate is the day of a bill: its due day, else its own day.
+func oneLineDate(b Bill) string {
+	switch {
+	case b.DueDate != nil:
+		return "срок " + dayText(*b.DueDate)
+	case b.InvoiceDate != nil:
+		return "от " + dayText(*b.InvoiceDate)
+	case b.PaidDate != nil:
+		return "платена на " + dayText(*b.PaidDate)
+	}
+	return "без дата"
 }
 
 // whereLatest is how many of the latest bills the answer about where they are kept names.

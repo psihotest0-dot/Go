@@ -260,6 +260,50 @@ func TestTheTextOfAnUploadThatIsNoBillIsAttached(t *testing.T) {
 	assert.NotContains(t, out, "прикачих")
 }
 
+// 2026-11-25, 18:04-18:05 (Telegram): "раздели ги на годишно плащане колко дължа и колко за
+// месечните" got "Нямаш неплатени сметки", and "изчисли … годишните … месечните" the sum of this year,
+// without the standing bills and next year's.
+func TestTheMonthlyAndTheYearlyPaymentsSideBySide(t *testing.T) {
+	e := newBillEnv(t)
+	phone := bills.Fields{IsBill: true, Issuer: "Beispiel Mobil", Kind: "phone_internet", Amount: "40,00", InvoiceDate: "09.10.2026", DueDate: "16.10.2026", Payment: bills.DirectDebit, Repeat: "monthly"}
+	phoneOld := phone
+	phoneOld.Amount, phoneOld.InvoiceDate, phoneOld.DueDate = "38,00", "09.09.2026", "16.09.2026"
+	insurance := bills.Fields{IsBill: true, Issuer: "Beispiel Versicherung", Kind: "insurance", Amount: "120,00", InvoiceDate: "02.11.2026", DueDate: "01.01.2027", Payment: bills.DirectDebit, Repeat: "yearly"}
+	doctor := bills.Fields{IsBill: true, Issuer: "Praxis Beispiel", Kind: "doctor", Amount: "80,00", InvoiceDate: "12.11.2026", DueDate: "26.11.2026", Payment: bills.Transfer, Repeat: "once"}
+	e.keepBill(t, phoneOld, "p1.pdf")
+	e.keepBill(t, phone, "p2.pdf")
+	e.keepBill(t, insurance, "i.pdf")
+	e.keepBill(t, doctor, "d.pdf")
+	e.readsStanding(t, bills.StandingFields{Kind: "rent", Summary: "Наем"})
+	require.Contains(t, e.say(t, "запиши, че всяко първо число плащам 500 € наем, изтегля се автоматично"), "Постоянна сметка:")
+	require.Contains(t, e.say(t, "да"), "Записах постоянната сметка ✅")
+
+	for _, q := range []string{
+		"Можеш ли да ги разделиш на годишно плащане колко дължа и колко за месечните",
+		"Лили изчисли какво е плащането за годишните сметки и каква е сумата за месечните",
+	} {
+		out := e.say(t, q)
+		assert.Contains(t, out, "Месечни плащания (на месец): 540,00 €", q)
+		assert.Contains(t, out, "наем — 500,00 € (постоянна, всеки месец на 1-о число)", q)
+		assert.Contains(t, out, "Beispiel Mobil (телефон и интернет) — 40,00 € (последната сметка: срок петък, 16.10.2026)", q)
+		assert.NotContains(t, out, "38,00 €", "only the latest bill of an issuer")
+		assert.Contains(t, out, "Годишни плащания (на година): 120,00 €", q)
+		assert.Contains(t, out, "За една година: 6 600,00 € (540,00 € × 12 + 120,00 €).", q)
+		assert.Contains(t, out, "Еднократните сметки (1) не са в тази сметка.", q)
+	}
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+	assert.Contains(t, e.say(t, "колко са ми сметките този месец?"), "Сметките за ноември 2026", "a month is still a month")
+
+	// The payment of the rent is written, then the rent is removed: neither counts any more.
+	e.at(28, 12, 11)
+	require.NoError(t, e.svc.StandingPass(context.Background()))
+	e.at(2, 12, 12) // the payment of 01.12 has gone by: it stays when the rent is removed
+	require.Contains(t, e.say(t, "махни постоянната сметка за наем"), "Махнах постоянната сметка ✅")
+	out := e.say(t, "колко са месечните и годишните плащания?")
+	assert.Contains(t, out, "Месечни плащания (на месец): 40,00 €")
+	assert.NotContains(t, out, "наем")
+}
+
 // readsStanding makes the model name the issuer and the kind of a standing bill.
 func (e *billEnv) readsStanding(t *testing.T, f bills.StandingFields) {
 	t.Helper()
