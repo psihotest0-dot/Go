@@ -41,7 +41,12 @@ UPDATE bills SET paid_date = $3, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'kept' AND paid_date IS NULL;
 
 -- name: DeleteStaleProposedBills :execrows
+-- A bill read and never answered: forgotten after a while, so that a "да" said much later to
+-- something else does not keep it.
 DELETE FROM bills WHERE status = 'proposed' AND created_at < $1;
+
+-- name: DeleteStaleProposedStanding :execrows
+DELETE FROM standing_bills WHERE status = 'proposed' AND created_at < $1;
 
 -- name: KeptBillsBetween :many
 -- The bills of a period, by their day: the due day, else the day of the bill, else the day paid.

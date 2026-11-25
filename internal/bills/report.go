@@ -132,7 +132,7 @@ func (s *Service) reportSession(ctx context.Context, userID uuid.UUID) (string, 
 // ReportText is the report of a month.
 func ReportText(month Period, s Sum, before Period, b Sum, unpaid []Bill, today reminders.Day) string {
 	var t strings.Builder
-	fmt.Fprintf(&t, "📊 Сметките за %s: общо %s (%s).\n", month.Label, Money(s.Cents, "EUR"), countWord(s.Count))
+	fmt.Fprintf(&t, "📊 Сметките за %s: общо %s (%s)%s.\n", month.Label, Money(s.Cents, "EUR"), countWord(s.Count), foreignNote(s.Foreign))
 	if len(s.ByKind) > 1 {
 		for _, k := range s.kindsByAmount() {
 			fmt.Fprintf(&t, "• %s — %s\n", KindNames[k], Money(s.ByKind[k], "EUR"))
@@ -147,11 +147,8 @@ func ReportText(month Period, s Sum, before Period, b Sum, unpaid []Bill, today 
 		t.WriteString(note + "\n")
 	}
 	if len(unpaid) > 0 {
-		var cents int64
-		for _, u := range unpaid {
-			cents += u.Cents
-		}
-		fmt.Fprintf(&t, "Неплатени сега: %s, %s:\n", countWord(len(unpaid)), Money(cents, "EUR"))
+		cents, foreign := euroTotal(unpaid)
+		fmt.Fprintf(&t, "Неплатени сега: %s, %s%s:\n", countWord(len(unpaid)), Money(cents, "EUR"), foreignNote(foreign))
 		for i, u := range unpaid {
 			if i == listedBills {
 				fmt.Fprintf(&t, "… и още %d\n", len(unpaid)-listedBills)

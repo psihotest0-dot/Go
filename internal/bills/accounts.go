@@ -20,21 +20,28 @@ const listedBills = 20
 
 // Sum is the bills of a period: their total, how many, and the same by kind.
 type Sum struct {
-	Cents  int64
-	Count  int
-	ByKind map[string]int64
-	Kinds  map[string]int
-	Unpaid []Bill
-	Bills  []Bill
+	// Cents and Count are of the bills in euro (and in lev, at its fixed rate); Foreign counts the
+	// bills of another currency, which are not in them (they are in Bills and Unpaid).
+	Cents   int64
+	Count   int
+	Foreign int
+	ByKind  map[string]int64
+	Kinds   map[string]int
+	Unpaid  []Bill
+	Bills   []Bill
 }
 
 func sumOf(bills []Bill) Sum {
 	s := Sum{ByKind: map[string]int64{}, Kinds: map[string]int{}}
 	for _, b := range bills {
-		s.Cents += b.Cents
-		s.Count++
-		s.ByKind[b.Kind] += b.Cents
-		s.Kinds[b.Kind]++
+		if cents, ok := euroCents(b.Cents, b.Currency); ok {
+			s.Cents += cents
+			s.Count++
+			s.ByKind[b.Kind] += cents
+			s.Kinds[b.Kind]++
+		} else {
+			s.Foreign++
+		}
 		if b.PaidDate == nil && b.Payment != Paid && b.Payment != DirectDebit {
 			s.Unpaid = append(s.Unpaid, b)
 		}
@@ -144,6 +151,16 @@ type repeatLine struct {
 	cents int64
 }
 
+// newRepeatLine is a line of the payments in euro; a payment of another currency is named and left
+// out of the sums.
+func newRepeatLine(text string, cents int64, currency string) repeatLine {
+	c, ok := euroCents(cents, currency)
+	if !ok {
+		return repeatLine{text: text + " — друга валута, не е в сбора"}
+	}
+	return repeatLine{text: text, cents: c}
+}
+
 // repeatText is the monthly and the yearly payments and what they make in a year: the standing
 // bills, and of the other kept bills that come monthly, quarterly or yearly the latest of each
 // issuer (a bill of an issuer with a standing bill of the same kind is that standing bill's).
@@ -162,7 +179,7 @@ func (s *Service) repeatText(ctx context.Context, userID uuid.UUID) (string, err
 		if st.Until != nil && st.Until.Before(today) {
 			continue // over
 		}
-		line := repeatLine{text: fmt.Sprintf("%s — %s (постоянна, %s)", title(Bill{Issuer: st.Issuer, Kind: st.Kind}), Money(st.Cents, st.Currency), standingWhen(st)), cents: st.Cents}
+		line := newRepeatLine(fmt.Sprintf("%s — %s (постоянна, %s)", title(Bill{Issuer: st.Issuer, Kind: st.Kind}), Money(st.Cents, st.Currency), standingWhen(st)), st.Cents, st.Currency)
 		if st.Month == 0 {
 			monthly = append(monthly, line)
 		} else {
@@ -194,7 +211,7 @@ func (s *Service) repeatText(ctx context.Context, userID uuid.UUID) (string, err
 			continue
 		}
 		seen[key] = true
-		line := repeatLine{text: fmt.Sprintf("%s — %s (последната сметка: %s)", title(b), Money(b.Cents, b.Currency), oneLineDate(b)), cents: b.Cents}
+		line := newRepeatLine(fmt.Sprintf("%s — %s (последната сметка: %s)", title(b), Money(b.Cents, b.Currency), oneLineDate(b)), b.Cents, b.Currency)
 		switch b.Repeat {
 		case "monthly":
 			monthly = append(monthly, line)
@@ -353,7 +370,7 @@ func countWord(n int) string {
 
 func totalText(q Question, s Sum) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Сметките%s за %s: общо %s (%s).\n", kindLabel(q.Kind), q.Period.Label, Money(s.Cents, "EUR"), countWord(s.Count))
+	fmt.Fprintf(&b, "Сметките%s за %s: общо %s (%s)%s.\n", kindLabel(q.Kind), q.Period.Label, Money(s.Cents, "EUR"), countWord(s.Count), foreignNote(s.Foreign))
 	if q.Kind == "" && len(s.ByKind) > 1 {
 		for _, k := range s.kindsByAmount() {
 			fmt.Fprintf(&b, "• %s — %s (%s)\n", KindNames[k], Money(s.ByKind[k], "EUR"), countWord(s.Kinds[k]))
@@ -369,9 +386,9 @@ func totalText(q Question, s Sum) string {
 func listText(q Question, s Sum) string {
 	var b strings.Builder
 	if q.AllTime {
-		fmt.Fprintf(&b, "Всички записани сметки%s (%s, общо %s):\n", kindLabel(q.Kind), countWord(s.Count), Money(s.Cents, "EUR"))
+		fmt.Fprintf(&b, "Всички записани сметки%s (%s, общо %s)%s:\n", kindLabel(q.Kind), countWord(s.Count), Money(s.Cents, "EUR"), foreignNote(s.Foreign))
 	} else {
-		fmt.Fprintf(&b, "Сметките%s за %s (%s, общо %s):\n", kindLabel(q.Kind), q.Period.Label, countWord(s.Count), Money(s.Cents, "EUR"))
+		fmt.Fprintf(&b, "Сметките%s за %s (%s, общо %s)%s:\n", kindLabel(q.Kind), q.Period.Label, countWord(s.Count), Money(s.Cents, "EUR"), foreignNote(s.Foreign))
 	}
 	for i, bill := range s.Bills {
 		if i == listedBills {
@@ -388,11 +405,8 @@ func writeUnpaid(b *strings.Builder, unpaid []Bill) {
 	if len(unpaid) == 0 {
 		return
 	}
-	var cents int64
-	for _, u := range unpaid {
-		cents += u.Cents
-	}
-	fmt.Fprintf(b, "Неплатени от тях: %s (%s) — „кои не съм платил?“ ги изрежда.\n", countWord(len(unpaid)), Money(cents, "EUR"))
+	cents, foreign := euroTotal(unpaid)
+	fmt.Fprintf(b, "Неплатени от тях: %s (%s%s) — „кои не съм платил?“ ги изрежда.\n", countWord(len(unpaid)), Money(cents, "EUR"), foreignNote(foreign))
 }
 
 // unpaidText lists the unpaid bills the question asks for. Each has the number of its place among
@@ -422,11 +436,8 @@ func unpaidText(unpaid []Bill, q Question, today reminders.Day) string {
 		return fmt.Sprintf("Нямаш неплатени сметки%s — всички записани са платени или се изтеглят автоматично (директен дебит).", kindLabel(q.Kind))
 	}
 	var b strings.Builder
-	var cents int64
-	for _, u := range keep {
-		cents += u.Cents
-	}
-	fmt.Fprintf(&b, "Неплатени%s: %s, общо %s:\n", kindLabel(q.Kind), countWord(len(keep)), Money(cents, "EUR"))
+	cents, foreign := euroTotal(keep)
+	fmt.Fprintf(&b, "Неплатени%s: %s, общо %s%s:\n", kindLabel(q.Kind), countWord(len(keep)), Money(cents, "EUR"), foreignNote(foreign))
 	for i, u := range keep {
 		line := fmt.Sprintf("%d. %s", place[i], oneLine(u, nil))
 		if u.DueDate != nil && dayOfTime(*u.DueDate).Before(today) {
@@ -462,8 +473,8 @@ func change(now, before int64) string {
 
 func compareText(q Question, a, b Sum) string {
 	var s strings.Builder
-	fmt.Fprintf(&s, "Сметките%s: %s — %s (%s); %s — %s (%s).\n", kindLabel(q.Kind),
-		q.Period.Label, Money(a.Cents, "EUR"), countWord(a.Count), q.Other.Label, Money(b.Cents, "EUR"), countWord(b.Count))
+	fmt.Fprintf(&s, "Сметките%s: %s — %s (%s)%s; %s — %s (%s)%s.\n", kindLabel(q.Kind),
+		q.Period.Label, Money(a.Cents, "EUR"), countWord(a.Count), foreignNote(a.Foreign), q.Other.Label, Money(b.Cents, "EUR"), countWord(b.Count), foreignNote(b.Foreign))
 	if a.Count > 0 && b.Count > 0 {
 		fmt.Fprintf(&s, "Разлика: %s спрямо %s.\n", change(a.Cents, b.Cents), q.Other.Label)
 	}

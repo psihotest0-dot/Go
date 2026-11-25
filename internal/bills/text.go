@@ -2,6 +2,7 @@ package bills
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -36,6 +37,45 @@ func Money(cents int64, currency string) string {
 
 func dayText(t time.Time) string {
 	return reminders.DateText(reminders.Day{Year: t.Year(), Month: t.Month(), Day: t.Day()})
+}
+
+// bgnPerEuro is the fixed rate of the lev to the euro (Bulgaria took the euro on 2026-01-01 at it).
+const bgnPerEuro = 1.95583
+
+// euroCents is a sum in euro cents; ok is false for a currency with no fixed rate to the euro, which
+// the sums leave out and name (foreignNote). Before 2026-11-25 every sum was added up as euro,
+// whatever its currency.
+func euroCents(cents int64, currency string) (int64, bool) {
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "", "EUR", "€":
+		return cents, true
+	case "BGN":
+		return int64(math.Round(float64(cents) / bgnPerEuro)), true
+	}
+	return 0, false
+}
+
+// euroTotal is the sum of the bills in euro, and how many of them it leaves out (another currency).
+func euroTotal(bills []Bill) (cents int64, foreign int) {
+	for _, b := range bills {
+		if c, ok := euroCents(b.Cents, b.Currency); ok {
+			cents += c
+		} else {
+			foreign++
+		}
+	}
+	return cents, foreign
+}
+
+// foreignNote says that n bills of another currency are not in the sum, "" when n is 0.
+func foreignNote(n int) string {
+	switch {
+	case n == 0:
+		return ""
+	case n == 1:
+		return " (+ 1 сметка в друга валута — не е в сбора)"
+	}
+	return fmt.Sprintf(" (+ %d сметки в друга валута — не са в сбора)", n)
 }
 
 // title is "Beispiel (телефон и интернет)".

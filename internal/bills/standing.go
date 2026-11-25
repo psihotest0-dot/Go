@@ -140,17 +140,47 @@ func dayOfWord(w string) int {
 	return 0
 }
 
-// RunStanding writes the payments of the standing bills until ctx ends (StandingPass).
+// keepProposals: a bill or a standing bill that was said back and never answered is forgotten after
+// a week (once a day, DropStaleProposals).
+const keepProposals = 7 * 24 * time.Hour
+
+// RunStanding writes the payments of the standing bills until ctx ends (StandingPass), and once a
+// day forgets the proposals nobody answered.
 func (s *Service) RunStanding(ctx context.Context) {
+	lastCleanup := time.Time{}
 	for {
 		if err := s.StandingPass(ctx); err != nil && ctx.Err() == nil {
 			slog.Error("the payments of the standing bills could not be written", "error", err)
+		}
+		if now := s.now(); now.Sub(lastCleanup) > 24*time.Hour {
+			lastCleanup = now
+			s.DropStaleProposals(ctx, now)
 		}
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(reportEvery):
 		}
+	}
+}
+
+// DropStaleProposals forgets the bills and the standing bills said back more than keepProposals ago
+// and never answered: a waiting proposal is kept by the next "да" of its conversation, and a week
+// later that "да" (to a reminder the server wrote there, say) is for something else. Before
+// 2026-11-25 the query for the bills was there and nothing called it.
+func (s *Service) DropStaleProposals(ctx context.Context, now time.Time) {
+	before := now.Add(-keepProposals)
+	bills, err := s.q.DeleteStaleProposedBills(ctx, before)
+	if err != nil {
+		slog.WarnContext(ctx, "old proposed bills could not be removed", "error", err)
+	}
+	standing, err := s.q.DeleteStaleProposedStanding(ctx, before)
+	if err != nil {
+		slog.WarnContext(ctx, "old proposed standing bills could not be removed", "error", err)
+	}
+	if bills+standing > 0 {
+		metrics.Bills.WithLabelValues("stale_dropped").Add(float64(bills + standing))
+		slog.InfoContext(ctx, "old proposals of bills nobody answered were removed", "bills", bills, "standing", standing)
 	}
 }
 

@@ -717,3 +717,29 @@ func TestPaidWithADayInTheMessageMarksTheBillOfItsKind(t *testing.T) {
 	// "1" is the day of the payment, not the first bill of the list (the insurance).
 	assert.Contains(t, e.say(t, "платих тока на 1-ви"), "Отбелязах като платена ✅ Beispiel Strom")
 }
+
+// A bill or a standing bill said back and never answered is forgotten after a week (the code
+// review of 2026-11-25: the query was there, nothing called it).
+func TestProposalsNobodyAnsweredAreForgottenAfterAWeek(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	e.reads(t, madeUpFields)
+	_, err := e.svc.Read(ctx, e.userID, e.session, "rechnung.pdf", []byte("%PDF-1.4 one"))
+	require.NoError(t, err)
+	e.readsStanding(t, bills.StandingFields{Issuer: "Beispiel Spiele Club", Kind: "subscription", Summary: "Абонамент за игри"})
+	_, handled := e.svc.ProposeStanding(ctx, e.userID, "other", "запише че на всяка 28 дата имам сметка от 14 евро към beispeil spiele club")
+	require.True(t, handled)
+
+	e.svc.DropStaleProposals(ctx, time.Now().Add(6*24*time.Hour))
+	bill, err := e.svc.Proposed(ctx, e.userID, e.session)
+	require.NoError(t, err)
+	assert.NotNil(t, bill, "six days: still waiting")
+
+	e.svc.DropStaleProposals(ctx, time.Now().Add(8*24*time.Hour))
+	bill, err = e.svc.Proposed(ctx, e.userID, e.session)
+	require.NoError(t, err)
+	assert.Nil(t, bill, "eight days: forgotten")
+	standing, err := e.svc.ProposedStanding(ctx, e.userID, "other")
+	require.NoError(t, err)
+	assert.Nil(t, standing)
+}

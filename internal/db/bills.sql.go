@@ -109,8 +109,22 @@ const deleteStaleProposedBills = `-- name: DeleteStaleProposedBills :execrows
 DELETE FROM bills WHERE status = 'proposed' AND created_at < $1
 `
 
+// A bill read and never answered: forgotten after a while, so that a "да" said much later to
+// something else does not keep it.
 func (q *Queries) DeleteStaleProposedBills(ctx context.Context, createdAt time.Time) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteStaleProposedBills, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteStaleProposedStanding = `-- name: DeleteStaleProposedStanding :execrows
+DELETE FROM standing_bills WHERE status = 'proposed' AND created_at < $1
+`
+
+func (q *Queries) DeleteStaleProposedStanding(ctx context.Context, createdAt time.Time) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteStaleProposedStanding, createdAt)
 	if err != nil {
 		return 0, err
 	}
