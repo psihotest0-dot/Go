@@ -141,7 +141,9 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 			metrics.TaskRuns.WithLabelValues(running.Kind, "stopped").Inc()
 			return "Спрях задачата. " + planStatusText(running) + "\nФайловете, които са готови, остават в папката."
 		}
-		if isYes(message) {
+		// A yes while it runs is for a bill, a reminder or a task asked about since, when one
+		// waits (waiting_proposals.go); else it is a second yes to this task.
+		if isYes(message) && !o.proposalWaits(ctx, userID, session) {
 			return "Вече работя по нея. " + planStatusText(running)
 		}
 	}
@@ -215,6 +217,8 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 		return ""
 	}
 	metrics.TaskRuns.WithLabelValues(kind, "proposed").Inc()
+	// The "да" that follows is for the task, not for a bill or a reminder that waited.
+	o.dropOtherProposals(ctx, userID, session, proposalTask)
 	return proposalText(kind, names, len(steps))
 }
 

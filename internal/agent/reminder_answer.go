@@ -197,6 +197,9 @@ func (o *Orchestrator) reminderAnswer(ctx context.Context, userID uuid.UUID, ses
 		return "Не успях да запазя напомнянето (грешка в базата). Опитай пак след малко. Нищо не е записано."
 	}
 	metrics.Reminders.WithLabelValues("proposed").Inc()
+	// The "да" that follows is for the reminder, not for a task or a bill that waited (the button of
+	// the reminders skips the answers that would have dropped them).
+	o.dropOtherProposals(ctx, userID, session, proposalReminder)
 	return reminders.ProposalText(draft, now, desk.loc, desk.hasTelegram(ctx, userID, session))
 }
 

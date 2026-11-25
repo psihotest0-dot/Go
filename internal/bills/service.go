@@ -176,6 +176,11 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 	if _, err := q.DropProposedStanding(ctx, db.DropProposedStandingParams{UserID: userID, SessionID: session}); err != nil {
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
 	}
+	// Nor for a task over many documents that waited for its yes.
+	task, err := dropWaitingTask(ctx, q, userID, session)
+	if err != nil {
+		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+	}
 	if _, err := q.ProposeBill(ctx, db.ProposeBillParams{
 		UserID: userID, SessionID: session, Issuer: b.Issuer, Kind: b.Kind, AmountCents: b.Cents, Currency: b.Currency,
 		InvoiceDate: nullDate(b.InvoiceDate), DueDate: nullDate(b.DueDate), PaidDate: nullDate(b.PaidDate),
@@ -188,6 +193,7 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
 	}
 	metrics.Bills.WithLabelValues("proposed").Inc()
+	countDroppedTask(task)
 	// The "да" that follows is for the bill: a reminder that waited in the conversation is dropped.
 	if s.reminders != nil {
 		_ = s.reminders.DropProposed(ctx, userID, session)
@@ -197,6 +203,28 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 		same = append(same, fromRow(r))
 	}
 	return ProposalText(name, b, same, s.now(), s.loc)
+}
+
+// dropWaitingTask forgets a task over many documents that waits for its yes in the conversation
+// (agent/waiting_proposals.go: a "да" is for the question asked last, and an upload asks a new
+// one). It gives the kind of the task it dropped, "" when none waited.
+func dropWaitingTask(ctx context.Context, q *db.Queries, userID uuid.UUID, session string) (string, error) {
+	task, err := q.GetProposedTaskPlan(ctx, db.GetProposedTaskPlanParams{UserID: userID, SessionID: session})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return task.Kind, q.DropProposedTaskPlan(ctx, db.DropProposedTaskPlanParams{UserID: userID, SessionID: session})
+}
+
+// countDroppedTask counts a task dropped by dropWaitingTask, once its transaction is committed.
+func countDroppedTask(kind string) {
+	if kind != "" {
+		metrics.TaskRuns.WithLabelValues(kind, "superseded").Inc()
+		slog.Info("a proposal that waited was dropped by a newer question", "proposal", "task", "kept", "bill")
+	}
 }
 
 // readerFor picks the reader of a file by its name and its first bytes.

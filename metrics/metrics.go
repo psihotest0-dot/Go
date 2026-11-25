@@ -318,7 +318,7 @@ var (
 	// stopped (the person stopped it), done (the report is in the conversation).
 	TaskRuns = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "task_runs_total",
-		Help: "Tasks the server walks, by kind and event (proposed, started, declined, stopped, done).",
+		Help: "Tasks the server walks, by kind and event (proposed, started, declined, superseded, stopped, done).",
 	}, []string{"kind", "event"})
 
 	// Reminders counts the reminders by event (plan item И8): proposed (said back to the person),
@@ -327,7 +327,7 @@ var (
 	// sent_on_time, sent_late.
 	Reminders = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "reminders_total",
-		Help: "Reminders by event (proposed, corrected_*, kept, declined, problem_*, extract_failed, listed, cancelled, sent_on_time, sent_late).",
+		Help: "Reminders by event (proposed, corrected_*, kept, declined, superseded, problem_*, extract_failed, listed, cancelled, sent_on_time, sent_late).",
 	}, []string{"event"})
 
 	// Bills counts the bills read from documents by event: proposed, kept, reminder (a reminder of
@@ -335,7 +335,7 @@ var (
 	// amount_missing, extract_failed, dropped_<date> (a date the model gave that the text does not hold).
 	Bills = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "bills_total",
-		Help: "Bills read from documents by event (proposed, kept, reminder, declined, paid, same_file, unread, not_a_bill, amount_missing, dropped_*).",
+		Help: "Bills read from documents by event (proposed, kept, reminder, declined, superseded, paid, same_file, unread, not_a_bill, amount_missing, dropped_*).",
 	}, []string{"event"})
 
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the

@@ -387,6 +387,10 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	if _, err := q.DropProposedStanding(ctx, db.DropProposedStandingParams{UserID: userID, SessionID: session}); err != nil {
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
 	}
+	task, err := dropWaitingTask(ctx, q, userID, session)
+	if err != nil {
+		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
+	}
 	row, err := q.ProposeStanding(ctx, db.ProposeStandingParams{UserID: userID, SessionID: session, Issuer: st.Issuer, Kind: st.Kind,
 		AmountCents: st.Cents, Currency: st.Currency, Day: int32(st.Day), Month: int32(st.Month), Payment: st.Payment, Summary: st.Summary})
 	if err != nil {
@@ -402,6 +406,7 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	if err := tx.Commit(); err != nil {
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
 	}
+	countDroppedTask(task)
 	if s.reminders != nil {
 		_ = s.reminders.DropProposed(ctx, userID, session)
 	}
