@@ -58,6 +58,8 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 			_ = o.bills.Drop(ctx, userID, session)
 			metrics.Bills.WithLabelValues("declined").Inc()
 			return "Добре, не записвам сметката."
+		case isNoise(message):
+			return stillWaiting
 		default:
 			// Something else: the bill is not left to be kept by a later "да".
 			_ = o.bills.Drop(ctx, userID, session)
@@ -81,6 +83,8 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 			_ = o.bills.DropStanding(ctx, userID, session)
 			metrics.Bills.WithLabelValues("standing_declined").Inc()
 			return "Добре, не записвам постоянната сметка."
+		case isNoise(message):
+			return stillWaiting
 		default:
 			_ = o.bills.DropStanding(ctx, userID, session)
 			metrics.Bills.WithLabelValues("standing_declined").Inc()
@@ -111,6 +115,19 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 		}
 	}
 	return ""
+}
+
+// stillWaiting is the answer to a word that is neither yes nor no while a bill waits for one.
+const stillWaiting = "Сметката по-горе още чака — кажи „да“, за да я запиша, или „не“."
+
+// noiseMaxRunes: "Бе", "хм", "ок?" (2026-11-25, 18:31: "Бе" before "Не" dropped the bill, and the
+// "Не" then went to the model) are no answer to the proposal, and do not drop it.
+const noiseMaxRunes = 3
+
+// isNoise tells whether a message is a word too short to be about anything.
+func isNoise(message string) bool {
+	m := strings.TrimSpace(message)
+	return m != "" && utf8.RuneCountInString(m) <= noiseMaxRunes && !isYes(m) && !isNo(m)
 }
 
 // incompleteStandingRequest is the person's request the code last answered as incomplete

@@ -304,6 +304,35 @@ func TestTheMonthlyAndTheYearlyPaymentsSideBySide(t *testing.T) {
 	assert.NotContains(t, out, "наем")
 }
 
+// 2026-11-25, 18:33-18:35 (Telegram): the last day of a lease was not kept, and "до 01.06.2028"
+// became "денят 1"; "Бе" dropped the bill that waited.
+func TestAStandingBillHasALastDay(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	e.readsStanding(t, bills.StandingFields{Kind: "car", Summary: "Лизинг за автомобил"})
+	out := e.say(t, "Запиши че всеки месец на 1во число до 01.05.2028 включително ,плащам 240,00 евро лизинг за автомобил,автоматично ,без напомняне")
+	assert.Contains(t, out, "240,00 € всеки месец на 1-о число до 01.05.2028 включително — изтегля се автоматично")
+	assert.Contains(t, out, "без напомняне")
+
+	assert.Contains(t, e.say(t, "Бе"), "още чака")
+	out = e.say(t, "Можеш ли да добавиш че е плащането е до 01.06.2028")
+	assert.Contains(t, out, "Поправих по твоите думи: до четвъртък, 01.06.2028 включително")
+	assert.Contains(t, out, "всеки месец на 1-о число до 01.06.2028 включително")
+	assert.NotContains(t, out, "денят")
+	require.Contains(t, e.say(t, "да"), "Записах постоянната сметка ✅")
+	kept, err := e.svc.KeptStanding(ctx, e.userID)
+	require.NoError(t, err)
+	require.Len(t, kept, 1)
+	require.NotNil(t, kept[0].Until)
+	assert.Equal(t, reminders.Day{Year: 2028, Month: 6, Day: 1}, *kept[0].Until)
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+
+	// After its last day it is no monthly payment any more.
+	assert.Contains(t, e.say(t, "колко са месечните и годишните плащания?"), "240,00 €")
+	bills.SetClock(e.svc, func() time.Time { return time.Date(2028, 7, 1, 12, 0, 0, 0, reminders.Location()) })
+	assert.Contains(t, e.say(t, "колко са месечните и годишните плащания?"), "Нямам записани месечни или годишни плащания")
+}
+
 // readsStanding makes the model name the issuer and the kind of a standing bill.
 func (e *billEnv) readsStanding(t *testing.T, f bills.StandingFields) {
 	t.Helper()
@@ -455,6 +484,18 @@ func TestTheAnswerToAProposalChangesIt(t *testing.T) {
 	out = e.say(t, "какви сметки имам записани")
 	assert.Contains(t, out, "Всички записани сметки (1 сметка, общо 87,00 €)")
 	assert.Contains(t, out, "15.09.2027")
+}
+
+// "до" a day, said of a bill from a document, is its due day.
+func TestUntilADayIsTheDueDayOfADocument(t *testing.T) {
+	e := newBillEnv(t)
+	f := madeUpFields
+	f.DueDate = ""
+	e.reads(t, f)
+	_, err := e.svc.Read(context.Background(), e.userID, e.session, "rechnung.pdf", []byte("%PDF-1.4 until"))
+	require.NoError(t, err)
+	out := e.say(t, "платима е до 15.12.2026")
+	assert.Contains(t, out, "Срок: вторник, 15.12.2026")
 }
 
 // A change and a yes in one answer: the bill is kept with the change.

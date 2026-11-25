@@ -68,6 +68,8 @@ type Standing struct {
 	RemindBefore int
 	// Since is the first day a payment is written for: the day it was kept.
 	Since reminders.Day
+	// Until is the last day a payment may fall on ("до 01.05.2028 включително"), nil for none.
+	Until *reminders.Day
 }
 
 var (
@@ -93,6 +95,10 @@ var (
 
 	oneDecimal = regexp.MustCompile(`[.,]\d$`)
 
+	// untilWords: the last day of a bill that comes back - "до 01.05.2028", "последното плащане е на
+	// 01.05.2028", "until 1.7.2027".
+	untilWords = regexp.MustCompile(`(?i)(?:(?:^|[^\p{L}])(?:до|until|till)|последн\p{L}*\s+(?:плащане|вноска)\s+(?:е\s+)?(?:на\s+)?)\s*(\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2}))`)
+
 	// standingDayWord: the day as a word, "всяко първо число", "на десето".
 	standingDayWord = regexp.MustCompile(`(?i)(?:на|всеки|всяка|всяко|в)\s+(\p{L}+)\s+(?:число|дата|ден)`)
 )
@@ -105,6 +111,19 @@ var dayWords = []struct {
 	{"двадесет и пе", 25}, {"двадесет и пър", 21}, {"тридесет и пър", 31}, {"последн", 31},
 	{"петнадесет", 15}, {"двадесет", 20}, {"тридесет", 30}, {"десет", 10},
 	{"първ", 1}, {"втор", 2}, {"трет", 3}, {"четвърт", 4}, {"пет", 5}, {"шест", 6}, {"седм", 7}, {"осм", 8}, {"девет", 9},
+}
+
+// untilDate is the last day a message names, nil for none.
+func untilDate(m string) *time.Time {
+	u := untilWords.FindStringSubmatch(m)
+	if u == nil {
+		return nil
+	}
+	t, ok := parseDate(u[1])
+	if !ok {
+		return nil
+	}
+	return &t
 }
 
 // dayOfWord is the day a word names, 0 for none.
@@ -144,6 +163,8 @@ type StandingRequest struct {
 	Missing  []string
 	// Several is the number of amounts when the message names more than one bill.
 	Several int
+	// Until is the last day ("до 01.05.2028 включително"), nil for none.
+	Until *time.Time
 }
 
 // ReadStandingRequest tells whether a message asks to keep a bill that comes back every month or
@@ -157,6 +178,9 @@ func ReadStandingRequest(message string) (r StandingRequest, ok bool) {
 	if !(monthly || yearly) || !standingBillWords.MatchString(m) || !standingSaveWords.MatchString(m) {
 		return r, false
 	}
+	// The last day (2026-11-25, 18:33: "… до 01.05.2028 включително, плащам … лизинг"); its digits
+	// are not the day of the month.
+	r.Until = untilDate(m)
 	// The amount, and the place it takes, so that its digits are not read as the day.
 	amountAt := []int{-1, -1}
 	if a := standingAmount.FindStringSubmatchIndex(m); a != nil {
@@ -173,7 +197,7 @@ func ReadStandingRequest(message string) (r StandingRequest, ok bool) {
 			amountAt = []int{a[0], a[1]}
 		}
 	}
-	for _, d := range standingDayWords.FindAllStringSubmatchIndex(m, -1) {
+	for _, d := range standingDayWords.FindAllStringSubmatchIndex(standingWithoutDates(m), -1) {
 		if d[0] < amountAt[1] && amountAt[0] < d[1] {
 			continue // the digits of the amount
 		}
@@ -345,6 +369,7 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	}
 	st := Standing{Issuer: standingIssuer(f.Issuer, message), Kind: standingKind(f.Kind, message), Cents: r.Cents, Currency: r.Currency,
 		Day: r.Day, Month: r.Month, Payment: r.Payment, Summary: clean(f.Summary, 120), RemindBefore: 1}
+	st.Until = dayPtr(r.Until)
 	// "… изтегля се автоматично, без напомняне" in the request itself.
 	if c, ok := ReadCorrection(message); ok && c.RemindBefore != nil {
 		st.RemindBefore = *c.RemindBefore
@@ -368,9 +393,9 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 		slog.WarnContext(ctx, "a standing bill could not be proposed", "err", err)
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
 	}
-	if st.RemindBefore != 1 {
+	if st.RemindBefore != 1 || st.Until != nil {
 		if _, err := q.UpdateProposedStanding(ctx, db.UpdateProposedStandingParams{ID: row.ID, UserID: userID, AmountCents: st.Cents,
-			Payment: st.Payment, RemindDaysBefore: int32(st.RemindBefore), Day: int32(st.Day), Month: int32(st.Month)}); err != nil {
+			Payment: st.Payment, RemindDaysBefore: int32(st.RemindBefore), Day: int32(st.Day), Month: int32(st.Month), Until: untilParam(st.Until)}); err != nil {
 			return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
 		}
 	}
@@ -447,8 +472,12 @@ func (s *Service) KeepStanding(ctx context.Context, userID uuid.UUID, session st
 }
 
 func standingFromRow(r db.StandingBill, loc *time.Location) Standing {
-	return Standing{ID: r.ID, Issuer: r.Issuer, Kind: r.Kind, Cents: r.AmountCents, Currency: r.Currency, Day: int(r.Day), Month: int(r.Month),
+	st := Standing{ID: r.ID, Issuer: r.Issuer, Kind: r.Kind, Cents: r.AmountCents, Currency: r.Currency, Day: int(r.Day), Month: int(r.Month),
 		Payment: r.Payment, Summary: r.Summary, RemindBefore: int(r.RemindDaysBefore), Since: reminders.DayOf(r.CreatedAt, loc)}
+	if r.Until.Valid {
+		st.Until = dayPtr(&r.Until.Time)
+	}
+	return st
 }
 
 // standingDayIn is the day of a standing bill in a month (31 is the last day of a shorter one).
@@ -473,8 +502,12 @@ func nextStandingDay(st Standing, from reminders.Day) reminders.Day {
 	return d
 }
 
-// standingDays are the days of the bill from its first day up to to, in order.
+// standingDays are the days of the bill from its first day up to to, and not after its last day,
+// in order.
 func standingDays(st Standing, to reminders.Day) []reminders.Day {
+	if st.Until != nil && st.Until.Before(to) {
+		to = *st.Until
+	}
 	var out []reminders.Day
 	for d := nextStandingDay(st, st.Since); !to.Before(d); d = nextStandingDay(st, d.AddDays(1)) {
 		out = append(out, d)
@@ -719,15 +752,47 @@ func pickStanding(all []Standing, message string) []int {
 	return best
 }
 
-// standingWhen is "всеки месец на 28-мо число" / "всяка година на 15 март".
+// standingWhen is "всеки месец на 28-мо число" / "всяка година на 15 март", with "до …" when it has
+// a last day.
 func standingWhen(st Standing) string {
-	if st.Month == 0 {
-		if st.Day >= 29 {
-			return fmt.Sprintf("всеки месец на %d-о число (в по-кратък месец — последния ден)", st.Day)
-		}
-		return fmt.Sprintf("всеки месец на %d-о число", st.Day)
+	var s string
+	switch {
+	case st.Month != 0:
+		s = fmt.Sprintf("всяка година на %d %s", st.Day, monthNamesBG[st.Month])
+	case st.Day >= 29:
+		s = fmt.Sprintf("всеки месец на %d-о число (в по-кратък месец — последния ден)", st.Day)
+	default:
+		s = fmt.Sprintf("всеки месец на %d-о число", st.Day)
 	}
-	return fmt.Sprintf("всяка година на %d %s", st.Day, monthNamesBG[st.Month])
+	if st.Until != nil {
+		s += fmt.Sprintf(" до %02d.%02d.%d включително", st.Until.Day, int(st.Until.Month), st.Until.Year)
+	}
+	return s
+}
+
+// dayPtr is the day of a date, nil for nil.
+func dayPtr(t *time.Time) *reminders.Day {
+	if t == nil {
+		return nil
+	}
+	d := reminders.Day{Year: t.Year(), Month: t.Month(), Day: t.Day()}
+	return &d
+}
+
+// untilParam is the last day for the database.
+func untilParam(d *reminders.Day) sql.NullTime {
+	if d == nil {
+		return sql.NullTime{}
+	}
+	return sql.NullTime{Time: d.UTC(), Valid: true}
+}
+
+// standingDates: dates in a message, which are no day of the month.
+var standingDates = regexp.MustCompile(`\d{1,2}\.\d{1,2}\.(?:\d{4}|\d{2})`)
+
+// standingWithoutDates is the message with its dates blanked out, as long as it was.
+func standingWithoutDates(m string) string {
+	return standingDates.ReplaceAllStringFunc(m, func(d string) string { return strings.Repeat("#", len(d)) })
 }
 
 // standingLine is "Beispiel Spiele Club (абонаменти), 14,00 € всеки месец на 28-о число".

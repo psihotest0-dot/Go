@@ -39,6 +39,9 @@ type Correction struct {
 	Currency     string
 	Payment      string
 	RemindBefore *int
+	// Until is a day said with "до" ("плащането е до 01.06.2028"): the last day of a standing bill,
+	// the due day of a bill from a document.
+	Until *time.Time
 }
 
 var (
@@ -92,7 +95,9 @@ func ReadCorrection(message string) (c Correction, ok bool) {
 			c.RemindBefore, changed = &n, true
 		}
 	}
-	if d := correctionDate.FindStringSubmatch(m); d != nil {
+	if u := untilDate(m); u != nil {
+		c.Until, changed = u, true
+	} else if d := correctionDate.FindStringSubmatch(m); d != nil {
 		if t, okD := parseDate(d[1]); okD {
 			c.Due, changed = &t, true
 		}
@@ -126,6 +131,9 @@ func (c Correction) what() string {
 	if c.Due != nil {
 		parts = append(parts, "срок "+dayText(*c.Due))
 	}
+	if c.Until != nil {
+		parts = append(parts, "до "+dayText(*c.Until)+" включително")
+	}
 	if c.Cents > 0 {
 		parts = append(parts, "сума "+Money(c.Cents, c.Currency))
 	}
@@ -143,6 +151,10 @@ func (c Correction) what() string {
 func (s *Service) CorrectBill(ctx context.Context, userID uuid.UUID, session string, p Bill, c Correction) string {
 	if c.Due != nil {
 		p.DueDate = c.Due
+	}
+	if c.Until != nil && c.Due == nil {
+		// "платима до 15.12.2026" of a bill from a document is its due day.
+		p.DueDate = c.Until
 	}
 	if c.Cents > 0 {
 		p.Cents = c.Cents
@@ -192,8 +204,11 @@ func (s *Service) CorrectStanding(ctx context.Context, userID uuid.UUID, session
 	if c.RemindBefore != nil {
 		p.RemindBefore = *c.RemindBefore
 	}
+	if c.Until != nil {
+		p.Until = dayPtr(c.Until)
+	}
 	row, err := s.q.UpdateProposedStanding(ctx, db.UpdateProposedStandingParams{ID: p.ID, UserID: userID, AmountCents: p.Cents,
-		Payment: p.Payment, RemindDaysBefore: int32(p.RemindBefore), Day: int32(p.Day), Month: int32(p.Month)})
+		Payment: p.Payment, RemindDaysBefore: int32(p.RemindBefore), Day: int32(p.Day), Month: int32(p.Month), Until: untilParam(p.Until)})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "Тази сметка вече е записана (или отказана)."
 	}

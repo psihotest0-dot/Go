@@ -157,7 +157,11 @@ func (s *Service) repeatText(ctx context.Context, userID uuid.UUID) (string, err
 		return "", err
 	}
 	var monthly, quarterly, yearly []repeatLine
+	today := reminders.DayOf(s.now(), s.loc)
 	for _, st := range standing {
+		if st.Until != nil && st.Until.Before(today) {
+			continue // over
+		}
 		line := repeatLine{text: fmt.Sprintf("%s — %s (постоянна, %s)", title(Bill{Issuer: st.Issuer, Kind: st.Kind}), Money(st.Cents, st.Currency), standingWhen(st)), cents: st.Cents}
 		if st.Month == 0 {
 			monthly = append(monthly, line)

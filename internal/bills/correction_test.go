@@ -38,12 +38,18 @@ func TestReadCorrection(t *testing.T) {
 		require.NotNil(t, c.RemindBefore, m)
 		assert.Equal(t, -1, *c.RemindBefore, m)
 	}
+	// "до" a day is the last day, not a due day (2026-11-25, 18:35).
+	c, ok := ReadCorrection("Можеш ли да добавиш че е плащането е до 01.06.2028")
+	assert.True(t, ok)
+	assert.Nil(t, c.Due)
+	require.NotNil(t, c.Until)
+	assert.Equal(t, time.Date(2028, 6, 1, 0, 0, 0, 0, time.UTC), *c.Until)
 	for _, m := range []string{"да", "не", "Малко по рано", "Благодаря", "добре"} {
 		_, ok := ReadCorrection(m)
 		assert.False(t, ok, m)
 	}
 	// "да" inside a request is no yes.
-	c, _ := ReadCorrection("напомни ми да платя 3 дни преди срока")
+	c, _ = ReadCorrection("напомни ми да платя 3 дни преди срока")
 	assert.False(t, c.Yes)
 }
 

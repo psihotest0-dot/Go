@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/reminders"
 )
@@ -46,6 +47,18 @@ func TestReadStandingRequest(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, 2, r.Several)
 
+	// The last day (2026-11-25, 18:33): its digits are no day of the month.
+	r, ok = ReadStandingRequest("Запиши че всеки месец на 1во число до 01.05.2028 включително ,плащам 240,00 евро лизинг за автомобил,автоматично ,без напомняне")
+	assert.True(t, ok)
+	require.NotNil(t, r.Until)
+	assert.Equal(t, time.Date(2028, 5, 1, 0, 0, 0, 0, time.UTC), *r.Until)
+	assert.Equal(t, 1, r.Day)
+	assert.Equal(t, int64(24000), r.Cents)
+	assert.Equal(t, DirectDebit, r.Payment)
+	r, _ = ReadStandingRequest("запиши, че последното плащане е на 01.03.2027, всеки месец на 15-ти плащам 90 € вноска")
+	require.NotNil(t, r.Until)
+	assert.Equal(t, 15, r.Day, "not the 1 of the date")
+
 	// Asked for, but not complete: the code says what is missing.
 	r, ok = ReadStandingRequest("запиши, че всеки месец плащам абонамент за игри")
 	assert.True(t, ok)
@@ -81,6 +94,12 @@ func TestTheDaysOfAStandingBill(t *testing.T) {
 	phone := Standing{Day: 10, Since: day(2026, 11, 25)}
 	assert.Equal(t, day(2026, 12, 10), nextStandingDay(phone, phone.Since))
 	assert.Empty(t, standingDays(phone, day(2026, 12, 9)), "nothing before the day it was kept")
+
+	// A last day: no day after it.
+	until := day(2027, 2, 1)
+	lease := Standing{Day: 1, Since: day(2026, 11, 25), Until: &until}
+	assert.Equal(t, []reminders.Day{day(2026, 12, 1), day(2027, 1, 1), day(2027, 2, 1)}, standingDays(lease, day(2027, 6, 1)))
+	assert.Equal(t, "всеки месец на 1-о число до 01.02.2027 включително", standingWhen(lease))
 
 	yearly := Standing{Day: 15, Month: 3, Since: day(2026, 11, 25)}
 	assert.Equal(t, day(2027, 3, 15), nextStandingDay(yearly, yearly.Since))

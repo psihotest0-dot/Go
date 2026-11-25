@@ -127,6 +127,6 @@ WHERE id = $1 AND user_id = $2 AND status = 'proposed'
 RETURNING *;
 
 -- name: UpdateProposedStanding :one
-UPDATE standing_bills SET amount_cents = $3, payment = $4, remind_days_before = $5, day = $6, month = $7, updated_at = now()
+UPDATE standing_bills SET amount_cents = $3, payment = $4, remind_days_before = $5, day = $6, month = $7, until = sqlc.narg(until)::date, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'proposed'
 RETURNING *;

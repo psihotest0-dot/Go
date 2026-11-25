@@ -14,7 +14,7 @@ import (
 )
 
 const allKeptStanding = `-- name: AllKeptStanding :many
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before FROM standing_bills WHERE status = 'kept' ORDER BY id
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until FROM standing_bills WHERE status = 'kept' ORDER BY id
 `
 
 func (q *Queries) AllKeptStanding(ctx context.Context) ([]StandingBill, error) {
@@ -42,6 +42,7 @@ func (q *Queries) AllKeptStanding(ctx context.Context) ([]StandingBill, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RemindDaysBefore,
+			&i.Until,
 		); err != nil {
 			return nil, err
 		}
@@ -206,7 +207,7 @@ func (q *Queries) GetProposedBill(ctx context.Context, arg GetProposedBillParams
 }
 
 const getProposedStanding = `-- name: GetProposedStanding :one
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before FROM standing_bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until FROM standing_bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
 `
 
 type GetProposedStandingParams struct {
@@ -233,6 +234,7 @@ func (q *Queries) GetProposedStanding(ctx context.Context, arg GetProposedStandi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RemindDaysBefore,
+		&i.Until,
 	)
 	return i, err
 }
@@ -352,7 +354,7 @@ func (q *Queries) KeepBill(ctx context.Context, arg KeepBillParams) (Bill, error
 const keepStanding = `-- name: KeepStanding :one
 UPDATE standing_bills SET status = 'kept', updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'proposed'
-RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until
 `
 
 type KeepStandingParams struct {
@@ -380,6 +382,7 @@ func (q *Queries) KeepStanding(ctx context.Context, arg KeepStandingParams) (Sta
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RemindDaysBefore,
+		&i.Until,
 	)
 	return i, err
 }
@@ -549,7 +552,7 @@ func (q *Queries) ListKeptBills(ctx context.Context, arg ListKeptBillsParams) ([
 }
 
 const listKeptStanding = `-- name: ListKeptStanding :many
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before FROM standing_bills WHERE user_id = $1 AND status = 'kept' ORDER BY id
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until FROM standing_bills WHERE user_id = $1 AND status = 'kept' ORDER BY id
 `
 
 func (q *Queries) ListKeptStanding(ctx context.Context, userID uuid.UUID) ([]StandingBill, error) {
@@ -577,6 +580,7 @@ func (q *Queries) ListKeptStanding(ctx context.Context, userID uuid.UUID) ([]Sta
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.RemindDaysBefore,
+			&i.Until,
 		); err != nil {
 			return nil, err
 		}
@@ -681,7 +685,7 @@ func (q *Queries) ProposeBill(ctx context.Context, arg ProposeBillParams) (Bill,
 const proposeStanding = `-- name: ProposeStanding :one
 INSERT INTO standing_bills (user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed')
-RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until
 `
 
 type ProposeStandingParams struct {
@@ -727,6 +731,7 @@ func (q *Queries) ProposeStanding(ctx context.Context, arg ProposeStandingParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RemindDaysBefore,
+		&i.Until,
 	)
 	return i, err
 }
@@ -1008,19 +1013,20 @@ func (q *Queries) UpdateProposedBill(ctx context.Context, arg UpdateProposedBill
 }
 
 const updateProposedStanding = `-- name: UpdateProposedStanding :one
-UPDATE standing_bills SET amount_cents = $3, payment = $4, remind_days_before = $5, day = $6, month = $7, updated_at = now()
+UPDATE standing_bills SET amount_cents = $3, payment = $4, remind_days_before = $5, day = $6, month = $7, until = $8::date, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'proposed'
-RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until
 `
 
 type UpdateProposedStandingParams struct {
-	ID               int64     `json:"id"`
-	UserID           uuid.UUID `json:"user_id"`
-	AmountCents      int64     `json:"amount_cents"`
-	Payment          string    `json:"payment"`
-	RemindDaysBefore int32     `json:"remind_days_before"`
-	Day              int32     `json:"day"`
-	Month            int32     `json:"month"`
+	ID               int64        `json:"id"`
+	UserID           uuid.UUID    `json:"user_id"`
+	AmountCents      int64        `json:"amount_cents"`
+	Payment          string       `json:"payment"`
+	RemindDaysBefore int32        `json:"remind_days_before"`
+	Day              int32        `json:"day"`
+	Month            int32        `json:"month"`
+	Until            sql.NullTime `json:"until"`
 }
 
 func (q *Queries) UpdateProposedStanding(ctx context.Context, arg UpdateProposedStandingParams) (StandingBill, error) {
@@ -1032,6 +1038,7 @@ func (q *Queries) UpdateProposedStanding(ctx context.Context, arg UpdateProposed
 		arg.RemindDaysBefore,
 		arg.Day,
 		arg.Month,
+		arg.Until,
 	)
 	var i StandingBill
 	err := row.Scan(
@@ -1050,6 +1057,7 @@ func (q *Queries) UpdateProposedStanding(ctx context.Context, arg UpdateProposed
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RemindDaysBefore,
+		&i.Until,
 	)
 	return i, err
 }
