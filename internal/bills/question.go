@@ -80,11 +80,14 @@ var monthsBG = map[string]time.Month{"януари": 1, "февруари": 2, "
 
 var monthNamesBG = [...]string{"", "януари", "февруари", "март", "април", "май", "юни", "юли", "август", "септември", "октомври", "ноември", "декември"}
 
-// kindWords name a kind in the person's words.
+// kindWords name a kind in the person's words; the first that matches is the kind. What is paid
+// comes before what it is for: a loan or a lease ("лизинг за автомобил", "кредит за колата", 2026-11-25:
+// both were "car") and a tax ("данък за колата") come before the car and the phone.
 var kindWords = []struct {
 	re   *regexp.Regexp
 	kind string
 }{
+	{regexp.MustCompile(`(?i)(?:кредит\p{L}*|лизинг\p{L}*|заем\p{L}*|darlehen|kredit|leasing|finanzierung)`), "loan"},
 	{regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:ток|тока|електричеств\p{L}*|strom)(?:[^\p{L}]|$)`), "electricity"},
 	{regexp.MustCompile(`(?i)(?:телефон\p{L}*|интернет\p{L}*|мобилн\p{L}*|gsm)`), "phone_internet"},
 	{regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:газ|газта|газа)(?:[^\p{L}]|$)`), "gas"},
@@ -95,11 +98,10 @@ var kindWords = []struct {
 	{regexp.MustCompile(`(?i)(?:зъболекар\p{L}*|зъбо\p{L}*|zahnarzt)`), "dentist"},
 	{regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:лекар\p{L}*|доктор\p{L}*|болниц\p{L}*|arzt)`), "doctor"},
 	{regexp.MustCompile(`(?i)(?:аптек\p{L}*|лекарств\p{L}*|apotheke)`), "pharmacy"},
-	{regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:кола|колата|автомобил\p{L}*|бензин\p{L}*|гориво)(?:[^\p{L}]|$)`), "car"},
 	{regexp.MustCompile(`(?i)(?:данъ\p{L}*|такс\p{L}*|steuer)`), "tax"},
+	{regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:кола|колата|автомобил\p{L}*|бензин\p{L}*|гориво)(?:[^\p{L}]|$)`), "car"},
 	{regexp.MustCompile(`(?i)(?:абонамент\p{L}*)`), "subscription"},
 	{regexp.MustCompile(`(?i)(?:покупк\p{L}*|пазар\p{L}*)`), "shopping"},
-	{regexp.MustCompile(`(?i)(?:кредит\p{L}*|лизинг\p{L}*|заем\p{L}*|darlehen|kredit|leasing|finanzierung)`), "loan"},
 }
 
 func monthPeriod(year int, m time.Month) Period {

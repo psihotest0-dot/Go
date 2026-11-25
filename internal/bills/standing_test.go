@@ -115,6 +115,27 @@ func TestTheIssuerAndTheKindOfAStandingBill(t *testing.T) {
 	assert.Equal(t, "other", standingKind("made_up", msg))
 }
 
+// What is paid names the kind, not what it is for (the code review of 2026-11-25: a car lease and a
+// car credit were "car").
+func TestTheKindIsWhatIsPaidNotWhatItIsFor(t *testing.T) {
+	for m, want := range map[string]string{
+		"запиши, че всеки месец на 1-во до 01.05.2028 включително плащам 250 € лизинг за автомобил, изтегля се автоматично": "loan",
+		"запиши, че всеки месец на 5-ти плащам 300 € кредит за колата":                                                      "loan",
+		"запиши, че всеки месец на 5-ти плащам 30 € лизинг на телефона":                                                     "loan",
+		"запиши, че всяка година на 1 април плащам 120 € данък за колата":                                                   "tax",
+		"запиши, че всяка година на 1 април плащам 400 € застраховка на колата":                                             "insurance",
+		"запиши, че всеки месец на 10-то плащам 40 € за телефон":                                                            "phone_internet",
+		"запиши, че всеки месец на 10-то плащам 80 € за бензин":                                                             "car",
+	} {
+		assert.Equal(t, want, standingKind("other", m), m)
+	}
+	q, ok := ReadQuestion("колко платих за лизинга на колата тази година?", reminders.Day{Year: 2026, Month: 11, Day: 25})
+	require.True(t, ok)
+	assert.Equal(t, "loan", q.Kind)
+	unpaid := []Bill{{ID: 1, Issuer: "Autohaus", Kind: "car", Cents: 8000}, {ID: 2, Issuer: "Bank", Kind: "loan", Cents: 25000}}
+	assert.Equal(t, []int{1}, pickBills(unpaid, "платих лизинга за колата"))
+}
+
 func TestAQuestionWhereTheBillsAreKept(t *testing.T) {
 	today := reminders.Day{Year: 2026, Month: 11, Day: 25}
 	for _, m := range []string{
