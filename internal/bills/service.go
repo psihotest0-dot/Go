@@ -276,7 +276,7 @@ func datePtr(n sql.NullTime) *time.Time {
 func fromRow(r db.Bill) Bill {
 	return Bill{ID: r.ID, Issuer: r.Issuer, Kind: r.Kind, Cents: r.AmountCents, Currency: r.Currency,
 		InvoiceDate: datePtr(r.InvoiceDate), DueDate: datePtr(r.DueDate), PaidDate: datePtr(r.PaidDate),
-		Payment: r.Payment, Repeat: r.Repeat, Summary: r.Summary, FileName: r.FileName}
+		Payment: r.Payment, Repeat: r.Repeat, Summary: r.Summary, FileName: r.FileName, RemindBefore: int(r.RemindDaysBefore)}
 }
 
 // unpaidLimit bounds the bills "платих …" is matched against.

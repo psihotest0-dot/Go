@@ -86,19 +86,28 @@ type ReminderPlan struct {
 	Why  string
 }
 
-// PlanReminder is the reminder of a bill's due day: 09:00 the day before, or 09:00 of the day when
-// the day before has passed; none for a bill that is paid, has no due day, or whose day has passed.
+// PlanReminder is the reminder of a bill's due day: 09:00 RemindBefore days before it (the day
+// before unless the person said otherwise), else the day before, else the day itself, whichever is
+// still to come; none for a bill that is paid, has no due day, whose day has passed, or that the
+// person wants none for.
 func PlanReminder(b Bill, now time.Time, loc *time.Location) ReminderPlan {
 	if b.Payment == Paid || b.PaidDate != nil {
 		return ReminderPlan{Why: "сметката вече е платена"}
+	}
+	if b.RemindBefore < 0 {
+		return ReminderPlan{Why: "не искаш напомняне за нея"}
 	}
 	if b.DueDate == nil {
 		return ReminderPlan{Why: "в документа няма срок; ако искаш, кажи ми „напомни ми на … да платя …“"}
 	}
 	due := reminders.Day{Year: b.DueDate.Year(), Month: b.DueDate.Month(), Day: b.DueDate.Day()}
-	at := due.AddDays(-1).Time(reminderMinute, loc)
-	if !at.After(now) {
-		at = due.Time(reminderMinute, loc)
+	var at time.Time
+	// The days the person asked for first, then the day before and the day itself; a day that comes
+	// earlier than the first has passed when the first has.
+	for _, days := range []int{b.RemindBefore, 1, 0} {
+		if at = due.AddDays(-days).Time(reminderMinute, loc); at.After(now) {
+			break
+		}
 	}
 	if !at.After(now) {
 		return ReminderPlan{Why: "срокът (" + reminders.DateText(due) + ") вече мина"}
@@ -145,7 +154,11 @@ func ProposalText(name string, b Bill, same []Bill, now time.Time, loc *time.Loc
 		fmt.Fprintf(&s, "• %s\n", capitalize(r))
 	}
 	for _, d := range b.Dropped {
-		fmt.Fprintf(&s, "• (Моделът даде и %s, но я няма в текста — не я пиша.)\n", droppedText[d])
+		if v := b.DroppedValues[d]; v != "" {
+			fmt.Fprintf(&s, "• (Моделът даде %s „%s“, но я няма в текста — не я пиша.)\n", droppedText[d], v)
+		} else {
+			fmt.Fprintf(&s, "• (Моделът даде и %s, но я няма в текста — не я пиша.)\n", droppedText[d])
+		}
 	}
 	for _, o := range same {
 		fmt.Fprintf(&s, "⚠️ Прилича на вече записана сметка: %s (файл „%s“) — може да е друга страница или копие.\n", oneLine(o, loc), o.FileName)

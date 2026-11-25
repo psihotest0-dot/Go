@@ -96,8 +96,8 @@ DELETE FROM standing_bills WHERE id = $1 AND user_id = $2 AND status = 'kept';
 -- name: InsertStandingPayment :one
 -- The payment of a standing bill on one of its days, written once (the file_hash of the day).
 INSERT INTO bills (user_id, session_id, issuer, kind, amount_cents, currency, due_date, payment, repeat, summary,
-                   file_name, file_hash, status, standing_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'kept', $13)
+                   file_name, file_hash, status, standing_id, remind_days_before)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'kept', $13, $14)
 ON CONFLICT (user_id, file_hash) WHERE status = 'kept' DO NOTHING
 RETURNING *;
 
@@ -118,3 +118,15 @@ WHERE user_id = $1 AND status = 'kept' AND standing_id IS NOT NULL AND kind = $2
 
 -- name: DeleteBill :execrows
 DELETE FROM bills WHERE id = $1 AND user_id = $2;
+
+-- name: UpdateProposedBill :one
+-- The person's answer to the proposal changes it: the due day, the amount, the way it is paid, the
+-- days of its reminder.
+UPDATE bills SET due_date = $3, amount_cents = $4, payment = $5, remind_days_before = $6, updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'proposed'
+RETURNING *;
+
+-- name: UpdateProposedStanding :one
+UPDATE standing_bills SET amount_cents = $3, payment = $4, remind_days_before = $5, day = $6, month = $7, updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'proposed'
+RETURNING *;

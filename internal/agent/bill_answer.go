@@ -43,6 +43,12 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 		slog.WarnContext(ctx, "could not read the proposed bill; the model answers", "err", err)
 		return ""
 	}
+	// "Срокът е 15.09.2027", "сумата е 87 €", "седмица по-рано", "изтегля се автоматично, да": the
+	// answer changes the proposal (bills/correction.go).
+	correction, corrects := bills.ReadCorrection(message)
+	if proposed != nil && corrects {
+		return o.bills.CorrectBill(ctx, userID, session, *proposed, correction)
+	}
 	if proposed != nil {
 		switch {
 		case isYes(message):
@@ -62,6 +68,9 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 	if err != nil {
 		slog.WarnContext(ctx, "could not read the proposed standing bill; the model answers", "err", err)
 		return ""
+	}
+	if standing != nil && corrects {
+		return o.bills.CorrectStanding(ctx, userID, session, *standing, correction)
 	}
 	if standing != nil {
 		switch {

@@ -31,7 +31,7 @@ func TestAnswerChecksHaveNamesOfTheirOwnAndTheFileChecksComeFirst(t *testing.T) 
 			assert.True(t, answerChecks[i-1].fileTools, "%s: the checks of the files come before the others", c.name)
 		}
 	}
-	assert.Equal(t, []string{"claim", "stall", "ignored", "status", "lookup", "extraction"}, func() []string {
+	assert.Equal(t, []string{"claim", "stall", "ignored", "status", "lookup", "bill_claim", "extraction"}, func() []string {
 		var names []string
 		for _, c := range answerChecks {
 			names = append(names, c.name)

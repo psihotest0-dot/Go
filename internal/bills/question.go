@@ -40,6 +40,9 @@ type Question struct {
 	Period Period
 	// Other is the second period of a comparison.
 	Other *Period
+	// AllTime: a list with no period named ("какви сметки имам записани") is of all the kept bills.
+	// On 2026-11-25 it was of this year, and a bill due in January was not in it.
+	AllTime bool
 }
 
 // questionMaxRunes: a question about the bills is a sentence.
@@ -89,6 +92,7 @@ var kindWords = []struct {
 	{regexp.MustCompile(`(?i)(?:данъ\p{L}*|такс\p{L}*|steuer)`), "tax"},
 	{regexp.MustCompile(`(?i)(?:абонамент\p{L}*)`), "subscription"},
 	{regexp.MustCompile(`(?i)(?:покупк\p{L}*|пазар\p{L}*)`), "shopping"},
+	{regexp.MustCompile(`(?i)(?:кредит\p{L}*|лизинг\p{L}*|заем\p{L}*|darlehen|kredit|leasing|finanzierung)`), "loan"},
 }
 
 func monthPeriod(year int, m time.Month) Period {
@@ -209,9 +213,12 @@ func ReadQuestion(message string, today reminders.Day) (Question, bool) {
 			q.Period = periods[0]
 		}
 	default:
-		if len(periods) > 0 {
+		switch {
+		case len(periods) > 0:
 			q.Period = periods[0]
-		} else {
+		case q.Ask == AskList:
+			q.AllTime = true
+		default:
 			// "колко са сметките?" - this year.
 			q.Period = yearPeriod(today.Year)
 		}

@@ -73,6 +73,24 @@ func (s *Service) between(ctx context.Context, userID uuid.UUID, p Period, kind 
 	return out, nil
 }
 
+// allKeptLimit bounds the list of all the kept bills.
+const allKeptLimit = 200
+
+// allKept are the kept bills of every time, of one kind when kind is not "", the earliest first.
+func (s *Service) allKept(ctx context.Context, userID uuid.UUID, kind string) ([]Bill, error) {
+	rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: allKeptLimit})
+	if err != nil {
+		return nil, err
+	}
+	var out []Bill
+	for i := len(rows) - 1; i >= 0; i-- {
+		if kind == "" || rows[i].Kind == kind {
+			out = append(out, fromRow(rows[i]))
+		}
+	}
+	return out, nil
+}
+
 // Answer is the answer of the code to a question about the bills, handled false when the message
 // asks no such question (the model answers it).
 func (s *Service) Answer(ctx context.Context, userID uuid.UUID, message string) (text string, handled bool) {
@@ -170,11 +188,20 @@ func (s *Service) answer(ctx context.Context, userID uuid.UUID, q Question, toda
 		}
 		return compareText(q, sumOf(a), sumOf(b)), nil
 	}
-	bills, err := s.between(ctx, userID, q.Period, q.Kind)
+	var bills []Bill
+	var err error
+	if q.AllTime {
+		bills, err = s.allKept(ctx, userID, q.Kind)
+	} else {
+		bills, err = s.between(ctx, userID, q.Period, q.Kind)
+	}
 	if err != nil {
 		return "", err
 	}
 	sum := sumOf(bills)
+	if sum.Count == 0 && q.AllTime {
+		return fmt.Sprintf("Нямам записани сметки%s.", kindLabel(q.Kind)), nil
+	}
 	if sum.Count == 0 {
 		return fmt.Sprintf("Нямам записани сметки%s за %s.", kindLabel(q.Kind), q.Period.Label), nil
 	}
@@ -208,7 +235,11 @@ func totalText(q Question, s Sum) string {
 
 func listText(q Question, s Sum) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Сметките%s за %s (%s, общо %s):\n", kindLabel(q.Kind), q.Period.Label, countWord(s.Count), Money(s.Cents, "EUR"))
+	if q.AllTime {
+		fmt.Fprintf(&b, "Всички записани сметки%s (%s, общо %s):\n", kindLabel(q.Kind), countWord(s.Count), Money(s.Cents, "EUR"))
+	} else {
+		fmt.Fprintf(&b, "Сметките%s за %s (%s, общо %s):\n", kindLabel(q.Kind), q.Period.Label, countWord(s.Count), Money(s.Cents, "EUR"))
+	}
 	for i, bill := range s.Bills {
 		if i == listedBills {
 			fmt.Fprintf(&b, "… и още %d\n", len(s.Bills)-listedBills)

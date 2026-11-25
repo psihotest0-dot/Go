@@ -25,13 +25,13 @@ import (
 
 // The kinds of a bill, the way the sums group them.
 var Kinds = []string{"phone_internet", "electricity", "gas", "water", "heating", "rent", "insurance",
-	"doctor", "dentist", "pharmacy", "car", "tax", "subscription", "shopping", "other"}
+	"doctor", "dentist", "pharmacy", "car", "tax", "subscription", "shopping", "loan", "other"}
 
 // KindNames are the kinds in Bulgarian.
 var KindNames = map[string]string{
 	"phone_internet": "телефон и интернет", "electricity": "ток", "gas": "газ", "water": "вода", "heating": "отопление",
 	"rent": "наем", "insurance": "застраховки", "doctor": "лекар", "dentist": "зъболекар", "pharmacy": "аптека",
-	"car": "кола", "tax": "данъци и такси", "subscription": "абонаменти", "shopping": "покупки", "other": "други",
+	"car": "кола", "tax": "данъци и такси", "subscription": "абонаменти", "shopping": "покупки", "loan": "кредити и лизинг", "other": "други",
 }
 
 // How a bill is paid.
@@ -167,8 +167,13 @@ type Bill struct {
 	Repeat      string
 	Summary     string
 	// Dropped names what the model gave and the text does not hold: "due_date", "paid_date",
-	// "invoice_date". The amount is never dropped: without it there is no bill.
-	Dropped []string
+	// "invoice_date". The amount is never dropped: without it there is no bill. DroppedValues are
+	// the values the model gave for them, to say which ("коя дата даде моделът?", 2026-11-25).
+	Dropped       []string
+	DroppedValues map[string]string
+	// RemindBefore is how many days before the due day the reminder comes, at 09:00; -1 for none.
+	// Zero is the due day itself, not the default: Verify and fromRow set it (the default is 1).
+	RemindBefore int
 }
 
 // Problems of a document.
@@ -178,6 +183,10 @@ const (
 )
 
 var (
+	// loanWords: a loan, a credit or a lease, in the issuer or the summary of a bill.
+	loanWords = regexp.MustCompile(`(?i)(?:кредит|лизинг|заем|darlehen|kredit|leasing|finanzierung)`)
+	// cardWords: a credit card is a way to pay, not a loan.
+	cardWords   = regexp.MustCompile(`(?i)(?:кредитн\p{L}*\s+карт|kreditkarte|credit\s*card)`)
 	amountShape = regexp.MustCompile(`^\d{1,3}(?:[.\s]?\d{3})*(?:,\d{2})?$|^\d+(?:\.\d{2})?$`)
 	digitsOnly  = regexp.MustCompile(`[^\d]`)
 )
@@ -194,13 +203,18 @@ func Verify(f Fields, text string) (b Bill, problem string) {
 	}
 	b = Bill{
 		Issuer: clean(f.Issuer, 80), Kind: f.Kind, Cents: cents, Currency: strings.ToUpper(strings.TrimSpace(f.Currency)),
-		Payment: f.Payment, Repeat: f.Repeat, Summary: clean(f.Summary, 120),
+		Payment: f.Payment, Repeat: f.Repeat, Summary: clean(f.Summary, 120), RemindBefore: 1,
 	}
 	if b.Currency == "" || b.Currency == "€" {
 		b.Currency = "EUR"
 	}
 	if !contains(Kinds, b.Kind) {
 		b.Kind = "other"
+	}
+	// A credit statement was read as "insurance" (2026-11-25); told of the loan in the prompt, the
+	// model took every bill for one (0 of 14 kinds right), so the code decides it from the words.
+	if named := b.Issuer + " " + b.Summary; (b.Kind == "insurance" || b.Kind == "other") && loanWords.MatchString(named) && !cardWords.MatchString(named) {
+		b.Kind = "loan"
 	}
 	if !contains(Payments, b.Payment) {
 		b.Payment = Unknown
@@ -215,6 +229,10 @@ func Verify(f Fields, text string) (b Bill, problem string) {
 		d, ok := parseDate(value)
 		if !ok || !dateInText(d, text) {
 			b.Dropped = append(b.Dropped, field)
+			if b.DroppedValues == nil {
+				b.DroppedValues = map[string]string{}
+			}
+			b.DroppedValues[field] = clean(value, 20)
 			return nil
 		}
 		return &d

@@ -57,6 +57,8 @@ type Standing struct {
 	Day, Month int
 	Payment    string
 	Summary    string
+	// RemindBefore is how many days before each day the reminder comes; -1 for none.
+	RemindBefore int
 	// Since is the first day a payment is written for: the day it was kept.
 	Since reminders.Day
 }
@@ -292,7 +294,11 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 		return "Не успях да разчета на кого се плаща сметката. Опитай пак след малко. Нищо не е записано.", true
 	}
 	st := Standing{Issuer: standingIssuer(f.Issuer, message), Kind: standingKind(f.Kind, message), Cents: r.Cents, Currency: r.Currency,
-		Day: r.Day, Month: r.Month, Payment: r.Payment, Summary: clean(f.Summary, 120)}
+		Day: r.Day, Month: r.Month, Payment: r.Payment, Summary: clean(f.Summary, 120), RemindBefore: 1}
+	// "… изтегля се автоматично, без напомняне" in the request itself.
+	if c, ok := ReadCorrection(message); ok && c.RemindBefore != nil {
+		st.RemindBefore = *c.RemindBefore
+	}
 
 	tx, err := s.d.SqlDB.BeginTx(ctx, nil)
 	if err != nil {
@@ -306,10 +312,17 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	if _, err := q.DropProposedStanding(ctx, db.DropProposedStandingParams{UserID: userID, SessionID: session}); err != nil {
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
 	}
-	if _, err := q.ProposeStanding(ctx, db.ProposeStandingParams{UserID: userID, SessionID: session, Issuer: st.Issuer, Kind: st.Kind,
-		AmountCents: st.Cents, Currency: st.Currency, Day: int32(st.Day), Month: int32(st.Month), Payment: st.Payment, Summary: st.Summary}); err != nil {
+	row, err := q.ProposeStanding(ctx, db.ProposeStandingParams{UserID: userID, SessionID: session, Issuer: st.Issuer, Kind: st.Kind,
+		AmountCents: st.Cents, Currency: st.Currency, Day: int32(st.Day), Month: int32(st.Month), Payment: st.Payment, Summary: st.Summary})
+	if err != nil {
 		slog.WarnContext(ctx, "a standing bill could not be proposed", "err", err)
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
+	}
+	if st.RemindBefore != 1 {
+		if _, err := q.UpdateProposedStanding(ctx, db.UpdateProposedStandingParams{ID: row.ID, UserID: userID, AmountCents: st.Cents,
+			Payment: st.Payment, RemindDaysBefore: int32(st.RemindBefore), Day: int32(st.Day), Month: int32(st.Month)}); err != nil {
+			return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко.", true
@@ -360,7 +373,7 @@ func (s *Service) KeepStanding(ctx context.Context, userID uuid.UUID, session st
 	next := nextStandingDay(st, today)
 	text += "\nСледващото плащане: " + reminders.DateText(next) + "."
 	if s.reminders != nil {
-		text += " Напомням в 09:00 ден преди всяко."
+		text += " " + capitalize(remindWhen(st.RemindBefore, "всяко")) + "."
 	}
 	text += "\nВлиза в сборовете и справките от " + reminders.DateText(next) + " нататък; махаш я с „махни постоянната сметка за …“."
 	if err := s.standingPayments(ctx, row, today); err != nil {
@@ -371,7 +384,7 @@ func (s *Service) KeepStanding(ctx context.Context, userID uuid.UUID, session st
 
 func standingFromRow(r db.StandingBill, loc *time.Location) Standing {
 	return Standing{ID: r.ID, Issuer: r.Issuer, Kind: r.Kind, Cents: r.AmountCents, Currency: r.Currency, Day: int(r.Day), Month: int(r.Month),
-		Payment: r.Payment, Summary: r.Summary, Since: reminders.DayOf(r.CreatedAt, loc)}
+		Payment: r.Payment, Summary: r.Summary, RemindBefore: int(r.RemindDaysBefore), Since: reminders.DayOf(r.CreatedAt, loc)}
 }
 
 // standingDayIn is the day of a standing bill in a month (31 is the last day of a shorter one).
@@ -442,7 +455,7 @@ func (s *Service) standingPayments(ctx context.Context, r db.StandingBill, today
 			UserID: r.UserID, SessionID: r.SessionID, Issuer: st.Issuer, Kind: st.Kind, AmountCents: st.Cents, Currency: st.Currency,
 			DueDate: sql.NullTime{Time: due, Valid: true}, Payment: st.Payment, Repeat: repeat, Summary: st.Summary,
 			FileName: standingFileName, FileHash: fmt.Sprintf("standing:%d:%04d-%02d", st.ID, day.Year, day.Month),
-			StandingID: sql.NullInt64{Int64: st.ID, Valid: true},
+			StandingID: sql.NullInt64{Int64: st.ID, Valid: true}, RemindDaysBefore: int32(st.RemindBefore),
 		})
 		if errors.Is(err, sql.ErrNoRows) {
 			continue // written already
@@ -678,7 +691,7 @@ func standingProposalText(st Standing, today reminders.Day, withReminders bool) 
 	next := nextStandingDay(st, today)
 	fmt.Fprintf(&b, "• Първото плащане: %s", reminders.DateText(next))
 	if withReminders {
-		b.WriteString("; напомням в 09:00 ден преди всяко")
+		b.WriteString("; " + remindWhen(st.RemindBefore, "всяко"))
 	}
 	b.WriteString("\n\nДа я запиша ли в базата? Кажи „да“ или „не“.")
 	return b.String()
@@ -696,4 +709,18 @@ func (s *Service) StandingLines(ctx context.Context, userID uuid.UUID) string {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, standingLine(st))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// remindWhen is "напомням в 09:00 ден преди всяко" / "… 7 дни преди всяко" / "… в самия ден" / "без
+// напомняне"; of names what the days are of ("всяко", "срока").
+func remindWhen(days int, of string) string {
+	switch {
+	case days < 0:
+		return "без напомняне"
+	case days == 0:
+		return "напомням в 09:00 в самия ден"
+	case days == 1:
+		return "напомням в 09:00 ден преди " + of
+	}
+	return fmt.Sprintf("напомням в 09:00 %d дни преди %s", days, of)
 }

@@ -341,6 +341,109 @@ func TestADocumentTakesThePlaceOfTheStandingPaymentOfItsMonth(t *testing.T) {
 	assert.Contains(t, active[0].Text, "47,18 €")
 }
 
+// 2026-11-25, 16:52-16:55: a bill read without a due day was answered "Има срок - следващата дата е
+// 15.09.2027", "промени я, че следващото плащане е 87,00 евро", "една седмица по рано". Each dropped
+// the proposal and the model said it had done it. Now the code changes the proposal.
+func TestTheAnswerToAProposalChangesIt(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	f := madeUpFields
+	f.DueDate, f.Repeat = "", "yearly"
+	e.reads(t, f)
+	_, err := e.svc.Read(ctx, e.userID, e.session, "snimka.jpg", []byte("%PDF-1.4 club"))
+	require.NoError(t, err)
+
+	out := e.say(t, "Има срок -следващата дата е 15.09.2027")
+	assert.Contains(t, out, "Поправих по твоите думи: срок сряда, 15.09.2027")
+	assert.Contains(t, out, "Още не е записана")
+	assert.Contains(t, out, "Ще ти напомня във вторник, 14.09.2027, в 09:00")
+	out = e.say(t, "Да но я промени че следващото плащане е 87,00 евро")
+	assert.Contains(t, out, "сума 87,00 €")
+	assert.Contains(t, out, "Сума: 87,00 €")
+	out = e.say(t, "Една седмица по рано")
+	assert.Contains(t, out, "напомням в 09:00 7 дни преди срока")
+	assert.Contains(t, out, "Ще ти напомня в сряда, 08.09.2027, в 09:00")
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+
+	out = e.say(t, "да")
+	assert.Contains(t, out, "Записах сметката ✅")
+	assert.Contains(t, out, "87,00 €")
+	active, err := e.store.Active(ctx, e.userID)
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, time.Date(2027, 9, 8, 9, 0, 0, 0, reminders.Location()), active[0].Next.In(reminders.Location()))
+
+	// The bill of next year is in the list of the kept bills (16:06 it was not).
+	out = e.say(t, "какви сметки имам записани")
+	assert.Contains(t, out, "Всички записани сметки (1 сметка, общо 87,00 €)")
+	assert.Contains(t, out, "15.09.2027")
+}
+
+// A change and a yes in one answer: the bill is kept with the change.
+func TestAChangeWithAYesKeepsTheBill(t *testing.T) {
+	e := newBillEnv(t)
+	e.reads(t, madeUpFields)
+	_, err := e.svc.Read(context.Background(), e.userID, e.session, "rechnung.pdf", []byte("%PDF-1.4 yes"))
+	require.NoError(t, err)
+	out := e.say(t, "без напомняне, да")
+	assert.Contains(t, out, "Поправих по твоите думи: без напомняне")
+	assert.Contains(t, out, "Записах сметката ✅")
+	assert.Contains(t, out, "Без напомняне: не искаш напомняне за нея")
+	active, _ := e.store.Active(context.Background(), e.userID)
+	assert.Empty(t, active)
+}
+
+// 17:04-17:06: "изтегля се автоматично, да" to a standing bill dropped it and the model said
+// "Записах в базата"; "няма нужда от напомняне" became a text file.
+func TestAStandingBillIsChangedAndKeptByTheAnswer(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	e.readsStanding(t, bills.StandingFields{Issuer: "", Kind: "rent", Summary: "Наем за квартира"})
+	require.Contains(t, e.say(t, "запиши че всеки месец на 1-во число плащам по 640 евро за квартира"), "Постоянна сметка:")
+
+	out := e.say(t, "изтегля се автоматично,да")
+	assert.Contains(t, out, "Поправих по твоите думи: изтегля се автоматично")
+	assert.Contains(t, out, "Записах постоянната сметка ✅")
+	kept, err := e.svc.KeptStanding(ctx, e.userID)
+	require.NoError(t, err)
+	require.Len(t, kept, 1)
+	assert.Equal(t, bills.DirectDebit, kept[0].Payment)
+
+	// Without a reminder from the start.
+	e.readsStanding(t, bills.StandingFields{Issuer: "Beispiel Strom", Kind: "electricity"})
+	out = e.say(t, "запиши, че всеки месец на 26-ти плащам 80 € за ток на Beispiel Strom, без напомняне")
+	assert.Contains(t, out, "без напомняне")
+	require.Contains(t, e.say(t, "да"), "Записах постоянната сметка ✅")
+	e.at(25, 12, 11)
+	require.NoError(t, e.svc.StandingPass(ctx))
+	assert.Contains(t, e.say(t, "колко са ми сметките този месец?"), "80,00 €", "the payment is written")
+	active, _ := e.store.Active(ctx, e.userID)
+	assert.Empty(t, active, "but it has no reminder")
+}
+
+// The model's "ще те напомня…" with no reminder kept gets a line under it.
+func TestAClaimedReminderIsCorrected(t *testing.T) {
+	const claim = "Добре, ще те напомня точно една седмица преди 15.09.2027 за плащането на 87,00 евро."
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(claim)}}}
+	o := &Orchestrator{llmClient: mock, tools: &fakeToolRegistry{}}
+	content, _, err := o.generateResponse(context.Background(),
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "Една седмица по рано"}}, toolDefinitions(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, claim+"\n\n"+billClaimCorrection, content)
+
+	for answer, want := range map[string]bool{
+		"Записах в базата, че наемът за квартира се изтегля автоматично.": true,
+		"Разбрах, актуализирам сумата на 87,00 евро.":                     true,
+		"Напомнянето ще включва сумата.":                                  true,
+		"Искаш ли да ти напомня един ден по-рано?":                        false,
+		"Ако искаш, ще ти напомня — кажи „напомни ми на …“.":              false,
+		"Записах го в паметта си.":                                        false,
+		"Добро утро!": false,
+	} {
+		assert.Equal(t, want, claimsABillOrReminder(answer), answer)
+	}
+}
+
 // 2026-11-25: the first bill of October was kept on the 25th of November and the report of October
 // went out at once. A report the 1st missed goes out up to the 7th, not later.
 func TestALateReportGoesOnlyInTheFirstDaysOfTheMonth(t *testing.T) {

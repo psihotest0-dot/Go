@@ -80,7 +80,7 @@ func TestTheReminderOfADueDay(t *testing.T) {
 	loc := reminders.Location()
 	due := time.Date(2026, 12, 5, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 11, 24, 21, 0, 0, 0, loc)
-	debit := Bill{Issuer: "Beispiel", Kind: "phone_internet", Cents: 4718, Currency: "EUR", DueDate: &due, Payment: DirectDebit, Summary: "Телефон"}
+	debit := Bill{Issuer: "Beispiel", Kind: "phone_internet", Cents: 4718, Currency: "EUR", DueDate: &due, Payment: DirectDebit, Summary: "Телефон", RemindBefore: 1}
 	plan := PlanReminder(debit, now, loc)
 	assert.Equal(t, time.Date(2026, 12, 4, 9, 0, 0, 0, loc), plan.At, "09:00 the day before")
 	assert.Contains(t, plan.Text, "ще изтегли 47,18 €")
@@ -97,7 +97,7 @@ func TestTheReminderOfADueDay(t *testing.T) {
 func TestTheProposalSaysWhatWasRead(t *testing.T) {
 	loc := reminders.Location()
 	due := time.Date(2026, 12, 5, 0, 0, 0, 0, time.UTC)
-	b := Bill{Issuer: "Beispiel", Kind: "phone_internet", Cents: 123450, Currency: "EUR", DueDate: &due, Payment: DirectDebit, Repeat: "monthly", Summary: "Телефон", Dropped: []string{"invoice_date"}}
+	b := Bill{Issuer: "Beispiel", Kind: "phone_internet", Cents: 123450, Currency: "EUR", DueDate: &due, Payment: DirectDebit, Repeat: "monthly", Summary: "Телефон", Dropped: []string{"invoice_date"}, RemindBefore: 1}
 	text := ProposalText("rechnung.pdf", b, []Bill{{Issuer: "Beispiel", Cents: 123450, Currency: "EUR", FileName: "old.pdf"}}, time.Date(2026, 11, 24, 21, 0, 0, 0, loc), loc)
 	assert.Contains(t, text, "Сума: 1 234,50 €")
 	assert.Contains(t, text, "Срок: събота, 05.12.2026 — изтегля се автоматично")

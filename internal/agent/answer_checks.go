@@ -105,6 +105,18 @@ var answerChecks = []answerCheck{
 		},
 	},
 	{
+		// "Записах в базата", "ще те напомня седмица преди": the model keeps no bill and sets no
+		// reminder, the code does (bill_claim.go).
+		name: "bill_claim", op: "bill_claim", result: "corrected",
+		logMsg: "the answer says a bill or a reminder was kept, and the model keeps neither; a correction is added",
+		note: func(_ context.Context, _ *Orchestrator, f answerFacts) string {
+			if claimsABillOrReminder(f.content) {
+				return billClaimCorrection
+			}
+			return ""
+		},
+	},
+	{
 		// An "extraction" of a source no tool opened (extraction_claim.go). Not under an answer
 		// that has a "⚠️" of its own already.
 		name: "extraction", op: "extraction", result: "noted",
