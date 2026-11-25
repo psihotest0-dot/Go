@@ -22,15 +22,27 @@ var (
 		`ще\s+(?:(?:ти|те|ви)\s+)?напомн|напомнянето\s+ще|ще\s+получиш\s+(?:напомн|известие)|ще\s+те\s+предупредя|` +
 		`(?:добавям|добавих|актуализирам|актуализирах|променям|промених|обнових|обновявам)\s+(?:\p{L}+\s+){0,3}?(?:срок|сума|дата)\p{L}*` +
 		`)`)
+	// billClaimDone / billClaimObject: in a turn that called no tool, "Добавих наема… Вече е включен в
+	// списъка ти", "Готово, промених статуса му" (2026-11-25, 17:37-17:40): a change of the bills
+	// said to be done. With a tool called the same words may be true of a file.
+	billClaimDone   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:добавих|включих|промених|записах|запазих|обнових|отбелязах|маркирах|отразих)(?:[^\p{L}]|$)`)
+	billClaimObject = regexp.MustCompile(`(?i)(?:сметк|наем|плащан|разход|списъ|статус|баз[аи])`)
 	// billClaimOffer: the sentence offers or asks ("ако искаш, ще ти напомня").
 	billClaimOffer = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:ако|искаш\s+ли|желаеш\s+ли|if)(?:[^\p{L}]|$)`)
 )
 
 // claimsABillOrReminder tells whether an answer of the model says a bill or a reminder was kept or
-// changed, or that a reminder will come. A plain filter: a false alarm is a line under the answer.
-func claimsABillOrReminder(answer string) bool {
+// changed, or that a reminder will come; toolCalled widens nothing, it narrows: the words of a done
+// change count only in a turn without a tool. A plain filter: a false alarm is a line under the answer.
+func claimsABillOrReminder(answer string, toolCalled bool) bool {
 	for _, sentence := range sentenceEnd.Split(strings.TrimSpace(answer), -1) {
-		if billClaimWords.MatchString(sentence) && !billClaimOffer.MatchString(sentence) {
+		if billClaimOffer.MatchString(sentence) {
+			continue
+		}
+		if billClaimWords.MatchString(sentence) {
+			return true
+		}
+		if !toolCalled && billClaimDone.MatchString(sentence) && billClaimObject.MatchString(sentence) {
 			return true
 		}
 	}

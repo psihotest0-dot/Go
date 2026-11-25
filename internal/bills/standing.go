@@ -65,7 +65,8 @@ type Standing struct {
 
 var (
 	// standingRepeatMonthly / standingRepeatYearly: the words of a bill that comes back.
-	standingRepeatMonthly = regexp.MustCompile(`(?i)(?:всеки\s+месец|всеки\s+\d{1,2}|всяк[оа]\s+\d{1,2}|ежемесечн|месечн|every\s+month|monthly|of\s+every\s+month)`)
+	// "всяко първо число на месеца" (2026-11-25, 17:37) names the day in a word.
+	standingRepeatMonthly = regexp.MustCompile(`(?i)(?:всеки\s+месец|всеки\s+\d{1,2}|всяк[оа]\s+\d{1,2}|всеки\s+\p{L}+\s+(?:ден|число)|всяк[оа]\s+\p{L}+\s+(?:число|дата)|на\s+месеца|ежемесечн|месечн|every\s+month|monthly|of\s+every\s+month)`)
 	standingRepeatYearly  = regexp.MustCompile(`(?i)(?:всяка\s+година|ежегодн|годишн|every\s+year|yearly|annually)`)
 	// standingBillWords: the message is about a bill or a payment.
 	standingBillWords = regexp.MustCompile(`(?i)(?:сметк|плащам|плащане|плаща\s+се|абонамент|такс|вноск|наем|застраховк|изтегля|теглят|bill|subscription|i\s+pay)`)
@@ -84,7 +85,31 @@ var (
 	standingTransferWords = regexp.MustCompile(`(?i)(?:превеждам|превод|плащам\s+(?:го\s+|я\s+)?сам|по\s+банков|transfer)`)
 
 	oneDecimal = regexp.MustCompile(`[.,]\d$`)
+
+	// standingDayWord: the day as a word, "всяко първо число", "на десето".
+	standingDayWord = regexp.MustCompile(`(?i)(?:на|всеки|всяка|всяко|в)\s+(\p{L}+)\s+(?:число|дата|ден)`)
 )
+
+// dayWords are the days of a month as words, the longer first ("петнадесето" is not "пето").
+var dayWords = []struct {
+	stem string
+	day  int
+}{
+	{"двадесет и пе", 25}, {"двадесет и пър", 21}, {"тридесет и пър", 31}, {"последн", 31},
+	{"петнадесет", 15}, {"двадесет", 20}, {"тридесет", 30}, {"десет", 10},
+	{"първ", 1}, {"втор", 2}, {"трет", 3}, {"четвърт", 4}, {"пет", 5}, {"шест", 6}, {"седм", 7}, {"осм", 8}, {"девет", 9},
+}
+
+// dayOfWord is the day a word names, 0 for none.
+func dayOfWord(w string) int {
+	w = strings.ToLower(w)
+	for _, d := range dayWords {
+		if strings.HasPrefix(w, d.stem) {
+			return d.day
+		}
+	}
+	return 0
+}
 
 // RunStanding writes the payments of the standing bills until ctx ends (StandingPass).
 func (s *Service) RunStanding(ctx context.Context) {
@@ -110,6 +135,8 @@ type StandingRequest struct {
 	Month    int
 	Payment  string
 	Missing  []string
+	// Several is the number of amounts when the message names more than one bill.
+	Several int
 }
 
 // ReadStandingRequest tells whether a message asks to keep a bill that comes back every month or
@@ -154,6 +181,16 @@ func ReadStandingRequest(message string) (r StandingRequest, ok bool) {
 		if r.Day > 0 {
 			break
 		}
+	}
+	if r.Day == 0 {
+		if w := standingDayWord.FindStringSubmatch(m); w != nil {
+			r.Day = dayOfWord(w[1])
+		}
+	}
+	// "Наем: 500 € на 1-во … / Телефон: 40 € на 10-то …": several bills in one message. On 2026-11-25
+	// (17:35) four of them became one, with the issuer of one and the amount of another.
+	if n := len(standingAmount.FindAllStringIndex(m, -1)); n > 1 {
+		r.Several = n
 	}
 	if yearly && !monthly {
 		if mw := monthWord.FindStringSubmatch(m); mw != nil {
@@ -281,6 +318,12 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	r, ok := ReadStandingRequest(message)
 	if !ok {
 		return "", false
+	}
+	if r.Several > 1 {
+		metrics.Bills.WithLabelValues("standing_several").Inc()
+		return fmt.Sprintf("Виждам %d сметки в едно съобщение — записвам постоянните сметки по една, за да не ги смеся. "+
+			"Прати ми ги поотделно, например: „запиши, че всеки месец на 1-во плащам 500 € наем, изтегля се автоматично“, после „да“, после следващата. "+
+			"Нищо не е записано.", r.Several), true
 	}
 	if len(r.Missing) > 0 {
 		metrics.Bills.WithLabelValues("standing_incomplete").Inc()

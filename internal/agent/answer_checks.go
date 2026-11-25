@@ -110,7 +110,7 @@ var answerChecks = []answerCheck{
 		name: "bill_claim", op: "bill_claim", result: "corrected",
 		logMsg: "the answer says a bill or a reminder was kept, and the model keeps neither; a correction is added",
 		note: func(_ context.Context, _ *Orchestrator, f answerFacts) string {
-			if claimsABillOrReminder(f.content) {
+			if claimsABillOrReminder(f.content, len(f.executed) > 0) {
 				return billClaimCorrection
 			}
 			return ""

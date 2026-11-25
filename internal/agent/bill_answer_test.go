@@ -439,9 +439,42 @@ func TestAClaimedReminderIsCorrected(t *testing.T) {
 		"Ако искаш, ще ти напомня — кажи „напомни ми на …“.":              false,
 		"Записах го в паметта си.":                                        false,
 		"Добро утро!": false,
+		// 2026-11-25, 17:37-17:40, no tool called in any of them.
+		"Добавих наема от 640 евро, който се изтегля автоматично на всяко първо число.":  true,
+		"Готово, промених статуса му и оттук нататък наемът ще се появява в списъка ти.": true,
 	} {
-		assert.Equal(t, want, claimsABillOrReminder(answer), answer)
+		assert.Equal(t, want, claimsABillOrReminder(answer, false), answer)
 	}
+	// Through the turn: "Добавих наема…" with no tool called gets the line.
+	const added = "Добавих наема от 640 евро към списъка ти с активните сметки."
+	mock = &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{{textChunk(added)}}}
+	o = &Orchestrator{llmClient: mock, tools: &fakeToolRegistry{}}
+	content, _, err = o.generateResponse(context.Background(),
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "да добави я"}}, toolDefinitions(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, added+"\n\n"+billClaimCorrection, content)
+
+	// With a tool called, "добавих … в списъка" may be true of a file.
+	assert.False(t, claimsABillOrReminder("Добавих реда в списъка във файла бележки.md.", true))
+	assert.True(t, claimsABillOrReminder("Записах в базата сметката.", true), "the plain claims count either way")
+}
+
+// 2026-11-25, 17:35 and 17:37: four bills in one message became one; "всяко първо число" was not read.
+func TestSeveralStandingBillsAreAskedOneByOneAndADayInAWordIsRead(t *testing.T) {
+	e := newBillEnv(t)
+	out := e.say(t, "добави липсващите -Наем за квартира: 640,00 € на 1-о число всеки месец (автоматично изтегляне)\n"+
+		"Beispiel Telefon: 40,00 € на 10-то число всеки месец\nBeispiel Spiele: 14,00 € на 28-о число всеки месец")
+	assert.Contains(t, out, "Виждам 3 сметки в едно съобщение")
+	assert.Contains(t, out, "Нищо не е записано")
+	p, err := e.svc.ProposedStanding(context.Background(), e.userID, e.session)
+	require.NoError(t, err)
+	assert.Nil(t, p)
+
+	e.readsStanding(t, bills.StandingFields{Kind: "rent", Summary: "Наем"})
+	out = e.say(t, "добави към сметките :Наем - 640 евро-всяко първо число на месеца- автоматично изтегляне")
+	assert.Contains(t, out, "640,00 € всеки месец на 1-о число — изтегля се автоматично")
+	assert.Contains(t, out, "Първото плащане: вторник, 01.12.2026")
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
 }
 
 // 2026-11-25: the first bill of October was kept on the 25th of November and the report of October

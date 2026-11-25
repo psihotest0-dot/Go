@@ -30,6 +30,22 @@ func TestReadStandingRequest(t *testing.T) {
 		assert.Equal(t, want, got, m)
 	}
 
+	// The day in a word (2026-11-25, 17:37), and "петнадесето" is not "пето".
+	for m, day := range map[string]int{
+		"добави към сметките :Наем - 640 евро-всяко първо число на месеца- автоматично изтегляне": 1,
+		"запиши, че всяко петнадесето число на месеца плащам 30 € абонамент":                      15,
+		"запиши, че всяко пето число плащам 30 € абонамент":                                       5,
+		"запиши, че на последния ден всеки месец плащам 30 € наем":                                31,
+	} {
+		r, ok := ReadStandingRequest(m)
+		assert.True(t, ok, m)
+		assert.Equal(t, day, r.Day, m)
+		assert.Empty(t, r.Missing, m)
+	}
+	r, ok = ReadStandingRequest("добави: наем 640 € на 1-во всеки месец; телефон 40 € на 10-то всеки месец")
+	assert.True(t, ok)
+	assert.Equal(t, 2, r.Several)
+
 	// Asked for, but not complete: the code says what is missing.
 	r, ok = ReadStandingRequest("запиши, че всеки месец плащам абонамент за игри")
 	assert.True(t, ok)
