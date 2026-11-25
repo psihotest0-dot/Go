@@ -23,7 +23,7 @@ func TestReadStandingRequest(t *testing.T) {
 		"запиши, че на 12 число всеки месец плащам 30 лв за интернет":                             {Cents: 3000, Currency: "BGN", Day: 12, Payment: Unknown},
 		"I pay 9.99 EUR every month on the 3rd for a subscription, add it":                        {Cents: 999, Currency: "EUR", Day: 3, Payment: Unknown},
 		// "на 12" is the amount, not the day.
-		"запиши че плащам на 12 евро всеки месец на 28-ми за игри": {Cents: 1200, Currency: "EUR", Day: 28, Payment: Unknown},
+		"запиши че плащам на 16 евро всеки месец на 26-ти за игри": {Cents: 1600, Currency: "EUR", Day: 26, Payment: Unknown},
 	} {
 		got, ok := ReadStandingRequest(m)
 		assert.True(t, ok, m)
@@ -40,7 +40,7 @@ func TestReadStandingRequest(t *testing.T) {
 
 	for _, m := range []string{
 		"колко плащам всеки месец за телефон?",            // a question
-		"имам ли сметка от 12 евро всеки месец на 28-ми?", // a question too
+		"имам ли сметка от 16 евро всеки месец на 26-ти?", // a question too
 		"кои сметки са месечни",                           // a question
 		"за записа за телефон и интернет -може да го направиш като месечно плащане ,да речем всеки месец на 10-то число", // no request to keep (the owner's, 16:17)
 		"напомни ми всеки месец на 5-ти да платя наема",                                                                  // a reminder: no amount, no "имам/запиши"

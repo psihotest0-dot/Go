@@ -72,7 +72,7 @@ var (
 	// standingQuestion: a question about the bills is not a request for a new one.
 	standingQuestion = regexp.MustCompile(`(?i)^\s*(?:а\s+|и\s+)?(?:колко|кога|кои|какви|кой|коя|има\s+ли|how|when|which|what)(?:[^\p{L}]|$)`)
 
-	// standingAmount: "12 евро", "41,20 €", "€12", "12.50 EUR".
+	// standingAmount: "16 евро", "41,20 €", "€16", "16.50 EUR".
 	standingAmount = regexp.MustCompile(`(?i)(?:(\d{1,6}(?:[.,]\d{1,2})?)\s*(€|евро|eur|euro|лв\.?|лева|bgn)(?:[^\p{L}]|$)|(€)\s*(\d{1,6}(?:[.,]\d{1,2})?))`)
 	// standingDayWords: "на 10-то число", "всяка 28 дата", "всеки 28-ми", "on the 5th".
 	standingDayWords = regexp.MustCompile(`(?i)(?:(?:на|всеки|всяка|всяко|в)\s+(\d{1,2})(?:\s*-?\s*(?:ти|ви|ри|ми|то|во|ро|мо))?(?:\s+(?:число|дата|ден))?|(\d{1,2})\s*-?\s*(?:ти|ви|ри|ми|то|во|ро|мо)(?:\s+(?:число|дата|ден))?|(\d{1,2})\s+(?:число|дата)|on\s+the\s+(\d{1,2})(?:st|nd|rd|th)?)(?:[^\p{L}\d]|$)`)
