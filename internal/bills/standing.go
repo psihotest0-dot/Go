@@ -45,6 +45,13 @@ const standingFileName = "постоянна сметка"
 // standingMaxRunes: a request for a standing bill is a sentence or two.
 const standingMaxRunes = 300
 
+// StandingIncomplete opens the answer of the code to a request that lacks the amount or the day; the
+// next message may bring it ("14 евро", 2026-11-25, 17:55), see CompleteStanding.
+const StandingIncomplete = "За постоянна сметка ми трябват "
+
+// standingFollowMaxRunes: the missing piece alone is a few words.
+const standingFollowMaxRunes = 60
+
 // Standing is a standing bill.
 type Standing struct {
 	ID       int64
@@ -327,7 +334,7 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	}
 	if len(r.Missing) > 0 {
 		metrics.Bills.WithLabelValues("standing_incomplete").Inc()
-		return "За постоянна сметка ми трябват " + strings.Join(r.Missing, " и ") + ". Например: „запиши, че всеки месец на 10-то плащам 40 € за телефон на …“ " +
+		return StandingIncomplete + strings.Join(r.Missing, " и ") + ". Например: „запиши, че всеки месец на 10-то плащам 40 € за телефон на …“ " +
 			"или „запиши, че всяка година на 15 март плащам 120 € застраховка на …“. Нищо не е записано.", true
 	}
 	f, err := s.extractor.ExtractStanding(ctx, message)
@@ -377,6 +384,20 @@ func (s *Service) ProposeStanding(ctx context.Context, userID uuid.UUID, session
 	today := reminders.DayOf(s.now(), s.loc)
 	st.Since = today
 	return standingProposalText(st, today, s.reminders != nil), true
+}
+
+// CompleteStanding answers the message after a request the code said was incomplete: earlier is
+// that request, message the missing piece ("14 евро", "на 28-ми"). handled is false when the message
+// is not a short piece the request lacked.
+func (s *Service) CompleteStanding(ctx context.Context, userID uuid.UUID, session, earlier, message string) (text string, handled bool) {
+	m := strings.TrimSpace(message)
+	if m == "" || utf8.RuneCountInString(m) > standingFollowMaxRunes {
+		return "", false
+	}
+	if !standingAmount.MatchString(m) && !standingDayWords.MatchString(m) && !standingDayWord.MatchString(m) {
+		return "", false
+	}
+	return s.ProposeStanding(ctx, userID, session, strings.TrimSpace(earlier)+" "+m)
 }
 
 // ProposedStanding is the standing bill of the conversation that waits for the person's yes, or nil.

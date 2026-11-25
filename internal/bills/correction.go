@@ -45,8 +45,9 @@ var (
 	// correctionYes: "да" at the start or the end of the answer, apart from the rest ("изтегля се
 	// автоматично, да"); "напомни ми да платя" is not one.
 	correctionYes = regexp.MustCompile(`(?i)(?:^\s*(?:да|добре|ок|окей|ok|yes|запиши\s+(?:я|го))(?:\s*[,.!;]|\s*$)|[,.!;]\s*(?:да|добре|ок|окей|ok|yes|запиши\s+(?:я|го))\s*[.!]*\s*$)`)
-	// correctionNoReminder: "без напомняне", "няма нужда от напомняне", "не ми напомняй".
-	correctionNoReminder = regexp.MustCompile(`(?i)(?:без\s+напомн|няма\s+нужда\s+от\s+напомн|не\s+(?:ми\s+)?напомняй|не\s+искам\s+напомн|не\s+ми\s+трябва\s+напомн|no\s+reminder)`)
+	// correctionNoReminder: "без напомняне", "няма нужда от напомняне", "не ми напомняй"; also
+	// "нямам нужда от напомняне" and its typo "… от запомняне" (the owner's, 2026-11-25, 17:51).
+	correctionNoReminder = regexp.MustCompile(`(?i)(?:без\s+напомн|нямам?\s+нужда\s+от\s+(?:напомн|запомн)|не\s+(?:ми\s+)?(?:трябва\s+|е\s+нужно\s+)?напомн(?:яй|яне)|не\s+искам\s+напомн|no\s+reminder)`)
 	// correctionLead: "седмица по-рано", "3 дни преди", "два дни преди срока", "един месец по-рано".
 	correctionLead = regexp.MustCompile(`(?i)(?:^|[^\p{L}\d])(\d{1,2}|един|една|два|две|три|четири|пет)?\s*(ден|дни|дена|седмиц\p{L}*|месец\p{L}*)\s+(?:по-?\s*рано|преди)`)
 	// correctionSameDay: "в деня", "в самия ден".

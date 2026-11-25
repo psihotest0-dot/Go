@@ -31,6 +31,13 @@ func TestReadCorrection(t *testing.T) {
 		assert.True(t, ok, m)
 		assert.Equal(t, want, got, m)
 	}
+	// The owner's of 2026-11-25, 17:51 and 17:54, with "нямам" and a typo.
+	for _, m := range []string{"изтегля се автоматично,нямам нужда от запомняне", "автоматично е ,нямам нужда от напомняне", "не ми трябва напомняне"} {
+		c, ok := ReadCorrection(m)
+		assert.True(t, ok, m)
+		require.NotNil(t, c.RemindBefore, m)
+		assert.Equal(t, -1, *c.RemindBefore, m)
+	}
 	for _, m := range []string{"да", "не", "Малко по рано", "Благодаря", "добре"} {
 		_, ok := ReadCorrection(m)
 		assert.False(t, ok, m)

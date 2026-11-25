@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/bills"
 	"go-monolith/metrics"
@@ -33,7 +34,7 @@ func (o *Orchestrator) WithBills(s *bills.Service) *Orchestrator {
 }
 
 // billAnswer is the answer of the code to a message about a bill, "" when the model answers it.
-func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session, message string) string {
+func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session, message string, history []openai.ChatCompletionMessage) string {
 	if o.bills == nil {
 		return ""
 	}
@@ -93,6 +94,12 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 	if text, handled := o.bills.ProposeStanding(ctx, userID, session, message); handled {
 		return text
 	}
+	// "14 евро" after the code said the request lacked the amount: the two together.
+	if earlier := incompleteStandingRequest(history); earlier != "" {
+		if text, handled := o.bills.CompleteStanding(ctx, userID, session, earlier, message); handled {
+			return text
+		}
+	}
 	// A question about the bills (a sum, the unpaid ones, a comparison) before "платих": "колко
 	// платих за ток тази година?" is a question, "платих тока" is not.
 	if text, handled := o.bills.Answer(ctx, userID, message); handled {
@@ -102,6 +109,26 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 		if text, handled := o.bills.MarkPaid(ctx, userID, message); handled {
 			return text
 		}
+	}
+	return ""
+}
+
+// incompleteStandingRequest is the person's request the code last answered as incomplete
+// (bills.StandingIncomplete), "" when the last answer was another.
+func incompleteStandingRequest(history []openai.ChatCompletionMessage) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != openai.ChatMessageRoleAssistant {
+			continue
+		}
+		if !strings.HasPrefix(strings.TrimSpace(history[i].Content), bills.StandingIncomplete) {
+			return ""
+		}
+		for j := i - 1; j >= 0; j-- {
+			if history[j].Role == openai.ChatMessageRoleUser {
+				return withoutClosingNote(history[j].Content)
+			}
+		}
+		return ""
 	}
 	return ""
 }

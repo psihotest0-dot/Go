@@ -459,6 +459,44 @@ func TestAClaimedReminderIsCorrected(t *testing.T) {
 	assert.True(t, claimsABillOrReminder("Записах в базата сметката.", true), "the plain claims count either way")
 }
 
+// 2026-11-25, 17:54-17:55: the request lacked the amount and the next message was "14 евро"; the
+// model answered it. Now the code puts the two together. "нямам нужда от напомняне" is no reminder.
+func TestTheMissingAmountComesInTheNextMessage(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	e.readsStanding(t, bills.StandingFields{Issuer: "beispiel spiele club", Kind: "subscription", Summary: "Абонамент за игри"})
+	out := e.say(t, "запиши че на всяко 28 число от месеца имам плащане за beispiel spiele club -автоматично е ,нямам нужда от напомняне")
+	assert.Contains(t, out, "трябват сумата")
+	out = e.say(t, "14 евро")
+	assert.Contains(t, out, "Постоянна сметка:")
+	assert.Contains(t, out, "14,00 € всеки месец на 28-о число — изтегля се автоматично")
+	assert.Contains(t, out, "без напомняне")
+	assert.Contains(t, e.say(t, "да"), "Записах постоянната сметка ✅")
+	e.at(25, 12, 11)
+	require.NoError(t, e.svc.StandingPass(ctx))
+	active, _ := e.store.Active(ctx, e.userID)
+	assert.Empty(t, active, "no reminder, as asked")
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+
+	// After another answer a bare amount is the model's again.
+	e.say(t, "какви сметки имам")
+	e.say(t, "14 евро")
+	assert.NotEmpty(t, e.chat.Requests)
+}
+
+func TestOnlyTheLastAnswerCanAskForTheMissingPiece(t *testing.T) {
+	msg := func(role, content string) openai.ChatCompletionMessage {
+		return openai.ChatCompletionMessage{Role: role, Content: content}
+	}
+	asked := msg(openai.ChatMessageRoleAssistant, bills.StandingIncomplete+"сумата.")
+	request := msg(openai.ChatMessageRoleUser, "запиши, че всеки месец на 5-то плащам наем")
+	assert.Equal(t, "запиши, че всеки месец на 5-то плащам наем", incompleteStandingRequest([]openai.ChatCompletionMessage{request, asked}))
+	assert.Empty(t, incompleteStandingRequest([]openai.ChatCompletionMessage{
+		request, asked, msg(openai.ChatMessageRoleUser, "какво ново"), msg(openai.ChatMessageRoleAssistant, "Нищо особено."),
+	}), "another answer came after it")
+	assert.Empty(t, incompleteStandingRequest(nil))
+}
+
 // 2026-11-25, 17:35 and 17:37: four bills in one message became one; "всяко първо число" was not read.
 func TestSeveralStandingBillsAreAskedOneByOneAndADayInAWordIsRead(t *testing.T) {
 	e := newBillEnv(t)
