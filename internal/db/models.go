@@ -43,6 +43,7 @@ type Bill struct {
 	ReminderID  sql.NullInt64 `json:"reminder_id"`
 	CreatedAt   time.Time     `json:"created_at"`
 	UpdatedAt   time.Time     `json:"updated_at"`
+	StandingID  sql.NullInt64 `json:"standing_id"`
 }
 
 type ChatAttachment struct {
@@ -174,6 +175,23 @@ type SessionSummary struct {
 	CoveredUntilMessageID uuid.UUID `json:"covered_until_message_id"`
 	CoveredUntilAt        time.Time `json:"covered_until_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type StandingBill struct {
+	ID          int64     `json:"id"`
+	UserID      uuid.UUID `json:"user_id"`
+	SessionID   string    `json:"session_id"`
+	Issuer      string    `json:"issuer"`
+	Kind        string    `json:"kind"`
+	AmountCents int64     `json:"amount_cents"`
+	Currency    string    `json:"currency"`
+	Day         int32     `json:"day"`
+	Month       int32     `json:"month"`
+	Payment     string    `json:"payment"`
+	Summary     string    `json:"summary"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type TaskPlan struct {

@@ -13,6 +13,48 @@ import (
 	"github.com/google/uuid"
 )
 
+const allKeptStanding = `-- name: AllKeptStanding :many
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at FROM standing_bills WHERE status = 'kept' ORDER BY id
+`
+
+func (q *Queries) AllKeptStanding(ctx context.Context) ([]StandingBill, error) {
+	rows, err := q.db.QueryContext(ctx, allKeptStanding)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StandingBill{}
+	for rows.Next() {
+		var i StandingBill
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Issuer,
+			&i.Kind,
+			&i.AmountCents,
+			&i.Currency,
+			&i.Day,
+			&i.Month,
+			&i.Payment,
+			&i.Summary,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimBillReport = `-- name: ClaimBillReport :execrows
 INSERT INTO bill_reports (user_id, month, session_id) VALUES ($1, $2, $3)
 ON CONFLICT (user_id, month) DO NOTHING
@@ -44,12 +86,46 @@ func (q *Queries) CountKeptBills(ctx context.Context, userID uuid.UUID) (int64, 
 	return count, err
 }
 
+const deleteBill = `-- name: DeleteBill :execrows
+DELETE FROM bills WHERE id = $1 AND user_id = $2
+`
+
+type DeleteBillParams struct {
+	ID     int64     `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteBill(ctx context.Context, arg DeleteBillParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBill, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const deleteStaleProposedBills = `-- name: DeleteStaleProposedBills :execrows
 DELETE FROM bills WHERE status = 'proposed' AND created_at < $1
 `
 
 func (q *Queries) DeleteStaleProposedBills(ctx context.Context, createdAt time.Time) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteStaleProposedBills, createdAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteStanding = `-- name: DeleteStanding :execrows
+DELETE FROM standing_bills WHERE id = $1 AND user_id = $2 AND status = 'kept'
+`
+
+type DeleteStandingParams struct {
+	ID     int64     `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) DeleteStanding(ctx context.Context, arg DeleteStandingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteStanding, arg.ID, arg.UserID)
 	if err != nil {
 		return 0, err
 	}
@@ -73,8 +149,25 @@ func (q *Queries) DropProposedBill(ctx context.Context, arg DropProposedBillPara
 	return result.RowsAffected()
 }
 
+const dropProposedStanding = `-- name: DropProposedStanding :execrows
+DELETE FROM standing_bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
+`
+
+type DropProposedStandingParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+func (q *Queries) DropProposedStanding(ctx context.Context, arg DropProposedStandingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, dropProposedStanding, arg.UserID, arg.SessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getProposedBill = `-- name: GetProposedBill :one
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at FROM bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
 `
 
 type GetProposedBillParams struct {
@@ -105,6 +198,105 @@ func (q *Queries) GetProposedBill(ctx context.Context, arg GetProposedBillParams
 		&i.ReminderID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StandingID,
+	)
+	return i, err
+}
+
+const getProposedStanding = `-- name: GetProposedStanding :one
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at FROM standing_bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed'
+`
+
+type GetProposedStandingParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+}
+
+func (q *Queries) GetProposedStanding(ctx context.Context, arg GetProposedStandingParams) (StandingBill, error) {
+	row := q.db.QueryRowContext(ctx, getProposedStanding, arg.UserID, arg.SessionID)
+	var i StandingBill
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Issuer,
+		&i.Kind,
+		&i.AmountCents,
+		&i.Currency,
+		&i.Day,
+		&i.Month,
+		&i.Payment,
+		&i.Summary,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertStandingPayment = `-- name: InsertStandingPayment :one
+INSERT INTO bills (user_id, session_id, issuer, kind, amount_cents, currency, due_date, payment, repeat, summary,
+                   file_name, file_hash, status, standing_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'kept', $13)
+ON CONFLICT (user_id, file_hash) WHERE status = 'kept' DO NOTHING
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id
+`
+
+type InsertStandingPaymentParams struct {
+	UserID      uuid.UUID     `json:"user_id"`
+	SessionID   string        `json:"session_id"`
+	Issuer      string        `json:"issuer"`
+	Kind        string        `json:"kind"`
+	AmountCents int64         `json:"amount_cents"`
+	Currency    string        `json:"currency"`
+	DueDate     sql.NullTime  `json:"due_date"`
+	Payment     string        `json:"payment"`
+	Repeat      string        `json:"repeat"`
+	Summary     string        `json:"summary"`
+	FileName    string        `json:"file_name"`
+	FileHash    string        `json:"file_hash"`
+	StandingID  sql.NullInt64 `json:"standing_id"`
+}
+
+// The payment of a standing bill on one of its days, written once (the file_hash of the day).
+func (q *Queries) InsertStandingPayment(ctx context.Context, arg InsertStandingPaymentParams) (Bill, error) {
+	row := q.db.QueryRowContext(ctx, insertStandingPayment,
+		arg.UserID,
+		arg.SessionID,
+		arg.Issuer,
+		arg.Kind,
+		arg.AmountCents,
+		arg.Currency,
+		arg.DueDate,
+		arg.Payment,
+		arg.Repeat,
+		arg.Summary,
+		arg.FileName,
+		arg.FileHash,
+		arg.StandingID,
+	)
+	var i Bill
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Issuer,
+		&i.Kind,
+		&i.AmountCents,
+		&i.Currency,
+		&i.InvoiceDate,
+		&i.DueDate,
+		&i.PaidDate,
+		&i.Payment,
+		&i.Repeat,
+		&i.Summary,
+		&i.FileName,
+		&i.FileHash,
+		&i.Status,
+		&i.ReminderID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StandingID,
 	)
 	return i, err
 }
@@ -112,7 +304,7 @@ func (q *Queries) GetProposedBill(ctx context.Context, arg GetProposedBillParams
 const keepBill = `-- name: KeepBill :one
 UPDATE bills SET status = 'kept', reminder_id = $3, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'proposed'
-RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id
 `
 
 type KeepBillParams struct {
@@ -145,12 +337,47 @@ func (q *Queries) KeepBill(ctx context.Context, arg KeepBillParams) (Bill, error
 		&i.ReminderID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StandingID,
+	)
+	return i, err
+}
+
+const keepStanding = `-- name: KeepStanding :one
+UPDATE standing_bills SET status = 'kept', updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'proposed'
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at
+`
+
+type KeepStandingParams struct {
+	ID     int64     `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// The person's yes: only a proposal that is still there is kept, once.
+func (q *Queries) KeepStanding(ctx context.Context, arg KeepStandingParams) (StandingBill, error) {
+	row := q.db.QueryRowContext(ctx, keepStanding, arg.ID, arg.UserID)
+	var i StandingBill
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Issuer,
+		&i.Kind,
+		&i.AmountCents,
+		&i.Currency,
+		&i.Day,
+		&i.Month,
+		&i.Payment,
+		&i.Summary,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const keptBillWithFile = `-- name: KeptBillWithFile :one
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at FROM bills WHERE user_id = $1 AND file_hash = $2 AND status = 'kept'
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills WHERE user_id = $1 AND file_hash = $2 AND status = 'kept'
 `
 
 type KeptBillWithFileParams struct {
@@ -181,12 +408,13 @@ func (q *Queries) KeptBillWithFile(ctx context.Context, arg KeptBillWithFilePara
 		&i.ReminderID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StandingID,
 	)
 	return i, err
 }
 
 const keptBillsBetween = `-- name: KeptBillsBetween :many
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at FROM bills
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills
 WHERE user_id = $1 AND status = 'kept'
   AND COALESCE(due_date, invoice_date, paid_date) BETWEEN $2::date AND $3::date
 ORDER BY COALESCE(due_date, invoice_date, paid_date), id
@@ -228,6 +456,7 @@ func (q *Queries) KeptBillsBetween(ctx context.Context, arg KeptBillsBetweenPara
 			&i.ReminderID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StandingID,
 		); err != nil {
 			return nil, err
 		}
@@ -254,7 +483,7 @@ func (q *Queries) LatestBillSession(ctx context.Context, userID uuid.UUID) (stri
 }
 
 const listKeptBills = `-- name: ListKeptBills :many
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at FROM bills WHERE user_id = $1 AND status = 'kept'
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills WHERE user_id = $1 AND status = 'kept'
 ORDER BY COALESCE(due_date, invoice_date, paid_date) DESC NULLS LAST, id DESC
 LIMIT $2
 `
@@ -291,6 +520,49 @@ func (q *Queries) ListKeptBills(ctx context.Context, arg ListKeptBillsParams) ([
 			&i.FileHash,
 			&i.Status,
 			&i.ReminderID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StandingID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKeptStanding = `-- name: ListKeptStanding :many
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at FROM standing_bills WHERE user_id = $1 AND status = 'kept' ORDER BY id
+`
+
+func (q *Queries) ListKeptStanding(ctx context.Context, userID uuid.UUID) ([]StandingBill, error) {
+	rows, err := q.db.QueryContext(ctx, listKeptStanding, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []StandingBill{}
+	for rows.Next() {
+		var i StandingBill
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Issuer,
+			&i.Kind,
+			&i.AmountCents,
+			&i.Currency,
+			&i.Day,
+			&i.Month,
+			&i.Payment,
+			&i.Summary,
+			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -330,7 +602,7 @@ const proposeBill = `-- name: ProposeBill :one
 INSERT INTO bills (user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date,
                    payment, repeat, summary, file_name, file_hash, status)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'proposed')
-RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id
 `
 
 type ProposeBillParams struct {
@@ -388,12 +660,80 @@ func (q *Queries) ProposeBill(ctx context.Context, arg ProposeBillParams) (Bill,
 		&i.ReminderID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StandingID,
 	)
 	return i, err
 }
 
+const proposeStanding = `-- name: ProposeStanding :one
+INSERT INTO standing_bills (user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed')
+RETURNING id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at
+`
+
+type ProposeStandingParams struct {
+	UserID      uuid.UUID `json:"user_id"`
+	SessionID   string    `json:"session_id"`
+	Issuer      string    `json:"issuer"`
+	Kind        string    `json:"kind"`
+	AmountCents int64     `json:"amount_cents"`
+	Currency    string    `json:"currency"`
+	Day         int32     `json:"day"`
+	Month       int32     `json:"month"`
+	Payment     string    `json:"payment"`
+	Summary     string    `json:"summary"`
+}
+
+func (q *Queries) ProposeStanding(ctx context.Context, arg ProposeStandingParams) (StandingBill, error) {
+	row := q.db.QueryRowContext(ctx, proposeStanding,
+		arg.UserID,
+		arg.SessionID,
+		arg.Issuer,
+		arg.Kind,
+		arg.AmountCents,
+		arg.Currency,
+		arg.Day,
+		arg.Month,
+		arg.Payment,
+		arg.Summary,
+	)
+	var i StandingBill
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.SessionID,
+		&i.Issuer,
+		&i.Kind,
+		&i.AmountCents,
+		&i.Currency,
+		&i.Day,
+		&i.Month,
+		&i.Payment,
+		&i.Summary,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setBillReminder = `-- name: SetBillReminder :exec
+UPDATE bills SET reminder_id = $3, updated_at = now() WHERE id = $1 AND user_id = $2
+`
+
+type SetBillReminderParams struct {
+	ID         int64         `json:"id"`
+	UserID     uuid.UUID     `json:"user_id"`
+	ReminderID sql.NullInt64 `json:"reminder_id"`
+}
+
+func (q *Queries) SetBillReminder(ctx context.Context, arg SetBillReminderParams) error {
+	_, err := q.db.ExecContext(ctx, setBillReminder, arg.ID, arg.UserID, arg.ReminderID)
+	return err
+}
+
 const similarKeptBills = `-- name: SimilarKeptBills :many
-SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at FROM bills
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills
 WHERE user_id = $1 AND status = 'kept' AND amount_cents = $2
   AND (invoice_date IS NOT DISTINCT FROM $3::date
        OR ($4::date IS NOT NULL AND due_date = $4::date)
@@ -448,6 +788,71 @@ func (q *Queries) SimilarKeptBills(ctx context.Context, arg SimilarKeptBillsPara
 			&i.ReminderID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StandingID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const standingPaymentsOfKindBetween = `-- name: StandingPaymentsOfKindBetween :many
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills
+WHERE user_id = $1 AND status = 'kept' AND standing_id IS NOT NULL AND kind = $2
+  AND due_date BETWEEN $3::date AND $4::date
+`
+
+type StandingPaymentsOfKindBetweenParams struct {
+	UserID  uuid.UUID `json:"user_id"`
+	Kind    string    `json:"kind"`
+	FromDay time.Time `json:"from_day"`
+	ToDay   time.Time `json:"to_day"`
+}
+
+// The payments of standing bills of a kind in a span of days: a document of the same kind and month
+// takes their place.
+func (q *Queries) StandingPaymentsOfKindBetween(ctx context.Context, arg StandingPaymentsOfKindBetweenParams) ([]Bill, error) {
+	rows, err := q.db.QueryContext(ctx, standingPaymentsOfKindBetween,
+		arg.UserID,
+		arg.Kind,
+		arg.FromDay,
+		arg.ToDay,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Bill{}
+	for rows.Next() {
+		var i Bill
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Issuer,
+			&i.Kind,
+			&i.AmountCents,
+			&i.Currency,
+			&i.InvoiceDate,
+			&i.DueDate,
+			&i.PaidDate,
+			&i.Payment,
+			&i.Repeat,
+			&i.Summary,
+			&i.FileName,
+			&i.FileHash,
+			&i.Status,
+			&i.ReminderID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StandingID,
 		); err != nil {
 			return nil, err
 		}
@@ -474,6 +879,62 @@ type UnclaimBillReportParams struct {
 func (q *Queries) UnclaimBillReport(ctx context.Context, arg UnclaimBillReportParams) error {
 	_, err := q.db.ExecContext(ctx, unclaimBillReport, arg.UserID, arg.Month)
 	return err
+}
+
+const upcomingStandingPayments = `-- name: UpcomingStandingPayments :many
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id FROM bills
+WHERE user_id = $1 AND standing_id = $2 AND status = 'kept' AND paid_date IS NULL AND due_date >= $3::date
+`
+
+type UpcomingStandingPaymentsParams struct {
+	UserID     uuid.UUID     `json:"user_id"`
+	StandingID sql.NullInt64 `json:"standing_id"`
+	FromDay    time.Time     `json:"from_day"`
+}
+
+// The payments of a standing bill still to come and not paid: they go with it when it is removed.
+func (q *Queries) UpcomingStandingPayments(ctx context.Context, arg UpcomingStandingPaymentsParams) ([]Bill, error) {
+	rows, err := q.db.QueryContext(ctx, upcomingStandingPayments, arg.UserID, arg.StandingID, arg.FromDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Bill{}
+	for rows.Next() {
+		var i Bill
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Issuer,
+			&i.Kind,
+			&i.AmountCents,
+			&i.Currency,
+			&i.InvoiceDate,
+			&i.DueDate,
+			&i.PaidDate,
+			&i.Payment,
+			&i.Repeat,
+			&i.Summary,
+			&i.FileName,
+			&i.FileHash,
+			&i.Status,
+			&i.ReminderID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StandingID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const usersWithKeptBills = `-- name: UsersWithKeptBills :many

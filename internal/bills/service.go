@@ -138,6 +138,10 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 	if _, err := q.DropProposedBill(ctx, db.DropProposedBillParams{UserID: userID, SessionID: session}); err != nil {
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
 	}
+	// The "да" that follows is for this bill, not for a standing one that waited (standing.go).
+	if _, err := q.DropProposedStanding(ctx, db.DropProposedStandingParams{UserID: userID, SessionID: session}); err != nil {
+		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+	}
 	if _, err := q.ProposeBill(ctx, db.ProposeBillParams{
 		UserID: userID, SessionID: session, Issuer: b.Issuer, Kind: b.Kind, AmountCents: b.Cents, Currency: b.Currency,
 		InvoiceDate: nullDate(b.InvoiceDate), DueDate: nullDate(b.DueDate), PaidDate: nullDate(b.PaidDate),
@@ -247,6 +251,9 @@ func (s *Service) Keep(ctx context.Context, userID uuid.UUID, session string, p 
 		text += fmt.Sprintf("\n⏰ Ще ти напомня %s.", reminders.OnText(plan.At, now, s.loc))
 	} else if plan.Why != "" {
 		text += "\nБез напомняне: " + plan.Why + "."
+	}
+	if note := s.replaceStandingPayments(ctx, userID, p); note != "" {
+		text += "\n" + note
 	}
 	return text
 }

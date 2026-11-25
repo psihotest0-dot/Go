@@ -21,11 +21,15 @@ import (
 // The monthly report (phase 2): after 09:00 on the 1st, once a month, the bills of the month
 // before - the total, by kind, the change against the month before it, the unpaid ones - go into
 // the person's conversation and to Telegram. A backend that was off on the 1st sends it when it
-// starts. Off unless BILLS_REPORT_ENABLED.
+// starts, up to the 7th: later than that the report is old news. On 2026-11-25 the owner kept the
+// first bill of October and the report of October came at once, 24 days late - on the 1st there had
+// been no bill to report, and nothing said that its day was over. Off unless BILLS_REPORT_ENABLED.
 
 const (
 	reportEvery  = 10 * time.Minute
 	reportMinute = 9 * 60
+	// reportLastDay is the last day of a month its report of the month before may still go out.
+	reportLastDay = 7
 )
 
 // Notifier sends a text to the Telegram chat of a conversation "tg-<chat id>".
@@ -51,7 +55,7 @@ func (s *Service) ReportPass(ctx context.Context, notify Notifier) error {
 	now := s.now()
 	today := reminders.DayOf(now, s.loc)
 	first := reminders.Day{Year: today.Year, Month: today.Month, Day: 1}
-	if now.Before(first.Time(reportMinute, s.loc)) {
+	if now.Before(first.Time(reportMinute, s.loc)) || today.Day > reportLastDay {
 		return nil
 	}
 	prevDay := first.AddDays(-1)

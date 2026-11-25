@@ -86,6 +86,14 @@ func (s *Service) Answer(ctx context.Context, userID uuid.UUID, message string) 
 		slog.WarnContext(ctx, "could not count the bills", "err", err)
 		return "", false
 	}
+	standing := s.StandingLines(ctx, userID)
+	if q.Ask == AskWhere {
+		metrics.Bills.WithLabelValues("question_" + q.Ask).Inc()
+		return s.whereText(ctx, userID, n, standing), true
+	}
+	if n == 0 && standing != "" {
+		return "Още нямаш записани плащания — първото от постоянните сметки се записва няколко дни преди деня му.\n" + standing, true
+	}
 	if n == 0 {
 		metrics.Bills.WithLabelValues("question_no_bills").Inc()
 		return "Още нямаш записани сметки, затова нямам какво да събера. Качи сметка с бутона „Сметка“ във Flet " +
@@ -96,8 +104,44 @@ func (s *Service) Answer(ctx context.Context, userID uuid.UUID, message string) 
 		slog.WarnContext(ctx, "a question about the bills could not be answered", "err", err)
 		return "Не успях да прочета сметките (грешка в базата). Опитай пак след малко.", true
 	}
+	if q.Ask == AskList && standing != "" {
+		text += "\n\n" + standing
+	}
 	metrics.Bills.WithLabelValues("question_" + q.Ask).Inc()
 	return text, true
+}
+
+// whereLatest is how many of the latest bills the answer about where they are kept names.
+const whereLatest = 10
+
+// whereText says where the bills are kept: in the database, by the code, with the latest of them.
+func (s *Service) whereText(ctx context.Context, userID uuid.UUID, count int64, standing string) string {
+	var b strings.Builder
+	b.WriteString("Сметките, които приемеш с „да“, ги пази кодът в базата данни (не във файл): оттам са сборовете, " +
+		"справките, „кои не съм платил?“ и напомнянията.\n")
+	if count == 0 {
+		b.WriteString("Сега там няма записани сметки.\n")
+	} else {
+		fmt.Fprintf(&b, "Сега там има %s", countWord(int(count)))
+		rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: whereLatest})
+		if err == nil && len(rows) > 0 {
+			if count > whereLatest {
+				fmt.Fprintf(&b, ", последните %d", whereLatest)
+			}
+			b.WriteString(":\n")
+			for i, r := range rows {
+				fmt.Fprintf(&b, "%d. %s\n", i+1, oneLine(fromRow(r), s.loc))
+			}
+		} else {
+			b.WriteString(".\n")
+		}
+	}
+	if standing != "" {
+		b.WriteString(standing + "\n")
+	}
+	b.WriteString("Самият PDF или снимка не се пазят — пазят се прочетените данни. Текстовите файлове в „Бележките на Лили“ " +
+		"(например bills.txt) са само бележки: кодът не ги чете като сметки и те не влизат в сборовете.")
+	return b.String()
 }
 
 func kindLabel(kind string) string {

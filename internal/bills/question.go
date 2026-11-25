@@ -21,6 +21,10 @@ const (
 	AskList    = "list"
 	AskUnpaid  = "unpaid"
 	AskCompare = "compare"
+	// AskWhere: where the bills are kept ("имат ли копие в базата или само в bills.txt?"). The model,
+	// asked on 2026-11-25, said they were only in a text file of its own - it does not know that the
+	// code keeps them in the database.
+	AskWhere = "where"
 )
 
 // Period is a span of days, From and To included, and how the answer names it.
@@ -48,6 +52,10 @@ var (
 	listWords   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:кои|какви|покажи|изреди|списък|list|which)(?:[^\p{L}]|$)`)
 	unpaidWords = regexp.MustCompile(`(?i)(?:неплатен|не\s+съм\s+(?:ги\s+|я\s+)?платил|не\s+са\s+платени|дълж|чакат\s+плащане|unpaid|not\s+paid)`)
 	compareWord = regexp.MustCompile(`(?i)(?:сравн|спрямо|в\s+сравнение|повече\s+ли|по-малко\s+ли|compare|versus|\bvs\b)`)
+	// whereKept: where they are kept - "къде записа сметките", "имат ли копие в базата данни",
+	// "пазиш ли ги", "в базата ли са". whereAsk: and it is a question.
+	whereKept = regexp.MustCompile(`(?i)(?:баз[аи]|база\s+данни|копие|пазиш|пазят|пази\s+ли|съхран|записа(?:ла)?(?:[^\p{L}]|$)|database|stored|kept)`)
+	whereAsk  = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:къде|ли|where|do\s+you|are\s+they)(?:[^\p{L}]|$)|\?`)
 
 	thisMonth = regexp.MustCompile(`(?i)(?:този|тоя|текущия|this)\s+(?:месец|month)`)
 	lastMonth = regexp.MustCompile(`(?i)(?:миналия|предишния|last|previous)\s+(?:месец|month)`)
@@ -112,6 +120,9 @@ func ReadQuestion(message string, today reminders.Day) (Question, bool) {
 		}
 	}
 	switch {
+	case whereKept.MatchString(m) && whereAsk.MatchString(m):
+		q.Ask = AskWhere
+		return q, true
 	case unpaidWords.MatchString(m):
 		q.Ask = AskUnpaid
 	case compareWord.MatchString(m):

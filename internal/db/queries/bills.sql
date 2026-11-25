@@ -66,3 +66,55 @@ ON CONFLICT (user_id, month) DO NOTHING;
 
 -- name: UnclaimBillReport :exec
 DELETE FROM bill_reports WHERE user_id = $1 AND month = $2;
+
+-- name: DropProposedStanding :execrows
+DELETE FROM standing_bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed';
+
+-- name: ProposeStanding :one
+INSERT INTO standing_bills (user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'proposed')
+RETURNING *;
+
+-- name: GetProposedStanding :one
+SELECT * FROM standing_bills WHERE user_id = $1 AND session_id = $2 AND status = 'proposed';
+
+-- name: KeepStanding :one
+-- The person's yes: only a proposal that is still there is kept, once.
+UPDATE standing_bills SET status = 'kept', updated_at = now()
+WHERE id = $1 AND user_id = $2 AND status = 'proposed'
+RETURNING *;
+
+-- name: ListKeptStanding :many
+SELECT * FROM standing_bills WHERE user_id = $1 AND status = 'kept' ORDER BY id;
+
+-- name: AllKeptStanding :many
+SELECT * FROM standing_bills WHERE status = 'kept' ORDER BY id;
+
+-- name: DeleteStanding :execrows
+DELETE FROM standing_bills WHERE id = $1 AND user_id = $2 AND status = 'kept';
+
+-- name: InsertStandingPayment :one
+-- The payment of a standing bill on one of its days, written once (the file_hash of the day).
+INSERT INTO bills (user_id, session_id, issuer, kind, amount_cents, currency, due_date, payment, repeat, summary,
+                   file_name, file_hash, status, standing_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'kept', $13)
+ON CONFLICT (user_id, file_hash) WHERE status = 'kept' DO NOTHING
+RETURNING *;
+
+-- name: SetBillReminder :exec
+UPDATE bills SET reminder_id = $3, updated_at = now() WHERE id = $1 AND user_id = $2;
+
+-- name: UpcomingStandingPayments :many
+-- The payments of a standing bill still to come and not paid: they go with it when it is removed.
+SELECT * FROM bills
+WHERE user_id = $1 AND standing_id = $2 AND status = 'kept' AND paid_date IS NULL AND due_date >= sqlc.arg(from_day)::date;
+
+-- name: StandingPaymentsOfKindBetween :many
+-- The payments of standing bills of a kind in a span of days: a document of the same kind and month
+-- takes their place.
+SELECT * FROM bills
+WHERE user_id = $1 AND status = 'kept' AND standing_id IS NOT NULL AND kind = $2
+  AND due_date BETWEEN sqlc.arg(from_day)::date AND sqlc.arg(to_day)::date;
+
+-- name: DeleteBill :execrows
+DELETE FROM bills WHERE id = $1 AND user_id = $2;
