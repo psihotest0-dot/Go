@@ -248,6 +248,10 @@ func (o *Orchestrator) generateGuarded(
 	tools []openai.Tool,
 	onDelta deltaFunc,
 ) (string, []openai.ToolCall, error) {
+	// "Как виждаш снимката?": the model sees no picture (image_note.go).
+	if asksAboutImages(lastUserContent(finalMessages)) {
+		finalMessages = withNoteOnLastUser(finalMessages, imageNote)
+	}
 	content, executed, err := o.generateChecked(ctx, finalMessages, tools, onDelta)
 	if err != nil {
 		return content, executed, err

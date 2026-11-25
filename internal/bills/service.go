@@ -38,8 +38,16 @@ type textReader interface {
 	Extract(ctx context.Context, r io.Reader) (string, error)
 }
 
+// AttachText attaches a text to a conversation as a file (attachments.Service.Add).
+type AttachText func(ctx context.Context, userID uuid.UUID, session, name, text string) error
+
+// maxAttachedRunes bounds the text of a document that is attached (the attachments take 256 KB).
+const maxAttachedRunes = 60000
+
 // Service reads bills, keeps them, and makes the reminders of their due days.
 type Service struct {
+	// attach, when set, keeps the text of a document that is no bill in the conversation.
+	attach    AttachText
 	d         *db.Database
 	q         *db.Queries
 	pdf       textReader
@@ -56,6 +64,32 @@ type Service struct {
 func NewService(d *db.Database, pdf, image textReader, extractor *Extractor, rem *reminders.Store, wake func()) *Service {
 	return &Service{d: d, q: d.Queries, pdf: pdf, image: image, extractor: extractor, reminders: rem, wake: wake,
 		loc: reminders.Location(), now: time.Now}
+}
+
+// WithAttachments lets the text of an upload that is no bill be attached to the conversation, so that
+// "какво пише?" has something to read (2026-11-24 and 25: a photo of a reference book and of bank
+// papers got "не прилича на сметка" and nothing else; the model could not see the text).
+func (s *Service) WithAttachments(attach AttachText) *Service {
+	s.attach = attach
+	return s
+}
+
+// attachText attaches the text the code read from an upload and says so, "" when it could not.
+func (s *Service) attachText(ctx context.Context, userID uuid.UUID, session, name, text string) string {
+	if s.attach == nil {
+		return ""
+	}
+	if r := []rune(text); len(r) > maxAttachedRunes {
+		text = string(r[:maxAttachedRunes]) + "\n[… текстът е отрязан]"
+	}
+	file := name + ".txt"
+	body := "Текст, прочетен от „" + name + "“ (PDF или OCR на снимка; може да има грешно разчетени букви):\n\n" + strings.TrimSpace(text) + "\n"
+	if err := s.attach(ctx, userID, session, file, body); err != nil {
+		slog.WarnContext(ctx, "the text of an upload could not be attached", "err", err)
+		return ""
+	}
+	metrics.Bills.WithLabelValues("text_attached").Inc()
+	return " Прочетения текст прикачих към разговора като „" + file + "“ — питай ме „какво пише?“, „преведи го“ или „обобщи го“."
 }
 
 // Read reads an uploaded bill and answers with what it found and the question whether to keep it;
@@ -112,11 +146,11 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 	switch problem {
 	case NotABill:
 		metrics.Bills.WithLabelValues("not_a_bill").Inc()
-		return "Това не прилича на сметка или фактура, затова не я записвам."
+		return "Това не прилича на сметка или фактура, затова не я записвам." + s.attachText(ctx, userID, session, name, text)
 	case AmountMissing:
 		metrics.Bills.WithLabelValues("amount_missing").Inc()
 		return "Не намерих в текста сумата за плащане, затова не записвам сметката (записвам само суми, които са в документа). " +
-			"Ако е скан, опитай с по-ясен."
+			"Ако е скан, опитай с по-ясен." + s.attachText(ctx, userID, session, name, text)
 	}
 	for _, d := range b.Dropped {
 		metrics.Bills.WithLabelValues("dropped_" + d).Inc()

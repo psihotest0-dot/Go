@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/cors"
@@ -330,6 +331,11 @@ func run() error {
 		}
 		billService = bills.NewService(database, ingest.NewPDFExtractor().WithOCRLanguages(billLangs),
 			ingest.NewImageOCRExtractor().WithLanguages(billLangs), bills.NewExtractor(llmClient), reminderStore, reminderWake)
+		// The text of an upload that is no bill is attached to the conversation ("какво пише?").
+		billService.WithAttachments(func(ctx context.Context, userID uuid.UUID, session, name, text string) error {
+			_, err := attachmentService.Add(ctx, userID, session, name, text)
+			return err
+		})
 		orchestrator.WithBills(billService)
 		// The payments of the standing bills, a few days before each of their days (bills/standing.go).
 		go func() {

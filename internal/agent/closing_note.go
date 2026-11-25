@@ -52,6 +52,8 @@ func closingNoteFor(repliesBefore int64, userText string, hasFiles bool, every i
 // withoutClosingNote is the message without the closing note that withClosingNote added to
 // it. Whatever another note put after it stays.
 func withoutClosingNote(content string) string {
+	// The note about pictures (image_note.go) is not the person's either.
+	content = strings.Replace(content, "\n\n"+imageNote, "", 1)
 	for _, note := range []string{closingNoteQuestion, closingNoteStatement} {
 		if i := strings.LastIndex(content, note); i >= 0 {
 			return content[:i] + content[i+len(note):]

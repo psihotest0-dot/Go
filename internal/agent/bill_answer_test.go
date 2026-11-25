@@ -226,6 +226,40 @@ func TestTheMonthlyReportGoesOnceAMonth(t *testing.T) {
 	assert.Equal(t, 0, sent, "no Telegram chat is linked to the test user")
 }
 
+// 2026-11-24 21:12 and 2026-11-25 16:57: a photo that is no bill got "не прилича на сметка" and
+// nothing else, and "можеш ли да прочетеш какво пише?" had nothing to read. Now its text is attached.
+func TestTheTextOfAnUploadThatIsNoBillIsAttached(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	e.svc.WithAttachments(func(ctx context.Context, userID uuid.UUID, session, name, text string) error {
+		_, err := e.reminderEnv.attachmentEnv.svc.Add(ctx, userID, session, name, text)
+		return err
+	})
+	e.reads(t, bills.Fields{IsBill: false})
+	out, err := e.svc.Read(ctx, e.userID, e.session, "snimka.jpg", []byte("%PDF-1.4 page"))
+	require.NoError(t, err)
+	assert.Contains(t, out, "Това не прилича на сметка")
+	assert.Contains(t, out, "прикачих към разговора като „snimka.jpg.txt“")
+	f, err := e.reminderEnv.attachmentEnv.svc.Find(ctx, e.userID, e.session, "snimka.jpg.txt")
+	require.NoError(t, err)
+	assert.Contains(t, f.Content, "Beispiel Telefon GmbH", "the text the code read")
+	assert.Contains(t, f.Content, "може да има грешно разчетени букви")
+
+	// A bill without its amount: the same.
+	f2 := madeUpFields
+	f2.Amount = "95,34"
+	e.reads(t, f2)
+	out, _ = e.svc.Read(ctx, e.userID, e.session, "kopie.pdf", []byte("%PDF-1.4 other"))
+	assert.Contains(t, out, "Не намерих в текста сумата")
+	assert.Contains(t, out, "„kopie.pdf.txt“")
+
+	// Without the attachments nothing is promised.
+	plain := bills.NewService(e.db, fakeText{madeUpBill}, fakeText{madeUpBill}, bills.NewExtractor(e.model), e.store, nil)
+	e.reads(t, bills.Fields{IsBill: false})
+	out, _ = plain.Read(ctx, e.userID, e.session, "a.jpg", []byte("%PDF-1.4 third"))
+	assert.NotContains(t, out, "прикачих")
+}
+
 // readsStanding makes the model name the issuer and the kind of a standing bill.
 func (e *billEnv) readsStanding(t *testing.T, f bills.StandingFields) {
 	t.Helper()
