@@ -395,9 +395,14 @@ func writeUnpaid(b *strings.Builder, unpaid []Bill) {
 	fmt.Fprintf(b, "Неплатени от тях: %s (%s) — „кои не съм платил?“ ги изрежда.\n", countWord(len(unpaid)), Money(cents, "EUR"))
 }
 
+// unpaidText lists the unpaid bills the question asks for. Each has the number of its place among
+// all the unpaid ones, the number "платих N" reads (pickBills): a list of one kind or one month is
+// not numbered from 1 (on 2026-11-25 "платих 1" after the list of the electricity bills marked the
+// first of all the unpaid ones).
 func unpaidText(unpaid []Bill, q Question, today reminders.Day) string {
 	var keep []Bill
-	for _, u := range unpaid {
+	var place []int
+	for i, u := range unpaid {
 		if q.Kind != "" && u.Kind != q.Kind {
 			continue
 		}
@@ -411,6 +416,7 @@ func unpaidText(unpaid []Bill, q Question, today reminders.Day) string {
 			}
 		}
 		keep = append(keep, u)
+		place = append(place, i+1)
 	}
 	if len(keep) == 0 {
 		return fmt.Sprintf("Нямаш неплатени сметки%s — всички записани са платени или се изтеглят автоматично (директен дебит).", kindLabel(q.Kind))
@@ -422,13 +428,13 @@ func unpaidText(unpaid []Bill, q Question, today reminders.Day) string {
 	}
 	fmt.Fprintf(&b, "Неплатени%s: %s, общо %s:\n", kindLabel(q.Kind), countWord(len(keep)), Money(cents, "EUR"))
 	for i, u := range keep {
-		line := fmt.Sprintf("%d. %s", i+1, oneLine(u, nil))
+		line := fmt.Sprintf("%d. %s", place[i], oneLine(u, nil))
 		if u.DueDate != nil && dayOfTime(*u.DueDate).Before(today) {
 			line += " ⚠️ срокът мина"
 		}
 		b.WriteString(line + "\n")
 	}
-	b.WriteString("Когато платиш някоя: „платих 1“ или „платих тока“.")
+	fmt.Fprintf(&b, "Когато платиш някоя: „платих %d“ или „платих тока“.", place[0])
 	return b.String()
 }
 

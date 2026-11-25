@@ -182,7 +182,11 @@ func capitalize(s string) string {
 	return strings.ToUpper(string(r[0])) + string(r[1:])
 }
 
-var listNumberRe = regexp.MustCompile(`(?:^|[^\d])(\d{1,2})(?:[^\d,.]|$)`)
+// paidNumberRe is the number of the list of the unpaid bills, as the lists say it ("платих 1"): the
+// message is the word of paying and the number alone, or the number comes after "№" or "номер". A
+// number among other words names no place of the list: on 2026-11-25 "платих тока на 2-ри" marked
+// the second bill paid (the phone), "платих тока в 1 часа" the first.
+var paidNumberRe = regexp.MustCompile(`(?i)^\s*(?:(?:вече|днес|вчера|току-що)\s+)?(?:платих|изплатих|преведох|i\s+paid)\s+(?:сметка\s+|сметката\s+)?(?:№\s*|номер\s+)?(\d{1,2})\s*[.!]?\s*$|(?:№\s*|номер\s+)(\d{1,2})(?:[^\p{L}\d]|$)`)
 
 // stopStems are the words of "платих сметката за …" that name no bill.
 var stopStems = map[string]bool{"плати": true, "сметк": true, "факту": true, "вече": true, "днес": true, "вчера": true, "преве": true, "изпла": true}

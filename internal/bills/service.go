@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -411,13 +412,16 @@ func (s *Service) MarkPaid(ctx context.Context, userID uuid.UUID, message string
 	return b.String(), true
 }
 
-// pickBills are the indexes of the bills the message names: by its number in the list, or by the
-// words it shares with the issuer, the summary and the kind.
+// pickBills are the indexes of the bills the message names: by its number in the list (paidNumberRe;
+// the lists number the bills by their place among all the unpaid ones), or by a word of the kind, or
+// by the words it shares with the issuer, the summary and the kind.
 func pickBills(unpaid []Bill, message string) []int {
-	if m := listNumberRe.FindStringSubmatch(message); m != nil {
-		var n int
-		fmt.Sscanf(m[1], "%d", &n)
-		if n >= 1 && n <= len(unpaid) {
+	if m := paidNumberRe.FindStringSubmatch(message); m != nil {
+		digits := m[1]
+		if digits == "" {
+			digits = m[2]
+		}
+		if n, err := strconv.Atoi(digits); err == nil && n >= 1 && n <= len(unpaid) {
 			return []int{n - 1}
 		}
 	}

@@ -685,3 +685,35 @@ func TestAStandingBillIsRemovedOnlyWhenTheMessageNamesIt(t *testing.T) {
 	assert.Empty(t, kept)
 	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
 }
+
+// The code review of 2026-11-25: the list of the unpaid bills of one kind was numbered from 1, and
+// "платих 1" marked the first of ALL the unpaid ones; "платих тока на 2-ри" marked the second.
+func TestPaidReadsTheNumberTheListGave(t *testing.T) {
+	e := newBillEnv(t)
+	insurance := bills.Fields{IsBill: true, Issuer: "Muster Versicherung", Kind: "insurance", Amount: "120,00", InvoiceDate: "10.11.2026", DueDate: "25.11.2026", Payment: bills.Transfer, Repeat: "yearly"}
+	power := bills.Fields{IsBill: true, Issuer: "Beispiel Strom", Kind: "electricity", Amount: "80,00", InvoiceDate: "20.11.2026", DueDate: "30.11.2026", Payment: bills.Transfer, Repeat: "monthly"}
+	e.keepBill(t, insurance, "a.pdf")
+	e.keepBill(t, power, "b.pdf")
+
+	out := e.say(t, "кои сметки за ток не съм платил?")
+	assert.Contains(t, out, "2. Beispiel Strom", "the place among all the unpaid ones")
+	assert.Contains(t, out, "„платих 2“")
+	assert.NotContains(t, out, "1. Beispiel Strom")
+	assert.Contains(t, e.say(t, "платих 2"), "Отбелязах като платена ✅ Beispiel Strom")
+
+	out = e.say(t, "кои сметки не съм платил?")
+	assert.Contains(t, out, "1. Muster Versicherung", "the insurance is still unpaid")
+	assert.NotContains(t, out, "Beispiel Strom")
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+}
+
+func TestPaidWithADayInTheMessageMarksTheBillOfItsKind(t *testing.T) {
+	e := newBillEnv(t)
+	insurance := bills.Fields{IsBill: true, Issuer: "Muster Versicherung", Kind: "insurance", Amount: "120,00", InvoiceDate: "10.11.2026", DueDate: "25.11.2026", Payment: bills.Transfer, Repeat: "yearly"}
+	power := bills.Fields{IsBill: true, Issuer: "Beispiel Strom", Kind: "electricity", Amount: "80,00", InvoiceDate: "20.11.2026", DueDate: "30.11.2026", Payment: bills.Transfer, Repeat: "monthly"}
+	e.keepBill(t, insurance, "a.pdf")
+	e.keepBill(t, power, "b.pdf")
+
+	// "1" is the day of the payment, not the first bill of the list (the insurance).
+	assert.Contains(t, e.say(t, "платих тока на 1-ви"), "Отбелязах като платена ✅ Beispiel Strom")
+}
