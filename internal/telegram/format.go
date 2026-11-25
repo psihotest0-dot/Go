@@ -154,7 +154,8 @@ func attrEscape(s string) string {
 	return html.EscapeString(s)
 }
 
-// codeSpan reads `code` (or ``code``) starting at s[i]; end is just after the closing quotes.
+// codeSpan reads `code` (or code between two backticks on each side) starting at s[i]; end is just
+// after the closing quotes.
 func codeSpan(s string, i int) (end int, text string, ok bool) {
 	n := 0
 	for i+n < len(s) && s[i+n] == '`' {

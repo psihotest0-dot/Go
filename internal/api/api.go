@@ -317,10 +317,10 @@ func (a *API) CreateMemoryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Content         string                `json:"content"`
-		Status          string                `json:"status"`
-		SourceMessageID uuid.NullUUID         `json:"source_message_id"`
-		Importance      int32                 `json:"importance"`
+		Content         string          `json:"content"`
+		Status          string          `json:"status"`
+		SourceMessageID uuid.NullUUID   `json:"source_message_id"`
+		Importance      int32           `json:"importance"`
 		Metadata        json.RawMessage `json:"metadata"`
 	}
 	if !decodeJSON(w, r, &req) {
@@ -483,10 +483,10 @@ func (a *API) MemoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		var req struct {
-			Content    string                `json:"content"`
-			Status     string                `json:"status"`
-			Importance int32                 `json:"importance"`
-			Metadata   json.RawMessage       `json:"metadata"`
+			Content    string          `json:"content"`
+			Status     string          `json:"status"`
+			Importance int32           `json:"importance"`
+			Metadata   json.RawMessage `json:"metadata"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return

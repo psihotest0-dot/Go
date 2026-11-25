@@ -117,4 +117,3 @@ func TestAYesAfterTheTimeKeepsNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, proposed)
 }
-
