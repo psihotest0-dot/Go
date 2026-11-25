@@ -137,3 +137,41 @@ func TestAQuestionWhereTheBillsAreKept(t *testing.T) {
 		assert.Equal(t, want, q.Ask, m)
 	}
 }
+
+// The standing bill a request to remove names (the code review of 2026-11-25): only by its number in
+// the list or by its own words, never by the words of the request itself.
+func TestTheStandingBillARequestToRemoveNames(t *testing.T) {
+	two := []Standing{
+		{ID: 3, Issuer: "Beispiel Wohnbau", Kind: "rent", Summary: "Наем на жилището", Day: 1},
+		{ID: 4, Issuer: "Beispiel Spiele Club", Kind: "subscription", Summary: "Абонамент за игри", Day: 28},
+	}
+	one := two[1:]
+	for _, c := range []struct {
+		message string
+		all     []Standing
+		pick    []int
+		named   bool
+	}{
+		{"махни постоянната сметка за наем", two, []int{0}, true},
+		{"махни постоянната сметка за spiele club", two, []int{1}, true},
+		{"махни абонамента за игри", two, []int{1}, true},
+		{"махни постоянната сметка за наема", two, []int{0}, true}, // the kind in its own word
+		{"махни постоянна 2", two, []int{1}, true},
+		{"махни постоянната сметка 1", two, []int{0}, true},
+		{"махни абонамент №2", two, []int{1}, true},
+		// The words of the request alone name none: the code asks which.
+		{"махни абонамента", one, nil, false},
+		{"махни постоянната сметка", two, nil, false},
+		{"махни постоянна 7", two, nil, false},
+		// Words that are no standing bill's: none, even when there is one bill only.
+		{"спри абонамента за Netflix", one, nil, true},
+		{"спри абонамента за Netflix", two, nil, true},
+		{"махни месечната сметка за тока", two, nil, true},
+		// A number that is no number of the list.
+		{"махни абонамента за 5G интернета", []Standing{two[0], two[1], two[0], two[1], two[0]}, nil, true},
+	} {
+		pick, named := pickStanding(c.all, c.message)
+		assert.Equal(t, c.pick, pick, c.message)
+		assert.Equal(t, c.named, named, c.message)
+	}
+}

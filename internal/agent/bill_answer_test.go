@@ -660,3 +660,28 @@ func TestALateReportGoesOnlyInTheFirstDaysOfTheMonth(t *testing.T) {
 	require.NoError(t, e.svc.ReportPass(context.Background(), nil))
 	assert.Equal(t, 1, reports(), "the 7th is still in time")
 }
+
+// The code review of 2026-11-25: "спри абонамента за Netflix" removed the only standing bill, which
+// was another one. A standing bill is removed only when the message names it.
+func TestAStandingBillIsRemovedOnlyWhenTheMessageNamesIt(t *testing.T) {
+	e := newBillEnv(t)
+	ctx := context.Background()
+	e.readsStanding(t, bills.StandingFields{Issuer: "Beispiel Spiele Club", Kind: "subscription", Summary: "Абонамент за игри"})
+	require.Contains(t, e.say(t, "запише че на всяка 28 дата имам сметка от 14 евро към beispeil spiele club"), "Постоянна сметка:")
+	require.Contains(t, e.say(t, "да"), "Записах постоянната сметка ✅")
+
+	out := e.say(t, "спри абонамента за Netflix")
+	assert.Contains(t, out, "Не намерих такава постоянна сметка — нищо не е махнато")
+	assert.Contains(t, out, "1. Beispiel Spiele Club")
+	out = e.say(t, "махни абонамента")
+	assert.Contains(t, out, "Коя постоянна сметка да махна?", "the words of the request name no bill")
+	kept, err := e.svc.KeptStanding(ctx, e.userID)
+	require.NoError(t, err)
+	require.Len(t, kept, 1, "nothing is removed before the person names it")
+
+	assert.Contains(t, e.say(t, "махни постоянна 1"), "Махнах постоянната сметка ✅ Beispiel Spiele Club")
+	kept, err = e.svc.KeptStanding(ctx, e.userID)
+	require.NoError(t, err)
+	assert.Empty(t, kept)
+	assert.Empty(t, e.chat.Requests, "the chat model was not asked")
+}

@@ -672,9 +672,20 @@ var (
 	standingRemoveWords = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:махни|махнете|премахни|изтрий|спри|отмени|прекрати|delete|remove|stop|cancel)(?:[^\p{L}]|$)`)
 	standingRemoveWhat  = regexp.MustCompile(`(?i)(?:постоянн|абонамент|месечн\p{L}*\s+сметк|subscription|standing)`)
 	reminderWord        = regexp.MustCompile(`(?i)(?:напомн|remind)`)
-	// standingNumber: "махни постоянна 2".
-	standingNumber = regexp.MustCompile(`(?:^|[^\d])(\d{1,2})(?:[^\d]|$)`)
+	// standingNumber: the number of the list, as the list says it ("махни постоянна 2", "махни
+	// постоянната сметка 2", "махни абонамент №1"): right after the word of the list, or after "№" or
+	// "номер". A number elsewhere is no number of the list ("абонамента за 5G", "от 28-ми").
+	standingNumber = regexp.MustCompile(`(?i)(?:(?:постоянн\p{L}*|абонамент\p{L}*|standing|subscription)(?:\s+(?:сметк\p{L}*|bill))?\s+(?:№\s*|номер\s+)?|№\s*|номер\s+)(\d{1,2})(?:[^\p{L}\d-]|$)`)
 )
+
+// removeStems are the words of a request to remove that name no standing bill: "махни постоянната
+// сметка", "спри абонамента" (the kind "абонаменти" shares its first letters with the request).
+var removeStems = map[string]bool{
+	"махни": true, "махне": true, "преми": true, "изтри": true, "спри": true, "спрет": true, "отмен": true, "прекр": true,
+	"посто": true, "абона": true, "месеч": true, "ежеме": true, "плаща": true, "моля": true, "искам": true, "повеч": true, "нужда": true,
+	"нужна": true, "remov": true, "delet": true, "stop": true, "cance": true, "the": true, "for": true, "stand": true, "subsc": true,
+	"bill": true, "bills": true, "pleas": true,
+}
 
 // RemoveStanding answers "махни постоянната сметка за игри": the standing bill is removed with its
 // payments still to come and their reminders; the payments of the days gone stay in the sums.
@@ -693,10 +704,15 @@ func (s *Service) RemoveStanding(ctx context.Context, userID uuid.UUID, message 
 	if len(all) == 0 {
 		return "Нямаш записани постоянни сметки.", true
 	}
-	pick := pickStanding(all, m)
+	pick, named := pickStanding(all, m)
 	if len(pick) != 1 {
+		metrics.Bills.WithLabelValues("standing_remove_asked").Inc()
 		var b strings.Builder
-		b.WriteString("Коя постоянна сметка да махна?\n")
+		if named && len(pick) == 0 {
+			b.WriteString("Не намерих такава постоянна сметка — нищо не е махнато. Записаните са:\n")
+		} else {
+			b.WriteString("Коя постоянна сметка да махна?\n")
+		}
 		for i, st := range all {
 			fmt.Fprintf(&b, "%d. %s\n", i+1, standingLine(st))
 		}
@@ -725,19 +741,34 @@ func (s *Service) RemoveStanding(ctx context.Context, userID uuid.UUID, message 
 	return text + " Плащанията дотук остават в сметките.", true
 }
 
-// pickStanding are the indexes of the standing bills the message names: by number, or by the words
-// it shares with the issuer, the summary and the kind.
-func pickStanding(all []Standing, message string) []int {
+// pickStanding are the indexes of the standing bills the message names - by its number in the list,
+// by the words it shares with the issuer, the summary and the name of the kind, or by a word of the
+// kind ("тока", "наема") - and whether the message names one at all. The words of the request itself
+// name none (removeStems): on 2026-11-25 "спри абонамента за Netflix" took the only subscription
+// (its kind is "абонаменти"), and with one standing bill any request to remove took that one.
+func pickStanding(all []Standing, message string) (pick []int, named bool) {
 	if m := standingNumber.FindStringSubmatch(message); m != nil {
 		n, _ := strconv.Atoi(m[1])
 		if n >= 1 && n <= len(all) {
-			return []int{n - 1}
+			return []int{n - 1}, true
 		}
 	}
-	if len(all) == 1 {
-		return []int{0}
-	}
 	want := stems(message)
+	for w := range want {
+		if removeStems[w] {
+			delete(want, w)
+		}
+	}
+	// "Абонамент" is the word of the request, not the name of a kind.
+	kinds := map[string]bool{}
+	for _, k := range kindWords {
+		if k.kind != "subscription" && k.re.MatchString(message) {
+			kinds[k.kind] = true
+		}
+	}
+	if len(want) == 0 && len(kinds) == 0 {
+		return nil, false
+	}
 	best, bestScore := []int(nil), 0
 	for i, st := range all {
 		score := 0
@@ -745,6 +776,9 @@ func pickStanding(all []Standing, message string) []int {
 			if want[w] {
 				score++
 			}
+		}
+		if kinds[st.Kind] {
+			score++
 		}
 		switch {
 		case score == 0:
@@ -754,7 +788,7 @@ func pickStanding(all []Standing, message string) []int {
 			best = append(best, i)
 		}
 	}
-	return best
+	return best, true
 }
 
 // standingWhen is "всеки месец на 28-мо число" / "всяка година на 15 март", with "до …" when it has
