@@ -102,18 +102,8 @@ func ReadCorrection(message string) (c Correction, ok bool) {
 			c.Due, changed = &t, true
 		}
 	}
-	if a := standingAmount.FindStringSubmatchIndex(m); a != nil {
-		num, cur := a[2:4], a[4:6]
-		if a[2] < 0 {
-			num, cur = a[8:10], a[6:8]
-		}
-		amount := m[num[0]:num[1]]
-		if oneDecimal.MatchString(amount) {
-			amount += "0"
-		}
-		if cents, okA := parseAmount(amount); okA && cents > 0 {
-			c.Cents, c.Currency, changed = cents, currencyOf(m[cur[0]:cur[1]]), true
-		}
+	if cents, currency, _, okA := readAmount(m); okA {
+		c.Cents, c.Currency, changed = cents, currency, true
 	}
 	switch {
 	case standingDebitWords.MatchString(m):

@@ -84,8 +84,11 @@ var (
 	// standingQuestion: a question about the bills is not a request for a new one.
 	standingQuestion = regexp.MustCompile(`(?i)^\s*(?:а\s+|и\s+)?(?:колко|кога|кои|какви|кой|коя|има\s+ли|how|when|which|what)(?:[^\p{L}]|$)`)
 
-	// standingAmount: "16 евро", "41,20 €", "€16", "16.50 EUR".
-	standingAmount = regexp.MustCompile(`(?i)(?:(\d{1,6}(?:[.,]\d{1,2})?)\s*(€|евро|eur|euro|лв\.?|лева|bgn)(?:[^\p{L}]|$)|(€)\s*(\d{1,6}(?:[.,]\d{1,2})?))`)
+	// standingAmount: "16 евро", "41,20 €", "€16", "16.50 EUR", and with the thousands apart: "1.200 €",
+	// "1 200 €", "1.200,50 €" (moneyNumber). Read it with readAmount.
+	standingAmount = regexp.MustCompile(`(?i)(?:(` + moneyNumber + `)\s*(€|евро|eur|euro|лв\.?|лева|bgn)(?:[^\p{L}]|$)|(€)\s*(` + moneyNumber + `))`)
+	// dayBeforeAmount: the words of a day just before a sum - "на 5 100 €" is the 5th and 100 €.
+	dayBeforeAmount = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:на|в|всеки|всяка|всяко|до)\s+$`)
 	// standingDayWords: "на 10-то число", "всяка 28 дата", "всеки 28-ми", "on the 5th".
 	standingDayWords = regexp.MustCompile(`(?i)(?:(?:на|всеки|всяка|всяко|в)\s+(\d{1,2})(?:\s*-?\s*(?:ти|ви|ри|ми|то|во|ро|мо))?(?:\s+(?:число|дата|ден))?|(\d{1,2})\s*-?\s*(?:ти|ви|ри|ми|то|во|ро|мо)(?:\s+(?:число|дата|ден))?|(\d{1,2})\s+(?:число|дата)|on\s+the\s+(\d{1,2})(?:st|nd|rd|th)?)(?:[^\p{L}\d]|$)`)
 
@@ -183,19 +186,9 @@ func ReadStandingRequest(message string) (r StandingRequest, ok bool) {
 	r.Until = untilDate(m)
 	// The amount, and the place it takes, so that its digits are not read as the day.
 	amountAt := []int{-1, -1}
-	if a := standingAmount.FindStringSubmatchIndex(m); a != nil {
-		num, cur := a[2:4], a[4:6]
-		if a[2] < 0 {
-			num, cur = a[8:10], a[6:8]
-		}
-		amount := m[num[0]:num[1]]
-		if oneDecimal.MatchString(amount) {
-			amount += "0" // "12,5 евро"
-		}
-		if cents, okA := parseAmount(amount); okA && cents > 0 {
-			r.Cents, r.Currency = cents, currencyOf(m[cur[0]:cur[1]])
-			amountAt = []int{a[0], a[1]}
-		}
+	if cents, currency, at, okA := readAmount(m); okA {
+		r.Cents, r.Currency = cents, currency
+		amountAt = at[:]
 	}
 	for _, d := range standingDayWords.FindAllStringSubmatchIndex(standingWithoutDates(m), -1) {
 		if d[0] < amountAt[1] && amountAt[0] < d[1] {
@@ -245,6 +238,52 @@ func ReadStandingRequest(message string) (r StandingRequest, ok bool) {
 		r.Missing = append(r.Missing, "деня от месеца")
 	}
 	return r, true
+}
+
+// moneyNumber is a sum as people write it: "16", "41,20", "16.50", and with the thousands apart by a
+// dot or a space ("1.200", "1 200", "1.200,50"). On 2026-11-25 "1.200 €" was read as 200 € - in the
+// request and in the correction "сумата е 1.200 €" alike.
+const moneyNumber = `\d{1,3}(?:[. \x{00A0}\x{202F}]\d{3})+(?:,\d{1,2})?|\d{1,6}(?:[.,]\d{1,2})?`
+
+// spaceInNumber is a space that may stand between the thousands.
+var spaceInNumber = strings.NewReplacer(" ", " ", " ", " ")
+
+// readAmount is the sum a message names (standingAmount), its currency and the place it takes; ok is
+// false when it names none. The thousands apart by a space after the words of a day are the day and
+// the sum: "на 5 100 €" is 100 €.
+func readAmount(m string) (cents int64, currency string, at [2]int, ok bool) {
+	for from := 0; from < len(m); {
+		a := standingAmount.FindStringSubmatchIndex(m[from:])
+		if a == nil {
+			return 0, "", at, false
+		}
+		for i := range a {
+			if a[i] >= 0 {
+				a[i] += from
+			}
+		}
+		num, cur := a[2:4], a[4:6]
+		if a[2] < 0 {
+			num, cur = a[8:10], a[6:8]
+		}
+		amount := spaceInNumber.Replace(m[num[0]:num[1]])
+		if sp := strings.IndexByte(amount, ' '); sp > 0 && dayBeforeAmount.MatchString(m[:num[0]]) {
+			// Again from the digits after the first space (the digits before it are ASCII, so it
+			// stands at the same byte in m; a no-break space is longer than one byte).
+			_, size := utf8.DecodeRuneInString(m[num[0]+sp:])
+			from = num[0] + sp + size
+			continue
+		}
+		if oneDecimal.MatchString(amount) {
+			amount += "0" // "12,5 евро"
+		}
+		c, okA := parseAmount(amount)
+		if !okA || c <= 0 {
+			return 0, "", at, false
+		}
+		return c, currencyOf(m[cur[0]:cur[1]]), [2]int{a[0], a[1]}, true
+	}
+	return 0, "", at, false
 }
 
 func currencyOf(s string) string {

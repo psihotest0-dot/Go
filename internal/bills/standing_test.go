@@ -175,3 +175,38 @@ func TestTheStandingBillARequestToRemoveNames(t *testing.T) {
 		assert.Equal(t, c.named, named, c.message)
 	}
 }
+
+// The thousands apart (the code review of 2026-11-25: "1.200 €" was read as 200 €, and the
+// correction "сумата е 1.200 €" too).
+func TestASumWithItsThousandsApart(t *testing.T) {
+	for m, want := range map[string]struct {
+		cents int64
+		day   int
+	}{
+		"запиши, че всеки месец на 1-во плащам 1.200 € наем, изтегля се автоматично": {120000, 1},
+		"запиши, че всеки месец на 1-во плащам 1 200 € наем":                         {120000, 1},
+		"запиши, че всеки месец на 1-во плащам 1 200 € наем":                         {120000, 1},
+		"запиши, че всеки месец на 1-во плащам 1.200,50 € наем":                      {120050, 1},
+		"запиши, че всеки месец на 1-во плащам 1200 € наем":                          {120000, 1},
+		"запиши, че всеки месец на 15-ти плащам 12,5 евро абонамент":                 {1250, 15},
+		"запиши, че всеки месец на 10-то плащам € 1.050 наем":                        {105000, 10},
+		// The digits before a space after the words of a day are the day.
+		"запиши, че всеки месец на 5 100 € плащам наем": {10000, 5},
+		"запиши, че всеки месец на 5 100 € плащам наем": {10000, 5},
+	} {
+		r, ok := ReadStandingRequest(m)
+		require.True(t, ok, m)
+		assert.Equal(t, want.cents, r.Cents, m)
+		assert.Equal(t, want.day, r.Day, m)
+		assert.Empty(t, r.Missing, m)
+	}
+	for m, want := range map[string]int64{"сумата е 1.200 €": 120000, "сумата е 1 200 евро": 120000, "сумата е 87,5 €": 8750, "сумата е 47,18 €": 4718} {
+		c, ok := ReadCorrection(m)
+		require.True(t, ok, m)
+		assert.Equal(t, want, c.Cents, m)
+	}
+	// Two sums are still two bills.
+	r, ok := ReadStandingRequest("запиши, че всеки месец плащам наем 1.200 € на 1-во и телефон 40 € на 10-то")
+	require.True(t, ok)
+	assert.Equal(t, 2, r.Several)
+}
