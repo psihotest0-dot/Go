@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"time"
 
 	"go-monolith/internal/webfetch"
@@ -79,6 +81,7 @@ func (r *DefaultToolRegistry) archivedPage(ctx context.Context, tool, pageURL, r
 		return "", "", "", "", false
 	}
 	metrics.WebToolRequests.WithLabelValues(tool, "wayback").Inc()
+	turnFrom(ctx).addArchivedCopy(archivedCopy{url: pageURL, on: at, reason: reason})
 	slog.InfoContext(ctx, "a page was read from its copy in the Wayback Machine", "tool", tool, "because", reason, "host", hostOf(pageURL), "copy_of", at.Format("2006-01-02"))
 	return title, text, final, archivedNote(at, reason), true
 }
@@ -139,4 +142,57 @@ func (f *localPageFetcher) ArchivedText(ctx context.Context, rawURL string) (str
 		return "", "", "", time.Time{}, err
 	}
 	return title, text, doc.Final, doc.Archived, nil
+}
+
+// archivedCopy is a page a tool of the turn read from its copy in the archive.
+type archivedCopy struct {
+	url    string
+	on     time.Time
+	reason string // why the page itself was not read (a webfetch Reason)
+}
+
+// addArchivedCopy remembers a page read from its copy; the same page once.
+func (t *turnState) addArchivedCopy(c archivedCopy) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, have := range t.archivedCopies {
+		if have.url == c.url {
+			return
+		}
+	}
+	t.archivedCopies = append(t.archivedCopies, c)
+}
+
+// archiveReport is the line under the answer about the pages read from their copy in the archive,
+// "" when there were none. The model is told to say it (archivedNote) and on 2026-11-26, the first
+// time on the real model, it summed the copy up and did not; so the code says it. The links
+// add_to_library took from the archive have their own line (libraryReport).
+func (t *turnState) archiveReport() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	copies := slices.Clone(t.archivedCopies)
+	t.mu.Unlock()
+	line := func(c archivedCopy) string {
+		why := libraryRefusals[c.reason]
+		if why == "" {
+			why = "не се отвори"
+		}
+		return "копие от " + c.on.Format("02.01.2006") + " (самата страница: " + why + ")"
+	}
+	switch len(copies) {
+	case 0:
+		return ""
+	case 1:
+		return "ℹ️ Текстът на " + shortURL(copies[0].url) + " е от архива web.archive.org — " + line(copies[0]) + ". Страницата може да се е променила оттогава."
+	}
+	lines := make([]string, len(copies))
+	for i, c := range copies {
+		lines[i] = "• " + shortURL(c.url) + " — " + line(c)
+	}
+	return "ℹ️ Взети от архива web.archive.org, защото самите страници не се отвориха (може да са се променили оттогава):\n" + strings.Join(lines, "\n")
 }

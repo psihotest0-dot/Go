@@ -291,7 +291,10 @@ func (o *Orchestrator) generateGuarded(
 	// The model was told which links were refused, and in the real runs it wrote that all of
 	// them were added over a link it had changed (plan item P53): the line is not left to it.
 	report := turnFrom(ctx).libraryReport()
-	for _, line := range []string{note, report} {
+	// A page read from its copy in the Wayback Machine: the model was told to say so, and on
+	// 2026-11-26 it did not (wayback.go).
+	copies := turnFrom(ctx).archiveReport()
+	for _, line := range []string{note, report, copies} {
 		if line == "" {
 			continue
 		}

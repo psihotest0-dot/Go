@@ -84,6 +84,9 @@ type turnState struct {
 	// libraryRows are the links add_to_library was asked for in this turn, with what became of
 	// each: the person is told which were not added (libraryReport).
 	libraryRows []addRow
+	// archivedCopies are the pages web_fetch and save_page read from their copy in the Wayback
+	// Machine in this turn: the person is told so under the answer (archiveReport, wayback.go).
+	archivedCopies []archivedCopy
 	// since is the time from which a change of a file counts as work done for a question about
 	// how far the work is (requestSince); the zero time: not known.
 	since time.Time

@@ -9,9 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go-monolith/internal/api"
+	"go-monolith/internal/llm"
 	"go-monolith/internal/webfetch"
 	"go-monolith/metrics"
 )
@@ -239,4 +243,61 @@ func (a *archiveDocs) Fetch(context.Context, string) (*webfetch.Document, error)
 
 func (a *archiveDocs) Archived(context.Context, string) (*webfetch.Document, error) {
 	return a.doc, nil
+}
+
+func TestTheArchiveReport(t *testing.T) {
+	_, turn := withTurn(context.Background(), "s", false)
+	assert.Empty(t, turn.archiveReport())
+
+	turn.addArchivedCopy(archivedCopy{url: "https://example.org/a", on: copyDay, reason: string(webfetch.ReasonBlocked)})
+	turn.addArchivedCopy(archivedCopy{url: "https://example.org/a", on: copyDay, reason: string(webfetch.ReasonBlocked)})
+	assert.Equal(t, "ℹ️ Текстът на https://example.org/a е от архива web.archive.org — копие от 16.07.2026 (самата страница: сайтът не пуска програми (401/403)). Страницата може да се е променила оттогава.",
+		turn.archiveReport(), "the same page once")
+
+	turn.addArchivedCopy(archivedCopy{url: "https://example.org/b", on: copyDay.AddDate(-1, 0, 0), reason: string(webfetch.ReasonNotFound)})
+	report := turn.archiveReport()
+	assert.Contains(t, report, "ℹ️ Взети от архива web.archive.org")
+	assert.Contains(t, report, "• https://example.org/a — копие от 16.07.2026")
+	assert.Contains(t, report, "• https://example.org/b — копие от 16.07.2025 (самата страница: не е намерен (404))")
+}
+
+// 2026-11-26, the first live run: the model summed up the copy and did not say it was one. The
+// line under the answer is the code's, whatever the model says.
+func TestTheAnswerSaysThatThePageIsACopyWhateverTheModelSays(t *testing.T) {
+	r, web, pages, _, _ := archiveWebEnv(t, &webfetch.Error{Reason: webfetch.ReasonBlocked})
+	web.handler = func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }
+	t.Cleanup(func() { assert.Equal(t, 1, pages.asked) })
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{toolCallChunk(0, "call_1", "web_fetch", `{"url":"https://example.org/blocked"}`)},
+		{textChunk("Статията разглежда нощната доходност.")},
+	}}
+	o := newGroupOrchestrator(mock, r)
+	ctx, _ := withTurn(context.WithValue(context.Background(), api.ParsedUserIDKey, uuid.New()), "s", false)
+	var streamed strings.Builder
+
+	content, executed, err := o.generateResponse(ctx,
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "прочети https://example.org/blocked"}}, o.turnTools(),
+		func(delta, _ string) error { streamed.WriteString(delta); return nil })
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"web_fetch"}, toolCallNames(executed))
+	assert.True(t, strings.HasPrefix(content, "Статията разглежда нощната доходност."))
+	assert.Contains(t, content, "ℹ️ Текстът на https://example.org/blocked е от архива web.archive.org — копие от 16.07.2026")
+	assert.Equal(t, content, streamed.String(), "what was streamed is what is stored")
+}
+
+// A page read from its site gets no such line.
+func TestAnAnswerFromALivePageGetsNoArchiveLine(t *testing.T) {
+	r, _, pages, _, _ := archiveWebEnv(t, nil)
+	pages.title, pages.text = "T", strings.Repeat(pageText, 5)
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{toolCallChunk(0, "call_1", "web_fetch", `{"url":"https://example.org/fine"}`)},
+		{textChunk("Прочетох я.")},
+	}}
+	o := newGroupOrchestrator(mock, r)
+	ctx, _ := withTurn(context.WithValue(context.Background(), api.ParsedUserIDKey, uuid.New()), "s", false)
+	content, _, err := o.generateResponse(ctx,
+		[]openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "прочети https://example.org/fine"}}, o.turnTools(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Прочетох я.", content)
 }
