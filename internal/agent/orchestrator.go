@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -202,7 +203,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if !validMode(req.Mode) {
-		http.Error(w, "mode must be one of books, web, library, files, memory, style", http.StatusBadRequest)
+		http.Error(w, "mode must be one of "+strings.Join(knownModes(), ", "), http.StatusBadRequest)
 		return
 	}
 

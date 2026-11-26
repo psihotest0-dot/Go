@@ -118,3 +118,13 @@ func TestInAModeTheCodeDoesNotAnswerInsteadOfTheModel(t *testing.T) {
 	_, out = e.sayIn(t, "m2", "Какви инструменти имаш?", "")
 	assert.Contains(t, out, "Ето какво мога", "without a mode as before")
 }
+
+// The refusal names every mode the server takes (it named six of eight until 2026-11-26).
+func TestAnUnknownModeIsRefusedWithAllTheModes(t *testing.T) {
+	e := newTaskRunEnv(t)
+	code, body := e.sayIn(t, "m", "здравей", "everything")
+	assert.Equal(t, http.StatusBadRequest, code)
+	for _, mode := range knownModes() {
+		assert.Contains(t, body, mode)
+	}
+}
