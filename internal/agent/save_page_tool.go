@@ -15,6 +15,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	"go-monolith/internal/userfiles"
+	"go-monolith/internal/webfetch"
 )
 
 // save_page: the whole text of a page or a PDF into a file of the user's folder, word for word,
@@ -164,7 +165,7 @@ func (r *DefaultToolRegistry) executeSavePage(ctx context.Context, userID uuid.U
 		}
 	}
 
-	title, text, final, err := r.pageText(ctx, pageURL)
+	title, text, final, archived, err := r.pageText(ctx, pageURL)
 	if err != nil {
 		fileOp("save_page", "unread")
 		return nil, err
@@ -193,20 +194,31 @@ func (r *DefaultToolRegistry) executeSavePage(ctx context.Context, userID uuid.U
 	result["message"] = fmt.Sprintf("NOT saved yet. The whole text of the page (%d characters, title %q) waits for the user to confirm the file %q. "+
 		"Tell the user briefly that the page is ready to be saved and that they can confirm or reject it. Do not say that it is saved, "+
 		"and do not describe what the page says: you have not read it.", utf8.RuneCountInString(text), title, name)
+	if archived != "" {
+		result["archived_copy"] = archived
+	}
 	return result, nil
 }
 
 // pageText is the title, the text and the address of a page: from this machine first, from the
-// paid API when that gives nothing (as web_fetch).
-func (r *DefaultToolRegistry) pageText(ctx context.Context, pageURL string) (title, text, final string, err error) {
+// paid API when that gives nothing (as web_fetch), and from its copy in the Wayback Machine when
+// neither can read it (wayback.go); archived is then what the model is to be told of the copy.
+func (r *DefaultToolRegistry) pageText(ctx context.Context, pageURL string) (title, text, final, archived string, err error) {
 	localReason := ""
 	if r.pages != nil {
 		title, text, final, err = r.pages.FetchText(ctx, pageURL)
 		if err == nil {
-			return title, text, final, nil
+			return title, text, final, "", nil
 		}
 		localReason = localFailure(err)
 		slog.InfoContext(ctx, "the local fetch of save_page gave nothing", "reason", localReason, "host", hostOf(pageURL), "error", err)
+	}
+	// As web_fetch: after a 404 the copy comes before the paid API.
+	archiveTried := localReason == string(webfetch.ReasonNotFound)
+	if archiveTried {
+		if title, text, final, note, ok := r.archivedPage(ctx, savePageTool, pageURL, localReason); ok {
+			return title, text, final, note, nil
+		}
 	}
 	result, err := r.callWebTool(ctx, savePageTool, "/fetch", map[string]interface{}{"url": pageURL})
 	if err == nil {
@@ -214,18 +226,22 @@ func (r *DefaultToolRegistry) pageText(ctx context.Context, pageURL string) (tit
 		content, _ := inner["content"].(string)
 		heading, _ := inner["title"].(string)
 		if utf8.RuneCountInString(strings.TrimSpace(content)) >= webFetchMinRunes {
-			return heading, content, pageURL, nil
+			return heading, content, pageURL, "", nil
 		}
 		err = errPageEmpty
 		localReason = "empty"
+	} else if !archiveTried {
+		if title, text, final, note, ok := r.archivedPage(ctx, savePageTool, pageURL, localReason); ok {
+			return title, text, final, note, nil
+		}
 	}
 	if localReason == "" {
-		return "", "", "", err
+		return "", "", "", "", err
 	}
 	e := localFetchError(localReason)
 	var argErr *toolArgumentError
 	if errors.As(e, &argErr) {
 		argErr.tool = savePageTool
 	}
-	return "", "", "", e
+	return "", "", "", "", e
 }

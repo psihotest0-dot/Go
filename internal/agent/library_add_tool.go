@@ -156,6 +156,10 @@ type addRow struct {
 	Code string `json:"-"`
 	// Note says that the link was not the one the model sent but the one the user wrote.
 	Note string `json:"note,omitempty"`
+	// Archived says that the document is the copy the Wayback Machine kept, and why (wayback.go);
+	// ArchivedOn is its day, for the line of the person (libraryReport).
+	Archived   string    `json:"archived_copy,omitempty"`
+	ArchivedOn time.Time `json:"-"`
 }
 
 func (r *DefaultToolRegistry) executeAddToLibrary(ctx context.Context, userID uuid.UUID, args map[string]interface{}) (interface{}, error) {
@@ -263,8 +267,15 @@ func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link
 
 	doc, err := r.fetcher.Fetch(ctx, link)
 	if err != nil {
-		r.refuse(ctx, link, row, err)
-		return
+		// The last road: the copy in the Wayback Machine (wayback.go).
+		copied, because := r.archivedDocument(ctx, link, err)
+		if copied == nil {
+			r.refuse(ctx, link, row, err)
+			return
+		}
+		doc = copied
+		row.Code, row.ArchivedOn = because, copied.Archived
+		row.Archived = archivedNote(copied.Archived, because)
 	}
 	defer doc.Close()
 
@@ -281,6 +292,9 @@ func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link
 		return
 	}
 	row.Status = addQueued
+	if !row.ArchivedOn.IsZero() {
+		metrics.LibraryAdd.WithLabelValues("wayback").Inc()
+	}
 	metrics.LibraryAdd.WithLabelValues("queued").Inc()
 	slog.InfoContext(ctx, "library add: queued", "host", hostOf(link), "kind", doc.Kind, "bytes", added.Size)
 }
@@ -454,11 +468,15 @@ var libraryRefusals = map[string]string{
 
 // libraryReport is the line the person reads under the answer when some links were not
 // added: the model was told, but in the real runs it wrote "всички са добавени" over one
-// refused link (a link it had changed). "" when everything was added.
+// refused link (a link it had changed); and the links taken from their copy in the Wayback Machine,
+// with its day. "" when every link was added from its site.
 func libraryReport(rows []addRow) string {
-	var lines []string
+	var lines, copies []string
 	for _, row := range rows {
 		if row.Status != addRefused {
+			if !row.ArchivedOn.IsZero() {
+				copies = append(copies, "• "+row.URL+" — копие от "+row.ArchivedOn.Format("02.01.2006")+" (самата страница: "+libraryRefusals[row.Code]+")")
+			}
 			continue
 		}
 		why := libraryRefusals[row.Code]
@@ -467,8 +485,12 @@ func libraryReport(rows []addRow) string {
 		}
 		lines = append(lines, "• "+row.URL+" — "+why)
 	}
-	if len(lines) == 0 {
-		return ""
+	var parts []string
+	if len(lines) > 0 {
+		parts = append(parts, fmt.Sprintf("⚠️ Не са добавени в библиотеката (%d от %d):\n%s", len(lines), len(rows), strings.Join(lines, "\n")))
 	}
-	return fmt.Sprintf("⚠️ Не са добавени в библиотеката (%d от %d):\n%s", len(lines), len(rows), strings.Join(lines, "\n"))
+	if len(copies) > 0 {
+		parts = append(parts, "ℹ️ Взети от архива web.archive.org, защото самата страница не се отвори:\n"+strings.Join(copies, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
 }

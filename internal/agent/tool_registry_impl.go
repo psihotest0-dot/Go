@@ -23,6 +23,7 @@ import (
 	"go-monolith/internal/retrieval"
 	"go-monolith/internal/taskplan"
 	"go-monolith/internal/userfiles"
+	"go-monolith/internal/webfetch"
 	"go-monolith/metrics"
 )
 
@@ -47,6 +48,9 @@ type DefaultToolRegistry struct {
 	plans *taskplan.Store
 	// pages fetches web_fetch's pages from this machine; nil means only the paid API (web_fetch_local.go).
 	pages pageFetcher
+	// wayback lets web_fetch, save_page and add_to_library read a link from its copy in the
+	// Wayback Machine (wayback.go).
+	wayback bool
 }
 
 // WithAttachments lets the read_attachment tool read the files attached to a
@@ -291,8 +295,23 @@ func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[stri
 		}
 	}
 
+	// A page gone for this machine (404) is gone for the paid API too: its copy comes first (wayback.go).
+	archiveTried := localReason == string(webfetch.ReasonNotFound)
+	if archiveTried {
+		if archived := r.archivedFetchResult(ctx, pageURL, localReason); archived != nil {
+			turnFrom(ctx).markExternal(sourceWebFetch)
+			return archived, nil
+		}
+	}
+
 	result, err := r.callWebTool(ctx, "web_fetch", "/fetch", map[string]interface{}{"url": pageURL})
 	if err != nil {
+		if !archiveTried {
+			if archived := r.archivedFetchResult(ctx, pageURL, localReason); archived != nil {
+				turnFrom(ctx).markExternal(sourceWebFetch)
+				return archived, nil
+			}
+		}
 		if localReason != "" {
 			// The page could be read neither here nor by the API: the model hears why from here.
 			slog.WarnContext(ctx, "the paid web_fetch failed after the local one", "error", err)

@@ -85,6 +85,15 @@ func (f *localPageFetcher) FetchText(ctx context.Context, rawURL string) (string
 		return "", "", "", err
 	}
 	defer doc.Close()
+	title, text, err := f.textOf(ctx, doc)
+	if err != nil {
+		return "", "", "", err
+	}
+	return title, text, doc.Final, nil
+}
+
+// textOf is the title and the text of a downloaded document.
+func (f *localPageFetcher) textOf(ctx context.Context, doc *webfetch.Document) (string, string, error) {
 	var extractor ingest.Extractor = f.html
 	if doc.Kind == webfetch.KindPDF {
 		extractor = f.pdf
@@ -92,19 +101,19 @@ func (f *localPageFetcher) FetchText(ctx context.Context, rawURL string) (string
 	text, err := extractor.Extract(ctx, doc.Body)
 	if err != nil {
 		if errors.Is(err, webfetch.ErrTooLarge) {
-			return "", "", "", &webfetch.Error{Reason: webfetch.ReasonTooLarge, Detail: fmt.Sprintf("the document is larger than %d MB", webFetchMaxBytes>>20)}
+			return "", "", &webfetch.Error{Reason: webfetch.ReasonTooLarge, Detail: fmt.Sprintf("the document is larger than %d MB", webFetchMaxBytes>>20)}
 		}
-		return "", "", "", fmt.Errorf("%w: %v", errPageEmpty, err)
+		return "", "", fmt.Errorf("%w: %v", errPageEmpty, err)
 	}
 	text = strings.TrimSpace(text)
 	if utf8.RuneCountInString(text) < webFetchMinRunes {
-		return "", "", "", errPageEmpty
+		return "", "", errPageEmpty
 	}
 	title := doc.Title
 	if title == "" {
 		title = strings.TrimSuffix(strings.TrimSuffix(doc.Name, ".pdf"), ".html")
 	}
-	return title, text, doc.Final, nil
+	return title, text, nil
 }
 
 // localFailure is the reason a local fetch gave nothing, as a word for the log, the counters and

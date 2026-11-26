@@ -250,6 +250,15 @@ func run() error {
 		toolRegistry.WithLocalWebFetch(agent.NewLocalPageFetcher())
 		logger.Info("web_fetch reads pages from this machine first")
 	}
+	// The copy in the Wayback Machine when a link cannot be read (internal/agent/wayback.go).
+	if cfg.WaybackEnabled {
+		toolRegistry.WithWayback()
+		if cfg.WebFetchLocalEnabled || cfg.LibraryAddEnabled {
+			logger.Info("a link that cannot be read is read from its copy in the Wayback Machine")
+		} else {
+			logger.Warn("WAYBACK_ENABLED does nothing without WEB_FETCH_LOCAL_ENABLED or LIBRARY_ADD_ENABLED")
+		}
+	}
 
 	// The plan of a task (package taskplan): off unless TASK_PLAN_ENABLED. The server keeps the
 	// plan of a conversation and checks that a step is done before it is marked so.

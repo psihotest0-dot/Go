@@ -100,6 +100,9 @@ type Document struct {
 	Body  io.Reader
 	// Final is the address the document was taken from, for the log (host only is logged).
 	Final string
+	// Archived is the day of the copy of the Wayback Machine the document is (Archived); zero for
+	// the document taken from its site.
+	Archived time.Time
 
 	closer io.Closer
 }
@@ -128,6 +131,8 @@ type Options struct {
 	UserAgent string
 	// AllowPrivate lets the dialer connect to private addresses. Tests only.
 	AllowPrivate bool
+	// WaybackURL is the address of the Wayback Machine (Archived); empty: DefaultWaybackURL.
+	WaybackURL string
 }
 
 // Fetcher downloads documents. It is safe for concurrent use.
@@ -138,6 +143,7 @@ type Fetcher struct {
 	minPageRunes int
 	checkURL     func(string) error
 	userAgent    string
+	wayback      string
 }
 
 // New builds a Fetcher.
@@ -148,6 +154,10 @@ func New(opts Options) *Fetcher {
 		minPageRunes: opts.MinPageRunes,
 		checkURL:     opts.CheckURL,
 		userAgent:    opts.UserAgent,
+		wayback:      strings.TrimRight(opts.WaybackURL, "/"),
+	}
+	if f.wayback == "" {
+		f.wayback = DefaultWaybackURL
 	}
 	if f.userAgent == "" {
 		f.userAgent = userAgent
@@ -212,6 +222,18 @@ func (f *Fetcher) allowed(raw string) error {
 //   - a page with less text is refused: it is the abstract, and the library would hold a
 //     file that looks like the article and is not.
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*Document, error) {
+	return f.fetch(ctx, rawURL, func(page *url.URL, named string) (string, bool) {
+		target, err := page.Parse(named)
+		if err != nil || (target.Scheme != "http" && target.Scheme != "https") {
+			return "", false
+		}
+		return target.String(), true
+	})
+}
+
+// fetch is Fetch; pdfAt is where the PDF a page names (as written on the page) is taken from: the
+// address it gives on the page itself, or its copy in the Wayback Machine (Archived).
+func (f *Fetcher) fetch(ctx context.Context, rawURL string, pdfAt func(page *url.URL, named string) (string, bool)) (*Document, error) {
 	if err := f.allowed(rawURL); err != nil {
 		return nil, err
 	}
@@ -240,9 +262,8 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*Document, error) {
 
 	var pdfFailure *Error
 	if meta.pdfURL != "" {
-		target, err := final.Parse(meta.pdfURL)
-		if err == nil && (target.Scheme == "http" || target.Scheme == "https") {
-			doc, perr := f.fetchPDF(ctx, target.String(), nameFromTitle(meta.title, ".pdf"))
+		if target, ok := pdfAt(final, meta.pdfURL); ok {
+			doc, perr := f.fetchPDF(ctx, target, nameFromTitle(meta.title, ".pdf"))
 			if perr == nil {
 				doc.Title = strings.Join(strings.Fields(meta.title), " ")
 				return doc, nil

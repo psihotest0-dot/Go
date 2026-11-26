@@ -156,6 +156,11 @@ type Config struct {
 	// or a PDF from this machine first, and the paid API only when that gives nothing (plan step
 	// 3.1, internal/agent/web_fetch_local.go). Off by default: without it nothing changes.
 	WebFetchLocalEnabled bool
+	// WaybackEnabled (WAYBACK_ENABLED) lets web_fetch and save_page (with WEB_FETCH_LOCAL_ENABLED)
+	// and add_to_library read a link that is gone, refuses a program or does not answer from its
+	// newest copy in the Wayback Machine of the Internet Archive (internal/agent/wayback.go). Off by
+	// default: without it nothing changes.
+	WaybackEnabled bool
 	// TaskPlanEnabled (TASK_PLAN_ENABLED) turns on the plan of a task: the assistant makes a
 	// plan of a task with several steps, the server keeps it and checks that a step is done
 	// before it is marked so (package taskplan). Off by default: without it nothing changes.
@@ -401,6 +406,7 @@ func Load() *Config {
 		FilesDir:                   filesDir(),
 		LibraryAddEnabled:          boolEnv("LIBRARY_ADD_ENABLED", false),
 		WebFetchLocalEnabled:       boolEnv("WEB_FETCH_LOCAL_ENABLED", false),
+		WaybackEnabled:             boolEnv("WAYBACK_ENABLED", false),
 		TaskPlanEnabled:            boolEnv("TASK_PLAN_ENABLED", false),
 		TaskRunEnabled:             boolEnv("TASK_RUN_ENABLED", false),
 		RemindersEnabled:           boolEnv("REMINDERS_ENABLED", false),
