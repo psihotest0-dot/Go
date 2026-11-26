@@ -51,7 +51,7 @@ func asksAboutAttachment(message string, names []string) bool {
 // asksByTheBooks tells whether a message names the books or the library as the source of the answer:
 // "кажи ми според книгите как да го преструктурирам", "според базата данни от книгите какъв съвет".
 // Neither opens with a question word, so asksForKnowledge missed both (Flet, 2026-11-26), and the
-// answer named "Принципи" of Dalio from the passages the prompt had by chance - the library has 46
+// answer quoted a book on business principles from the passages the prompt had by chance - the library has 46
 // books on programming. "Добави в библиотеката" is no question to the books (libraryAddVerb).
 func asksByTheBooks(message string) bool {
 	message = strings.TrimSpace(withoutClosingNote(message))
