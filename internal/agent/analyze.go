@@ -375,8 +375,8 @@ func analysisText(file attachments.File, topic docTopic, books []bookPassages, i
 	}
 	b.WriteString("\nWrite the analysis in the language of the person's message, in these parts: 1) what the document is and what it does, in 2-3 sentences; " +
 		"2) what is good in it; 3) its problems or weak points, with line numbers for code; 4) what the books above say that applies to it - name each book you use, " +
-		"and take from a book only what its passage says (skip a book whose passage does not apply); 5) three concrete next steps. "+
-		"You see only this file: do not say what other files, modules or tests do or lack - if it matters, say that you cannot see them. "+
+		"and take from a book only what its passage says (skip a book whose passage does not apply); 5) three concrete next steps. " +
+		"You see only this file: do not say what other files, modules or tests do or lack - if it matters, say that you cannot see them. " +
 		"Never write that something has no test or is not tested: the tests are in files you cannot see. Do not end with a question.]")
 	return b.String()
 }
