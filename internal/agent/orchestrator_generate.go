@@ -512,6 +512,10 @@ func (o *Orchestrator) runRounds(
 		if forced == "" && turnFrom(ctx).explaining() && onlyTool(tools, searchDocumentsTool) != nil {
 			forced = searchDocumentsTool
 		}
+		// "Изброй всички" right after an answer from the internet: searched again (web_followup.go).
+		if forced == "" && searchesWebAgain(tools, messages) {
+			forced = "web_search"
+		}
 	}
 
 	// active are the tools on offer in this round; a group of tools joins them when the
