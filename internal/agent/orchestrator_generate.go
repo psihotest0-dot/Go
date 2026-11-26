@@ -494,13 +494,18 @@ func (o *Orchestrator) runRounds(
 	// look (0 of 4 with the real chat's history). The first round offers the one tool
 	// and requires a call: llama-server ignores a tool_choice that names a function,
 	// but it keeps "required" - and with one tool on offer that is the same thing.
-	forced := ""
+	forced, thenForced := "", ""
 	if len(require) == 0 {
 		forced = forcedFirstTool(tools, lastUserContent(messages))
 		// "Какво мислиш за този код" with a file too big for the prompt: read first
 		// (attachment_force.go). It wins over a look at the books, not over a plan or the internet.
+		// "Според книгите как да го преструктурирам" asks for both: the file first, the books in
+		// the round after it.
 		if (forced == "" || forced == searchDocumentsTool || forced == listDocumentsTool) &&
 			readsAttachmentFirst(turnFrom(ctx), lastUserContent(messages)) && onlyTool(tools, readAttachmentTool) != nil {
+			if forced == searchDocumentsTool {
+				thenForced = searchDocumentsTool
+			}
 			forced = readAttachmentTool
 		}
 		// The whole page behind a link as a file: save_page, which is in the group of the files
@@ -550,6 +555,11 @@ func (o *Orchestrator) runRounds(
 		case len(asked) > 0:
 			req.Tools = asked
 			req.ToolChoice = "required"
+		case thenForced != "" && toolRounds == 1:
+			if only := onlyTool(active, thenForced); only != nil {
+				req.Tools, req.ToolChoice = only, "required"
+			}
+			thenForced = ""
 		}
 		// The forced tool is for the first round only. A round that only unlocks a group does not
 		// count as a tool round, so without this a forced stub (the plan, for work on every item)

@@ -136,6 +136,9 @@ func forcedFirstTool(tools []openai.Tool, message string) string {
 		return "web_search"
 	case asksAboutLibrary(message) && onlyTool(tools, listDocumentsTool) != nil:
 		return listDocumentsTool
+	// "Кажи ми според книгите…": the books are named as the source (attachment_force.go).
+	case asksByTheBooks(message) && onlyTool(tools, searchDocumentsTool) != nil:
+		return searchDocumentsTool
 	case (asksForKnowledge(message) || asksForPassage(message)) && onlyTool(tools, searchDocumentsTool) != nil:
 		return searchDocumentsTool
 	}

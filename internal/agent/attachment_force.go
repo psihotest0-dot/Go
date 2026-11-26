@@ -22,6 +22,9 @@ const attachmentAskMaxRunes = 300
 var (
 	// attachmentWords: the code, the attached file, the file itself.
 	attachmentWords = regexp.MustCompile(`(?i)(?:^|\P{L})(?:код|кода|кодът|кодa|скрипт\p{L}*|програмата|прикач\p{L}*|закач\p{L}*|закъч\p{L}*|файла|файлът|файлa|този\s+файл|тоя\s+файл|моя\s+файл|code|script|attach\p{L}*|the\s+file|this\s+file)(?:\P{L}|$)`)
+	// byTheBooksWords: the books or the library named as the source of the answer.
+	byTheBooksWords = regexp.MustCompile(`(?i)(?:^|\P{L})(?:(?:според|от|по)\s+(?:\p{L}+\s+){0,3}?(?:книгите|книги|библиотеката)|(?:в|във)\s+(?:\p{L}+\s+){0,2}?(?:книгите|книги))(?:\P{L}|$)|` +
+		`(?:according\s+to|based\s+on|from|in)\s+(?:the\s+|my\s+)?(?:books|library)(?:\P{L}|$)`)
 	// newsWords: the news of the day.
 	newsWords = regexp.MustCompile(`(?i)(?:^|\P{L})(?:новини|новините|новина|новината|news|headlines|какво\s+(?:се\s+)?(?:случва|става)\s+(?:по|в)\s+света)(?:\P{L}|$)`)
 )
@@ -43,6 +46,16 @@ func asksAboutAttachment(message string, names []string) bool {
 		}
 	}
 	return false
+}
+
+// asksByTheBooks tells whether a message names the books or the library as the source of the answer:
+// "кажи ми според книгите как да го преструктурирам", "според базата данни от книгите какъв съвет".
+// Neither opens with a question word, so asksForKnowledge missed both (Flet, 2026-11-26), and the
+// answer named "Принципи" of Dalio from the passages the prompt had by chance - the library has 46
+// books on programming. "Добави в библиотеката" is no question to the books (libraryAddVerb).
+func asksByTheBooks(message string) bool {
+	message = strings.TrimSpace(withoutClosingNote(message))
+	return utf8.RuneCountInString(message) <= maxKnowledgeQuestionRunes && byTheBooksWords.MatchString(message) && !libraryAddVerb.MatchString(message)
 }
 
 // asksForNews tells whether a message asks for the news, which only a search knows.
