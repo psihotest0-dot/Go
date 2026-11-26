@@ -39,6 +39,7 @@ var modeLabels = map[string]string{
 	ModeMemory:   "Памет",
 	ModeStyle:    "Как да говорим",
 	ModeReminder: "Напомняне",
+	ModeAnalyze:  "Анализ",
 }
 
 // validMode tells whether a request may carry the mode: "" (none) or one of the modes.
@@ -108,5 +109,5 @@ func (t *turnState) modeName() string {
 
 // knownModes lists the modes in the order of the buttons (for the help text and the tests).
 func knownModes() []string {
-	return []string{ModeBooks, ModeWeb, ModeLibrary, ModeFiles, ModeMemory, ModeStyle, ModeReminder}
+	return []string{ModeBooks, ModeWeb, ModeLibrary, ModeFiles, ModeMemory, ModeStyle, ModeReminder, ModeAnalyze}
 }

@@ -327,6 +327,13 @@ var (
 	// corrected_<field> (the code changed a field the model read: date, time, from_now, next_day),
 	// kept (the person said yes), declined, problem_<kind>, extract_failed, listed, cancelled,
 	// sent_on_time, sent_late.
+	// Analyses counts the turns of the button "Анализ" by result: books (passages of the books of
+	// the subject were found), no_books, no_file, topic_failed.
+	Analyses = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "analyses_total",
+		Help: "Analyses of an attached file by result (books, no_books, no_file, topic_failed).",
+	}, []string{"result"})
+
 	Reminders = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "reminders_total",
 		Help: "Reminders by event (proposed, corrected_*, kept, declined, superseded, problem_*, extract_failed, listed, cancelled, sent_on_time, sent_late).",

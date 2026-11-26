@@ -130,9 +130,13 @@ func (o *Orchestrator) helpText() string {
 	b.WriteString("• „Отсега нататък винаги …“ — предлагам правило, ти го потвърждаваш\n")
 
 	if o.attachments != nil {
-		b.WriteString("\n📎 Прикачи файл в чата и питай за него — „Какво има в прикачения файл?“, „Провери кода за грешки“\n")
+		b.WriteString("\n📎 Прикачи файл в чата и питай за него — „Какво има в прикачения файл?“, „Провери кода за грешки“; " +
+			"с бутона „Анализ“ — разбор според книгите по темата му (код — по книгите за езика му)\n")
 	}
 	buttons, commands := "Бележките на Лили, Памет, Как да говорим", "/books, /web, /add, /notes, /memory, /style"
+	if o.attachments != nil {
+		buttons += ", Анализ"
+	}
 	if o.reminders != nil {
 		buttons, commands = buttons+", Напомняне", commands+", /remind (и /reminders — списъкът)"
 	}

@@ -495,7 +495,8 @@ func (o *Orchestrator) runRounds(
 	// and requires a call: llama-server ignores a tool_choice that names a function,
 	// but it keeps "required" - and with one tool on offer that is the same thing.
 	forced, thenForced := "", ""
-	if len(require) == 0 {
+	// The analysis has its document and its books in the note of the message (analyze.go): nothing is forced.
+	if len(require) == 0 && turnFrom(ctx).modeName() != ModeAnalyze {
 		forced = forcedFirstTool(tools, lastUserContent(messages))
 		// "Какво мислиш за този код" with a file too big for the prompt: read first
 		// (attachment_force.go). It wins over a look at the books, not over a plan or the internet.

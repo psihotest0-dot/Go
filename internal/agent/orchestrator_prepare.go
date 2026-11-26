@@ -167,6 +167,20 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 			text = modeOffText(req.Mode)
 		}
 		turn.setStatusAnswer(text)
+	} else if req.Mode == ModeAnalyze {
+		// The button of the analysis has no tool to require: the code finds the document and the
+		// books of its subject and gives them to the model next to the message (analyze.go).
+		shown := map[string]bool{}
+		for _, f := range plan.files {
+			shown[f.Name] = f.Inline != ""
+		}
+		note, answer := o.analysisNote(ctx, userID, req.SessionID, req.Content, shown)
+		if answer != "" {
+			turn.setStatusAnswer(answer)
+		} else {
+			turn.setMode(ModeAnalyze)
+			chatCtx.History = withNoteOnLastUser(chatCtx.History, note)
+		}
 	} else if req.Mode != "" {
 		if _, required := o.modeTools(tools, req.Mode, turn); len(required) > 0 {
 			turn.setMode(req.Mode)

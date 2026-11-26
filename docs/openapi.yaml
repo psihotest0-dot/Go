@@ -631,7 +631,7 @@ paths:
                     that does not know the frame must not ask for it. Left out: false.
                 mode:
                   type: string
-                  enum: [books, web, library, files, memory, style, reminder]
+                  enum: [books, web, library, files, memory, style, reminder, analyze]
                   description: >-
                     The button of the message: the turn must call a tool of this road -
                     `books` (search_documents, list_documents), `web` (web_search,
@@ -639,7 +639,10 @@ paths:
                     `files` (Lili's own files), `memory` (create_memory, search_memories),
                     `style` (save_global_rule, save_style_note), `reminder` (no tool: the server reads the
                     request for a reminder itself and says its date back; off unless the reminders
-                    are on). The answers the server gives
+                    are on), `analyze` (no tool to require: the server takes the newest attached file, or
+                    the one the message names, reads its subject with the local model, finds passages
+                    of the books of that subject and gives them to the model with the recipe of an
+                    analysis; without an attached file it says how to attach one). The answers the server gives
                     without the model (the help list, "успя ли?", the task over the added
                     documents) are not given in a mode; when the road is off, the server says
                     so in the text. For one message: the client clears it. Left out: none,
