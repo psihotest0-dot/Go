@@ -146,6 +146,8 @@ func TestCodeIsAnalysedByTheBooksOfItsLanguage(t *testing.T) {
 	assert.NotContains(t, note, "goroutine", "a book of another language")
 	assert.NotContains(t, note, "ego", "a book of another category")
 	assert.Contains(t, note, "4) what the books above say")
+	assert.Contains(t, note, "You see only this file: do not say what other files, modules or tests do or lack")
+	assert.Contains(t, note, "Never write that something has no test")
 	assert.Contains(t, model.topicRead, "import flet as ft", "the topic is read from the file")
 	assert.Nil(t, model.Requests[0].ToolChoice, "nothing is forced in an analysis")
 }
