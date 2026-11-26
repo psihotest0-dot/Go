@@ -295,6 +295,11 @@ type RegenerateRequest struct {
 	QueueEvents bool `json:"queue_events,omitempty"`
 }
 
+// regeneratedCodeNote follows an answer of the code said again by "Регенерирай" (it is shown, not
+// stored).
+const regeneratedCodeNote = "\n\n(Този отговор е на кода, не на модела: регенерирането не го сменя и не повтаря действието. " +
+	"Ако нещо в него не е вярно, кажи ми го с думи.)"
+
 // HandleRegenerate handles regenerating the last assistant response.
 func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -354,7 +359,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// the regeneration replaces (and leaves out of the prompt, see prepareTurn); none when
 	// the turn had failed. They are taken by id now, so that a turn sent meanwhile does
 	// not lose its answer at the end.
-	var lastUserContent string
+	var lastUserContent, codeAnswer string
 	var replaced []uuid.UUID
 	for _, m := range dbMsgs {
 		if m.Role == "user" {
@@ -363,12 +368,29 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		}
 		if m.Role == "assistant" {
 			replaced = append(replaced, m.ID)
+			if codeAnswer == "" && m.ToolLog.String == codeAnswerLog {
+				codeAnswer = m.Content
+			}
 		}
 	}
 
 	if lastUserContent == "" {
 		slog.WarnContext(ctx, "no user message found to regenerate from", slog.String("session_id", regenReq.SessionID))
 		chatFailure(w, streaming, http.StatusBadRequest, "no user message found to regenerate from")
+		return
+	}
+
+	// An answer of the code (codeAnswerLog) is said again as it is: what it did (a bill kept, one
+	// marked paid, a reminder removed) is done, and the same message through the code once more
+	// would do it again or to another one; the model would answer a "да" it cannot act on.
+	if codeAnswer != "" {
+		slog.InfoContext(ctx, "the answer to regenerate is the code's; it is said again", "session_id", regenReq.SessionID)
+		codeCtx, turn := withTurn(r.Context(), regenReq.SessionID, false)
+		turn.setStatusAnswer(codeAnswer + regeneratedCodeNote)
+		// Nothing is stored: the answer in the conversation stays the one it was.
+		if _, err := o.streamResponse(w, r.WithContext(codeCtx), regenReq.SessionID, nil, nil, nil, nil); err != nil {
+			slog.ErrorContext(ctx, "stream failed", "err", err, "session_id", regenReq.SessionID)
+		}
 		return
 	}
 

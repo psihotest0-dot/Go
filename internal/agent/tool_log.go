@@ -198,6 +198,9 @@ func (t *turnState) storedToolLog() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	lines := t.toolLog
+	if len(lines) == 0 && t.statusText != "" {
+		return codeAnswerLog
+	}
 	if len(lines) > maxToolLogLines {
 		lines = append(lines[:maxToolLogLines:maxToolLogLines], fmt.Sprintf("and %d more calls", len(t.toolLog)-maxToolLogLines))
 	}
@@ -208,6 +211,16 @@ func (t *turnState) storedToolLog() string {
 // (sanitizeAssistantText), so the model cannot write a record of its own.
 const toolLogNotePrefix = "[System record of the tools of this answer"
 
+// toolLogNoteHead is the note up to the record itself (see historyToolNote).
+const toolLogNoteHead = toolLogNotePrefix + ", not written by you and not seen by the user: "
+
+// codeAnswerLog is the record of an answer the code wrote with no model (turnState.statusAnswerText:
+// a kept bill, "платих 1", a reminder, "успя ли?"). "Регенерирай" on such an answer says it again
+// instead of running the message through the code a second time (HandleRegenerate): on 2026-11-26
+// the regeneration of "платих 1" marked the next unpaid bill, which had become the first. The
+// model does not see it: the prompt stays what it was (historyToolNote).
+const codeAnswerLog = "code: answered by the server, no model"
+
 // historyToolNote is what the model reads after one of its answers in the history: what the tools
 // of that turn did. log is the stored record ("" when the turn called no tool). An answer stored
 // before the record existed has none (NULL) and gets no note: what its tools did is not known.
@@ -216,8 +229,8 @@ const toolLogNotePrefix = "[System record of the tools of this answer"
 // history it takes; the empty record is kept so that it can be shown later.
 func historyToolNote(log string) string {
 	log = strings.TrimSpace(log)
-	if log == "" {
+	if log == "" || log == codeAnswerLog {
 		return ""
 	}
-	return "\n\n" + toolLogNotePrefix + ", not written by you and not seen by the user: " + strings.Join(strings.Split(log, toolLogSeparator), "; ") + ".]"
+	return "\n\n" + toolLogNoteHead + strings.Join(strings.Split(log, toolLogSeparator), "; ") + ".]"
 }

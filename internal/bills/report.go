@@ -32,6 +32,11 @@ const (
 	reportLastDay = 7
 )
 
+// ReportLog starts the record (messages.tool_log) of a monthly report in its conversation: a
+// message the server writes on its own, which a "да" after it does not answer
+// (agent.yesAfterServerNotice).
+const ReportLog = "bills: the monthly report of "
+
 // Notifier sends a text to the Telegram chat of a conversation "tg-<chat id>".
 type Notifier func(ctx context.Context, userID uuid.UUID, sessionID, text string)
 
@@ -98,7 +103,7 @@ func (s *Service) ReportPass(ctx context.Context, notify Notifier) error {
 		if _, err := s.q.CreateMessage(ctx, db.CreateMessageParams{
 			UserID: userID, SessionID: session, Role: "assistant", Content: text,
 			SourceChunkIds: pqtype.NullRawMessage{RawMessage: []byte("[]"), Valid: true},
-			ToolLog:        sql.NullString{String: "bills: the monthly report of " + last.Label, Valid: true},
+			ToolLog:        sql.NullString{String: ReportLog + last.Label, Valid: true},
 		}); err != nil {
 			_ = s.q.UnclaimBillReport(ctx, db.UnclaimBillReportParams{UserID: userID, Month: first.UTC()})
 			return fmt.Errorf("write the monthly report: %w", err)

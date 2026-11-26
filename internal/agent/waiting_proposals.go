@@ -2,10 +2,16 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 
+	"go-monolith/internal/bills"
+	"go-monolith/internal/reminders"
+	"go-monolith/internal/taskrun"
 	"go-monolith/metrics"
 )
 
@@ -103,4 +109,38 @@ func (o *Orchestrator) dropOtherProposals(ctx context.Context, userID uuid.UUID,
 			}
 		}
 	}
+}
+
+// serverNoticeLogs start the records of the messages the server writes into a conversation on its
+// own, outside a turn: a reminder that came, the monthly report of the bills, the report of a task.
+var serverNoticeLogs = []string{reminders.SentLog, bills.ReportLog, taskrun.ReportLog}
+
+// answersServerNotice tells whether the person's message (the last of the history) follows a
+// message the server wrote on its own (serverNoticeLogs): the history shows its record next to it.
+func answersServerNotice(history []openai.ChatCompletionMessage) bool {
+	n := len(history)
+	if n < 2 || history[n-1].Role != openai.ChatMessageRoleUser || history[n-2].Role != openai.ChatMessageRoleAssistant {
+		return false
+	}
+	for _, log := range serverNoticeLogs {
+		if strings.Contains(history[n-2].Content, toolLogNoteHead+log) {
+			return true
+		}
+	}
+	return false
+}
+
+// yesAfterServerNotice is the answer of the code to a yes that follows a reminder or a report the
+// server wrote into the conversation while a proposal waited from before it, "" otherwise. The
+// "добре" to "⏰ Напомняне: …" kept the bill proposed before the reminder (the code review of
+// 2026-11-25); a yes is for the question asked last, and a notice asks none. The proposal is kept,
+// and the next yes, after this question, is for it.
+func (o *Orchestrator) yesAfterServerNotice(ctx context.Context, userID uuid.UUID, session, message string, history []openai.ChatCompletionMessage) string {
+	message = strings.TrimSpace(withoutClosingNote(message))
+	if !isYes(message) || !answersServerNotice(history) || !o.proposalWaits(ctx, userID, session) {
+		return ""
+	}
+	slog.InfoContext(ctx, "a yes after a notice of the server; the proposal before it is asked about again", "session_id", session)
+	return fmt.Sprintf("„%s“ идва след известието ми по-горе (напомняне или справка), затова не го приемам за отговор на въпроса преди него. "+
+		"Той още чака: кажи „да“, ако е за него, или „не“.", message)
 }

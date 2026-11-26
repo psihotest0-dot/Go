@@ -461,13 +461,18 @@ func FileName(docName, suffix string, n int) string {
 	return name
 }
 
+// ReportLog starts the record (messages.tool_log) of the report of a walk in its conversation: a
+// message the server writes on its own, which a "да" after it does not answer
+// (agent.yesAfterServerNotice).
+const ReportLog = "task_run: "
+
 // report writes in the conversation what the walk did, and sends it to the notifier.
 func (r *Runner) report(ctx context.Context, p taskplan.RunPlan) {
 	text := ReportText(p.Plan)
 	if _, err := r.db.Queries.CreateMessage(ctx, db.CreateMessageParams{
 		UserID: p.UserID, SessionID: p.Session, Role: "assistant", Content: text,
 		SourceChunkIds: pqtype.NullRawMessage{RawMessage: []byte("[]"), Valid: true},
-		ToolLog:        sql.NullString{String: "task_run: " + reportLog(p.Plan), Valid: true},
+		ToolLog:        sql.NullString{String: ReportLog + reportLog(p.Plan), Valid: true},
 	}); err != nil {
 		slog.Error("the report of a task could not be written in the conversation", "plan_id", p.ID, "error", err)
 	}

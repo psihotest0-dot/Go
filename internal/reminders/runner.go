@@ -87,6 +87,11 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
+// SentLog starts the record (messages.tool_log) of a reminder the runner wrote into its
+// conversation: the person's "добре" after it answers the reminder, not a question before it
+// (agent.yesAfterServerNotice).
+const SentLog = "reminder: sent reminder"
+
 // sent is a reminder written into its conversation, to be sent to Telegram after the commit.
 type sent struct {
 	userID  uuid.UUID
@@ -116,7 +121,7 @@ func (r *Runner) Pass(ctx context.Context) (int, error) {
 		if _, err := q.CreateMessage(ctx, db.CreateMessageParams{
 			UserID: row.UserID, SessionID: row.SessionID, Role: "assistant", Content: text,
 			SourceChunkIds: pqtype.NullRawMessage{RawMessage: []byte("[]"), Valid: true},
-			ToolLog:        sql.NullString{String: fmt.Sprintf("reminder: sent reminder %d", row.ID), Valid: true},
+			ToolLog:        sql.NullString{String: fmt.Sprintf("%s %d", SentLog, row.ID), Valid: true},
 		}); err != nil {
 			return 0, fmt.Errorf("write reminder %d into its conversation: %w", row.ID, err)
 		}

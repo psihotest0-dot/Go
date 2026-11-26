@@ -92,7 +92,12 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	}
 	// In a mode the person asked for the road: none of these answers of the code (turn_mode.go).
 	if req.Mode == "" {
-		turn.setStatusAnswer(o.statusAnswerFor(ctx, userID, req.Content, chatCtx.History, chatCtx.HistoryAt, statusPlan))
+		// A yes after a reminder or a report the server wrote while a proposal waited: the code asks
+		// again which question it is for (waiting_proposals.go).
+		turn.setStatusAnswer(o.yesAfterServerNotice(ctx, userID, req.SessionID, req.Content, chatCtx.History))
+		if turn.statusAnswerText() == "" {
+			turn.setStatusAnswer(o.statusAnswerFor(ctx, userID, req.Content, chatCtx.History, chatCtx.HistoryAt, statusPlan))
+		}
 		// A task over many documents, its yes and its stop: the code answers (task_run.go).
 		if turn.statusAnswerText() == "" {
 			turn.setStatusAnswer(o.taskRunAnswer(ctx, userID, req.SessionID, req.Content, historyStart(chatCtx.History, chatCtx.HistoryAt)))
