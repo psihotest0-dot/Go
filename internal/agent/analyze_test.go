@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,6 +70,21 @@ func (e *attachmentEnv) seedBook(t *testing.T, name, category string, texts ...s
 type topicModel struct {
 	*llm.MockLLM
 	topicRead string
+	// parts are the parts of a file the model was asked to write notes on; failPart makes the
+	// call for that part fail.
+	parts    []string
+	thinking []any
+	failPart int
+}
+
+func (m *topicModel) Chat(_ context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
+	m.parts = append(m.parts, req.Messages[1].Content)
+	m.thinking = append(m.thinking, req.ChatTemplateKwargs["enable_thinking"])
+	if len(m.parts) == m.failPart {
+		return openai.ChatCompletionResponse{}, assert.AnError
+	}
+	notes := fmt.Sprintf("Part %d: handlers that return nil; problem at line %d.", len(m.parts), 100*len(m.parts))
+	return openai.ChatCompletionResponse{Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Content: notes}}}}, nil
 }
 
 func (m *topicModel) ChatWithJSONSchema(ctx context.Context, req openai.ChatCompletionRequest, schema interface{}) (openai.ChatCompletionResponse, error) {
@@ -191,11 +207,70 @@ func TestABigFileIsAnalysedFromItsFirstPart(t *testing.T) {
 	analyse(t, analysisOrchestrator(t, e, model), e, "a4", "анализирай")
 
 	note := lastUserOf(t, model)
-	assert.Contains(t, note, "of 1500 follow; read the rest yourself with read_attachment")
+	assert.Contains(t, note, "of 1500 follow in full; the notes after them cover the rest that was read")
 	assert.Contains(t, note, "Never tell the person to call a tool.")
 	assert.Contains(t, note, "<<< huge.go >>>")
 	assert.Contains(t, note, "   1| ")
-	assert.Less(t, estimateTokens(note), analyzeDocTokens+1500, "the part is bounded")
+	// The other parts: notes by the local model, one call each, with the numbers of the file.
+	require.Len(t, model.parts, analyzeMaxParts-1)
+	assert.Contains(t, model.parts[0], "(part 2 of 8)")
+	for _, th := range model.thinking {
+		assert.Equal(t, false, th, "the notes are written without thinking: it ate the whole answer")
+	}
+	first := strings.Index(note, "<<< end of the part")
+	require.Positive(t, first)
+	assert.Contains(t, note, "Notes on lines ")
+	assert.Contains(t, note, "Part 1: handlers that return nil")
+	assert.Contains(t, note, "Part 7: handlers that return nil")
+	assert.Contains(t, note, "were not read (the file is too long for one analysis)")
+	assert.Less(t, estimateTokens(note), analyzeDocTokens+2500, "the part and the notes are bounded")
+}
+
+// A part whose notes fail is named as not analysed; the rest goes on.
+func TestAPartThatCouldNotBeReadIsNamed(t *testing.T) {
+	e := newAttachmentEnv(t)
+	e.attach(t, e.userID, "a8", "huge.go", bigFile())
+	model := analysisModel(t, docTopic{Category: "programming", Language: "go"})
+	model.failPart = 2
+
+	analyse(t, analysisOrchestrator(t, e, model), e, "a8", "анализирай")
+
+	note := lastUserOf(t, model)
+	assert.Contains(t, note, "could not be read: say that they were not analysed")
+	assert.Contains(t, note, "Part 3: handlers")
+}
+
+func TestSplitParts(t *testing.T) {
+	lines := make([]string, 300)
+	for i := range lines {
+		lines[i] = strings.Repeat("x", 92) // 100 bytes with the numbering: 34 tokens a line
+	}
+	parts, unseen := splitParts(lines, 1000)
+	require.NotEmpty(t, parts)
+	assert.Equal(t, 1, parts[0].from)
+	assert.Equal(t, 29, parts[0].to, "the first part fits its budget")
+	assert.Equal(t, 30, parts[1].from, "the parts follow each other")
+	assert.Equal(t, 300, parts[len(parts)-1].to)
+	assert.Zero(t, unseen)
+
+	long := make([]string, 2000)
+	for i := range long {
+		long[i] = strings.Repeat("y", 92)
+	}
+	parts, unseen = splitParts(long, 1000)
+	assert.Len(t, parts, analyzeMaxParts)
+	assert.Equal(t, parts[len(parts)-1].to+1, unseen)
+
+	// A line longer than a part still makes a part of its own.
+	parts, _ = splitParts([]string{strings.Repeat("z", 20000), "end"}, 1000)
+	assert.Equal(t, 1, parts[0].to)
+}
+
+func TestRenumberAndCutWords(t *testing.T) {
+	assert.Equal(t, " 101| a\n 102| b", renumber("   1| a\n   2| b", 101))
+	assert.Equal(t, "   1| a", renumber("   1| a", 1))
+	assert.Equal(t, "one two …", cutWords("one two three four", 2))
+	assert.Equal(t, "one two", cutWords("one two", 5))
 }
 
 // Nothing attached: the code says how, and the model is not asked.
