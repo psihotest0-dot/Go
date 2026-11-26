@@ -131,6 +131,9 @@ func forcedFirstTool(tools []openai.Tool, message string) string {
 	// "Опитай да намериш в интернет…": asked to look, not to choose (lookup_guard.go).
 	case asksToSearchWeb(message) && onlyTool(tools, "web_search") != nil:
 		return "web_search"
+	// "Какви са днешните новини?": only a search knows them (attachment_force.go).
+	case asksForNews(message) && onlyTool(tools, "web_search") != nil:
+		return "web_search"
 	case asksAboutLibrary(message) && onlyTool(tools, listDocumentsTool) != nil:
 		return listDocumentsTool
 	case (asksForKnowledge(message) || asksForPassage(message)) && onlyTool(tools, searchDocumentsTool) != nil:

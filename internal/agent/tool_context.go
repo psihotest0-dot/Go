@@ -87,6 +87,9 @@ type turnState struct {
 	// archivedCopies are the pages web_fetch and save_page read from their copy in the Wayback
 	// Machine in this turn: the person is told so under the answer (archiveReport, wayback.go).
 	archivedCopies []archivedCopy
+	// hiddenAttachments are the attached files the prompt of the turn does not show in full: a
+	// message about them reads them first (attachment_force.go).
+	hiddenAttachments []string
 	// since is the time from which a change of a file counts as work done for a question about
 	// how far the work is (requestSince); the zero time: not known.
 	since time.Time

@@ -497,6 +497,12 @@ func (o *Orchestrator) runRounds(
 	forced := ""
 	if len(require) == 0 {
 		forced = forcedFirstTool(tools, lastUserContent(messages))
+		// "Какво мислиш за този код" with a file too big for the prompt: read first
+		// (attachment_force.go). It wins over a look at the books, not over a plan or the internet.
+		if (forced == "" || forced == searchDocumentsTool || forced == listDocumentsTool) &&
+			readsAttachmentFirst(turnFrom(ctx), lastUserContent(messages)) && onlyTool(tools, readAttachmentTool) != nil {
+			forced = readAttachmentTool
+		}
 		// The whole page behind a link as a file: save_page, which is in the group of the files
 		// (save_page_tool.go). It is forced only where that group is on offer.
 		if (hasTool(tools, filesStubTool) || hasTool(tools, savePageTool)) && asksToSavePage(lastUserContent(messages)) {
