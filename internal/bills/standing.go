@@ -622,39 +622,80 @@ func (s *Service) standingPayments(ctx context.Context, r db.StandingBill, today
 		if st.Month != 0 {
 			repeat = "yearly"
 		}
-		row, err := s.q.InsertStandingPayment(ctx, db.InsertStandingPaymentParams{
+		written, reminded, err := s.writeStandingPayment(ctx, db.InsertStandingPaymentParams{
 			UserID: r.UserID, SessionID: r.SessionID, Issuer: st.Issuer, Kind: st.Kind, AmountCents: st.Cents, Currency: st.Currency,
 			DueDate: sql.NullTime{Time: due, Valid: true}, Payment: st.Payment, Repeat: repeat, Summary: st.Summary,
 			FileName: standingFileName, FileHash: fmt.Sprintf("standing:%d:%04d-%02d", st.ID, day.Year, day.Month),
 			StandingID: sql.NullInt64{Int64: st.ID, Valid: true}, RemindDaysBefore: int32(st.RemindBefore),
 		})
-		if errors.Is(err, sql.ErrNoRows) {
-			continue // written already
-		}
 		if err != nil {
-			return fmt.Errorf("write the payment of a standing bill: %w", err)
-		}
-		metrics.Bills.WithLabelValues("standing_payment").Inc()
-		if s.reminders == nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			// Nothing of it is written; the next pass tries again. The other payments go on.
+			slog.WarnContext(ctx, "the payment of a standing bill was not written; it is tried again", "standing_id", st.ID, "err", err)
 			continue
 		}
-		plan := PlanReminder(fromRow(row), s.now(), s.loc)
-		if plan.Text == "" {
-			continue
+		if written {
+			metrics.Bills.WithLabelValues("standing_payment").Inc()
 		}
-		rem, err := s.reminders.CreateAt(ctx, r.UserID, r.SessionID, plan.Text, plan.At, s.loc)
-		if err != nil {
-			slog.WarnContext(ctx, "the reminder of a standing bill could not be kept", "err", err)
-			continue
-		}
-		if err := s.q.SetBillReminder(ctx, db.SetBillReminderParams{ID: row.ID, UserID: r.UserID, ReminderID: sql.NullInt64{Int64: rem.ID, Valid: true}}); err != nil {
-			slog.WarnContext(ctx, "the reminder of a standing bill could not be tied to it", "err", err)
-		}
-		if s.wake != nil {
+		if reminded && s.wake != nil {
 			s.wake()
 		}
 	}
 	return nil
+}
+
+// writeStandingPayment writes the payment of a standing bill of one day with the reminder of its
+// due day, and ties them, in one transaction (the code review of 2026-11-27: a failure between the
+// three writes left a payment without its reminder for good - the next pass finds it written - or
+// a reminder that the removal of the bill does not take). written is false when the payment was
+// there already.
+func (s *Service) writeStandingPayment(ctx context.Context, params db.InsertStandingPaymentParams) (written, reminded bool, err error) {
+	tx, err := s.d.SqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, false, fmt.Errorf("begin the payment of a standing bill: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.q.WithTx(tx)
+	row, err := q.InsertStandingPayment(ctx, params)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, false, nil // written already
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("write the payment of a standing bill: %w", err)
+	}
+	if s.reminders != nil {
+		if plan := PlanReminder(fromRow(row), s.now(), s.loc); plan.Text != "" {
+			rem, err := s.reminders.WithTx(tx).CreateAt(ctx, params.UserID, params.SessionID, plan.Text, plan.At, s.loc)
+			if err != nil {
+				return false, false, fmt.Errorf("keep the reminder of a standing bill: %w", err)
+			}
+			if err := q.SetBillReminder(ctx, db.SetBillReminderParams{ID: row.ID, UserID: params.UserID, ReminderID: sql.NullInt64{Int64: rem.ID, Valid: true}}); err != nil {
+				return false, false, fmt.Errorf("tie the reminder to the payment of a standing bill: %w", err)
+			}
+			reminded = true
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, fmt.Errorf("commit the payment of a standing bill: %w", err)
+	}
+	return true, reminded, nil
+}
+
+// deletePayment removes a payment of a standing bill and its reminder in tx; false when it was
+// not there.
+func (s *Service) deletePayment(ctx context.Context, tx *sql.Tx, userID uuid.UUID, r db.Bill) (bool, error) {
+	n, err := s.q.WithTx(tx).DeleteBill(ctx, db.DeleteBillParams{ID: r.ID, UserID: userID})
+	if err != nil || n == 0 {
+		return false, err
+	}
+	if r.ReminderID.Valid && s.reminders != nil {
+		if _, err := s.reminders.WithTx(tx).Cancel(ctx, userID, r.ReminderID.Int64); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // documentedIn tells whether a month has a bill from a document of the same kind and issuer as the
@@ -708,13 +749,13 @@ func (s *Service) replaceStandingPayments(ctx context.Context, userID uuid.UUID,
 		if r.PaidDate.Valid || !sameIssuer(r.Issuer, b.Issuer) {
 			continue
 		}
-		if n, err := s.q.DeleteBill(ctx, db.DeleteBillParams{ID: r.ID, UserID: userID}); err != nil || n == 0 {
-			continue
+		ok, err := s.inTx(ctx, func(tx *sql.Tx) (bool, error) { return s.deletePayment(ctx, tx, userID, r) })
+		if err != nil {
+			slog.WarnContext(ctx, "the payment of a standing bill that a document replaces could not be removed", "err", err)
 		}
-		if r.ReminderID.Valid && s.reminders != nil {
-			_, _ = s.reminders.Cancel(ctx, userID, r.ReminderID.Int64)
+		if ok {
+			gone = append(gone, oneLine(fromRow(r), s.loc))
 		}
-		gone = append(gone, oneLine(fromRow(r), s.loc))
 	}
 	if len(gone) == 0 {
 		return ""
@@ -790,17 +831,34 @@ func (s *Service) RemoveStanding(ctx context.Context, userID uuid.UUID, message 
 	}
 	st := all[pick[0]]
 	today := reminders.DayOf(s.now(), s.loc)
-	upcoming, err := s.q.UpcomingStandingPayments(ctx, db.UpcomingStandingPaymentsParams{UserID: userID, StandingID: sql.NullInt64{Int64: st.ID, Valid: true}, FromDay: today.UTC()})
-	if err != nil {
-		return "Не успях да махна постоянната сметка (грешка в базата). Опитай пак след малко.", true
-	}
-	for _, r := range upcoming {
-		if n, err := s.q.DeleteBill(ctx, db.DeleteBillParams{ID: r.ID, UserID: userID}); err == nil && n > 0 && r.ReminderID.Valid && s.reminders != nil {
-			_, _ = s.reminders.Cancel(ctx, userID, r.ReminderID.Int64)
+	// The bill, its payments to come and their reminders go in one transaction, with the bill
+	// locked first: a payment the pass writes at the same moment waits and then fails, and the
+	// answer says "махнах" only when all of it is gone (the code review of 2026-11-27).
+	var upcoming []db.Bill
+	removed, err := s.inTx(ctx, func(tx *sql.Tx) (bool, error) {
+		q := s.q.WithTx(tx)
+		if _, err := q.LockKeptStanding(ctx, db.LockKeptStandingParams{ID: st.ID, UserID: userID}); err != nil {
+			return false, err
 		}
+		var err error
+		upcoming, err = q.UpcomingStandingPayments(ctx, db.UpcomingStandingPaymentsParams{UserID: userID, StandingID: sql.NullInt64{Int64: st.ID, Valid: true}, FromDay: today.UTC()})
+		if err != nil {
+			return false, err
+		}
+		for _, r := range upcoming {
+			if _, err := s.deletePayment(ctx, tx, userID, r); err != nil {
+				return false, err
+			}
+		}
+		n, err := q.DeleteStanding(ctx, db.DeleteStandingParams{ID: st.ID, UserID: userID})
+		return n > 0, err
+	})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "Тази постоянна сметка вече е махната.", true
 	}
-	if n, err := s.q.DeleteStanding(ctx, db.DeleteStandingParams{ID: st.ID, UserID: userID}); err != nil || n == 0 {
-		return "Не успях да махна постоянната сметка (грешка в базата). Опитай пак след малко.", true
+	if err != nil || !removed {
+		slog.WarnContext(ctx, "a standing bill could not be removed; nothing was", "err", err)
+		return "Не успях да махна постоянната сметка (грешка в базата) — нищо не е махнато. Опитай пак след малко.", true
 	}
 	metrics.Bills.WithLabelValues("standing_removed").Inc()
 	text = "Махнах постоянната сметка ✅ " + standingLine(st) + "."

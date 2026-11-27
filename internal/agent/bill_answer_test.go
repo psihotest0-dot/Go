@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -437,6 +438,104 @@ func TestAStandingBillIsKeptAndItsPaymentsAreWrittenBeforeTheirDays(t *testing.T
 	assert.Contains(t, e.say(t, "колко са ми сметките този месец?"), "Още нямаш записани сметки", "the payment to come is gone")
 	require.NoError(t, e.svc.StandingPass(ctx))
 	assert.Contains(t, e.say(t, "колко са ми сметките този месец?"), "Още нямаш записани сметки", "and not written again")
+}
+
+// failWrites makes every write of op ("INSERT", "DELETE") on table fail for the user of the test,
+// until the test ends: a failure of the database in the middle of a transaction.
+func (e *billEnv) failWrites(t *testing.T, table, op string) func() {
+	t.Helper()
+	name := fmt.Sprintf("fail_%s_%s_%s", strings.ToLower(op), table, strings.ReplaceAll(e.userID.String(), "-", ""))
+	_, err := e.db.SqlDB.Exec(`CREATE OR REPLACE FUNCTION ` + name + `() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'injected failure'; END $$ LANGUAGE plpgsql`)
+	require.NoError(t, err)
+	row := "OLD"
+	if op == "INSERT" {
+		row = "NEW"
+	}
+	_, err = e.db.SqlDB.Exec(fmt.Sprintf(`CREATE TRIGGER %s BEFORE %s ON %s FOR EACH ROW WHEN (%s.user_id = '%s') EXECUTE FUNCTION %s()`,
+		name, op, table, row, e.userID, name))
+	require.NoError(t, err)
+	stop := func() {
+		_, _ = e.db.SqlDB.Exec(fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON %s`, name, table))
+		_, _ = e.db.SqlDB.Exec(`DROP FUNCTION IF EXISTS ` + name + `()`)
+	}
+	t.Cleanup(stop)
+	return stop
+}
+
+// keptStandingWithPayment keeps the standing bill of the club and, on the 25th, its payment of the
+// 28th with the reminder of the 27th.
+func (e *billEnv) keptStandingWithPayment(t *testing.T) {
+	t.Helper()
+	e.readsStanding(t, bills.StandingFields{Issuer: "Beispiel Spiele Club", Kind: "subscription", Summary: "Абонамент за игри"})
+	e.say(t, "запише че на всяка 28 дата имам сметка от 14 евро към beispeil spiele club")
+	require.Contains(t, e.say(t, "да"), "Записах постоянната сметка ✅")
+	e.at(25, 12, 11)
+}
+
+func (e *billEnv) standingPayments(t *testing.T) (payments, reminders int) {
+	t.Helper()
+	require.NoError(t, e.db.SqlDB.QueryRow(`SELECT count(*), count(reminder_id) FROM bills WHERE user_id = $1 AND file_hash LIKE 'standing:%'`, e.userID).Scan(&payments, &reminders))
+	return payments, reminders
+}
+
+// The code review of 2026-11-27: the payment of a standing bill was written, and its reminder after
+// it; when the reminder failed the payment stayed without one for good (the next pass found it
+// written). Now both are one transaction: nothing, and the next pass writes both.
+func TestAPaymentOfAStandingBillIsWrittenWithItsReminderOrNotAtAll(t *testing.T) {
+	e := newBillEnv(t)
+	e.keptStandingWithPayment(t)
+	ctx := context.Background()
+
+	stop := e.failWrites(t, "reminders", "INSERT")
+	require.NoError(t, e.svc.StandingPass(ctx), "a payment that fails does not stop the pass")
+	payments, _ := e.standingPayments(t)
+	assert.Zero(t, payments, "no payment without its reminder")
+
+	stop()
+	require.NoError(t, e.svc.StandingPass(ctx))
+	payments, tied := e.standingPayments(t)
+	assert.Equal(t, 1, payments)
+	assert.Equal(t, 1, tied, "the payment has its reminder")
+	active, err := e.store.Active(ctx, e.userID)
+	require.NoError(t, err)
+	assert.Len(t, active, 1)
+}
+
+// The code review of 2026-11-27: the removal of a standing bill dropped the errors of the removal of
+// its payment and its reminder, removed the bill all the same and said "махнати".
+func TestAStandingBillIsRemovedWholeOrNotAtAll(t *testing.T) {
+	e := newBillEnv(t)
+	e.keptStandingWithPayment(t)
+	ctx := context.Background()
+	require.NoError(t, e.svc.StandingPass(ctx))
+
+	stop := e.failWrites(t, "bills", "DELETE")
+	out := e.say(t, "махни постоянната сметка за spiele club")
+	assert.Contains(t, out, "нищо не е махнато")
+	assert.NotContains(t, out, "Махнах")
+	kept, err := e.svc.KeptStanding(ctx, e.userID)
+	require.NoError(t, err)
+	assert.Len(t, kept, 1, "the standing bill stays")
+	active, _ := e.store.Active(ctx, e.userID)
+	assert.Len(t, active, 1, "and the reminder of its payment")
+	stop()
+
+	// The last step fails, after the payment and its reminder were taken: they come back with it.
+	stop = e.failWrites(t, "standing_bills", "DELETE")
+	assert.Contains(t, e.say(t, "махни постоянната сметка за spiele club"), "нищо не е махнато")
+	active, _ = e.store.Active(ctx, e.userID)
+	assert.Len(t, active, 1, "the reminder is back with the payment")
+	payments, _ := e.standingPayments(t)
+	assert.Equal(t, 1, payments)
+
+	stop()
+	out = e.say(t, "махни постоянната сметка за spiele club")
+	assert.Contains(t, out, "Махнах постоянната сметка ✅")
+	assert.Contains(t, out, "Предстоящото плащане и напомнянето му са махнати")
+	payments, _ = e.standingPayments(t)
+	assert.Zero(t, payments)
+	active, _ = e.store.Active(ctx, e.userID)
+	assert.Empty(t, active)
 }
 
 func TestAStandingBillWithoutItsAmountIsNotProposed(t *testing.T) {

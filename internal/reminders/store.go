@@ -22,6 +22,10 @@ type Store struct {
 // NewStore returns the reminders stored in d.
 func NewStore(d *db.Database) *Store { return &Store{d: d, q: d.Queries} }
 
+// WithTx is the store inside tx: a reminder written or removed with another write (a payment of a
+// standing bill) is in the same transaction.
+func (s *Store) WithTx(tx *sql.Tx) *Store { return &Store{d: s.d, q: s.q.WithTx(tx)} }
+
 // Reminder is a reminder as the code works with it.
 type Reminder struct {
 	ID      int64

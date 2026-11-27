@@ -661,6 +661,24 @@ func (q *Queries) ListKeptStanding(ctx context.Context, userID uuid.UUID) ([]Sta
 	return items, nil
 }
 
+const lockKeptStanding = `-- name: LockKeptStanding :one
+SELECT id FROM standing_bills WHERE id = $1 AND user_id = $2 AND status = 'kept' FOR UPDATE
+`
+
+type LockKeptStandingParams struct {
+	ID     int64     `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// A standing bill that is about to be removed, locked for the transaction: a payment of it written
+// at the same moment (its foreign key) waits, and fails when the bill is gone.
+func (q *Queries) LockKeptStanding(ctx context.Context, arg LockKeptStandingParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, lockKeptStanding, arg.ID, arg.UserID)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const markBillPaid = `-- name: MarkBillPaid :execrows
 UPDATE bills SET paid_date = $3, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'kept' AND paid_date IS NULL

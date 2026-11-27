@@ -282,6 +282,23 @@ func (s *Service) Proposed(ctx context.Context, userID uuid.UUID, session string
 }
 
 // Drop forgets the bill that waits in the conversation.
+// inTx runs work in one transaction, committed when it gives no error.
+func (s *Service) inTx(ctx context.Context, work func(tx *sql.Tx) (bool, error)) (bool, error) {
+	tx, err := s.d.SqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	ok, err := work(tx)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit: %w", err)
+	}
+	return ok, nil
+}
+
 func (s *Service) Drop(ctx context.Context, userID uuid.UUID, session string) error {
 	_, err := s.q.DropProposedBill(ctx, db.DropProposedBillParams{UserID: userID, SessionID: session})
 	return err

@@ -101,6 +101,11 @@ SELECT * FROM standing_bills WHERE user_id = $1 AND status = 'kept' ORDER BY id;
 -- name: AllKeptStanding :many
 SELECT * FROM standing_bills WHERE status = 'kept' ORDER BY id;
 
+-- name: LockKeptStanding :one
+-- A standing bill that is about to be removed, locked for the transaction: a payment of it written
+-- at the same moment (its foreign key) waits, and fails when the bill is gone.
+SELECT id FROM standing_bills WHERE id = $1 AND user_id = $2 AND status = 'kept' FOR UPDATE;
+
 -- name: DeleteStanding :execrows
 DELETE FROM standing_bills WHERE id = $1 AND user_id = $2 AND status = 'kept';
 
