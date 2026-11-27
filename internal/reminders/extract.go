@@ -222,7 +222,11 @@ func Build(f Fields, message string, now time.Time, loc *time.Location) (d Draft
 			day = today
 		}
 		minute, mok := parseClock(f.Time)
-		if reading.Minute != nil && (!mok || (minute != *reading.Minute && minute != *reading.Minute+12*60)) {
+		// The model may put an hour of the person into the other half of the day ("в 8" said at 19:00
+		// is 20:00), unless the person named the half ("в 8 сутринта"): then the code's hour wins
+		// (the code review of 2026-11-27).
+		shifted := !reading.HalfSaid && reading.Minute != nil && minute == *reading.Minute+12*60
+		if reading.Minute != nil && (!mok || (minute != *reading.Minute && !shifted)) {
 			if mok {
 				d.Corrected = append(d.Corrected, "time")
 			}

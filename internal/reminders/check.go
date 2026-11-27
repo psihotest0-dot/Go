@@ -57,6 +57,9 @@ type Reading struct {
 	FromNow time.Duration
 	// DateSaid: the words name a date or a day ("утре", "в петък", "25.11"), not only an hour.
 	DateSaid bool
+	// HalfSaid: the words name the half of the day of the hour ("в 8 сутринта", "в 9 вечерта"), so
+	// Minute is not to be shifted by twelve hours.
+	HalfSaid bool
 }
 
 // Read is what the code reads in message, at now on the wall clock of loc.
@@ -135,9 +138,11 @@ func Read(message string, now time.Time, loc *time.Location) Reading {
 			mm = 15
 		}
 		if h <= 23 && mm <= 59 {
-			if h >= 1 && h <= 11 && eveningWords.MatchString(lower) && !morningWords.MatchString(lower) {
+			evening, morning := eveningWords.MatchString(lower), morningWords.MatchString(lower)
+			if h >= 1 && h <= 11 && evening && !morning {
 				h += 12
 			}
+			r.HalfSaid = evening || morning
 			minute := h*60 + mm
 			r.Minute = &minute
 		}

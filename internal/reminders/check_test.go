@@ -77,6 +77,23 @@ func TestAnEveningHourTheModelTookFromTheWordsIsKept(t *testing.T) {
 	assert.Empty(t, d.Corrected)
 }
 
+// The code review of 2026-11-27: the model's hour twelve hours after the code's was kept even when
+// the person had named the half of the day.
+func TestTheHalfOfTheDayThePersonNamedWinsOverTheModel(t *testing.T) {
+	now := at(2026, 11, 24, 20, 41)
+	f := Fields{IsReminder: true, Text: "да взема лекарството", Date: "2026-11-25", Time: "20:00", TimeGiven: true, Repeat: "none"}
+	d, problem := Build(f, "напомни ми утре в 8 сутринта да взема лекарството", now, berlin)
+	require.Empty(t, problem)
+	assert.Equal(t, at(2026, 11, 25, 8, 0), d.Next)
+	assert.Contains(t, d.Corrected, "time")
+
+	// The evening named, and a model that says the morning: the evening.
+	f.Time = "08:00"
+	d, problem = Build(f, "напомни ми утре в 8 вечерта да взема лекарството", now, berlin)
+	require.Empty(t, problem)
+	assert.Equal(t, at(2026, 11, 25, 20, 0), d.Next)
+}
+
 func TestAnHourThatPassedTodayWithNoDaySaidIsTomorrows(t *testing.T) {
 	now := at(2026, 11, 24, 20, 41)
 	f := Fields{IsReminder: true, Text: "да платя тока", Date: "2026-11-24", Time: "09:00", TimeGiven: true, Repeat: "none"}
