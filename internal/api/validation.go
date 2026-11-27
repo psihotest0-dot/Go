@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/sqlc-dev/pqtype"
 )
@@ -95,7 +96,7 @@ func validateContent(content string) error {
 	if strings.TrimSpace(content) == "" {
 		return errors.New("content is required")
 	}
-	if len(content) > maxContentChars {
+	if utf8.RuneCountInString(content) > maxContentChars {
 		return fmt.Errorf("content must be at most %d characters", maxContentChars)
 	}
 	return nil
@@ -106,7 +107,7 @@ func validateSessionID(sessionID string) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return errors.New("session_id is required")
 	}
-	if len(sessionID) > maxSessionIDChars {
+	if utf8.RuneCountInString(sessionID) > maxSessionIDChars {
 		return fmt.Errorf("session_id must be at most %d characters", maxSessionIDChars)
 	}
 	return nil

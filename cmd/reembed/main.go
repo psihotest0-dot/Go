@@ -63,15 +63,16 @@ func run() error {
 
 	if *memories {
 		n, err := reembed.Memories(ctx, database, embedder, opts)
-		logger.Info("memories done", slog.Int("rewritten", n))
 		if err != nil {
+			logger.Error("memories stopped", slog.Int("rewritten", n), slog.Any("error", err))
 			return err
 		}
+		logger.Info("memories done", slog.Int("rewritten", n))
 	}
 	if *chunks {
 		n, err := reembed.Chunks(ctx, database, embedder, opts)
-		logger.Info("chunks done", slog.Int("rewritten", n))
 		if err != nil {
+			logger.Error("chunks stopped", slog.Int("rewritten", n), slog.Any("error", err))
 			return err
 		}
 	}

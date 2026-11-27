@@ -299,13 +299,19 @@ func amountInText(amount, text string) bool {
 	return false
 }
 
-var monthsDE = map[string]time.Month{"januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
-	"juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12}
+// monthNames are the names of the months a bill writes, in German, Bulgarian and English (the code
+// review of 2026-11-27: only the German ones were read, and "15 октомври 2026" was dropped).
+var monthNames = map[string]time.Month{"januar": 1, "februar": 2, "märz": 3, "maerz": 3, "april": 4, "mai": 5, "juni": 6,
+	"juli": 7, "august": 8, "september": 9, "oktober": 10, "november": 11, "dezember": 12,
+	"януари": 1, "февруари": 2, "март": 3, "април": 4, "май": 5, "юни": 6, "юли": 7, "август": 8, "септември": 9, "октомври": 10, "ноември": 11, "декември": 12,
+	"january": 1, "february": 2, "march": 3, "may": 5, "june": 6, "july": 7, "october": 10, "december": 12}
 
 var (
 	numericDate = regexp.MustCompile(`^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$`)
 	isoDate     = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})$`)
-	wordDate    = regexp.MustCompile(`(?i)^(\d{1,2})\.?\s+(\p{L}+)\s+(\d{4})$`)
+	wordDate    = regexp.MustCompile(`(?i)^(\d{1,2})\.?\s+(\p{L}+)\s+(\d{4})(?:\s*г\.?)?$`)
+	// wordDateEN is the English order: "October 15, 2026".
+	wordDateEN = regexp.MustCompile(`(?i)^(\p{L}+)\s+(\d{1,2}),?\s+(\d{4})$`)
 )
 
 // parseDate reads "19.10.2026", "19.10.26", "2026-10-19", "7. Mai 2025".
@@ -329,11 +335,20 @@ func parseDate(s string) (time.Time, bool) {
 	case wordDate.MatchString(s):
 		p := wordDate.FindStringSubmatch(s)
 		d, _ = strconv.Atoi(p[1])
-		mm, ok := monthsDE[strings.ToLower(p[2])]
+		mm, ok := monthNames[strings.ToLower(p[2])]
 		if !ok {
 			return time.Time{}, false
 		}
 		m = int(mm)
+		y, _ = strconv.Atoi(p[3])
+	case wordDateEN.MatchString(s):
+		p := wordDateEN.FindStringSubmatch(s)
+		mm, ok := monthNames[strings.ToLower(p[1])]
+		if !ok {
+			return time.Time{}, false
+		}
+		m = int(mm)
+		d, _ = strconv.Atoi(p[2])
 		y, _ = strconv.Atoi(p[3])
 	default:
 		return time.Time{}, false
@@ -345,15 +360,17 @@ func parseDate(s string) (time.Time, bool) {
 	return t, true
 }
 
-// dateInText: the day is written in the text in one of the ways a German or Bulgarian bill writes it.
+// dateInText: the day is written in the text in one of the ways a German, Bulgarian or English bill
+// writes it.
 func dateInText(d time.Time, text string) bool {
 	lower := strings.ToLower(text)
 	forms := []string{
 		d.Format("02.01.2006"), d.Format("2.1.2006"), d.Format("02.01.06"), d.Format("2.1.06"), d.Format("2006-01-02"),
 	}
-	for name, m := range monthsDE {
+	for name, m := range monthNames {
 		if m == d.Month() {
-			forms = append(forms, fmt.Sprintf("%d. %s %d", d.Day(), name, d.Year()), fmt.Sprintf("%d %s %d", d.Day(), name, d.Year()))
+			forms = append(forms, fmt.Sprintf("%d. %s %d", d.Day(), name, d.Year()), fmt.Sprintf("%d %s %d", d.Day(), name, d.Year()),
+				fmt.Sprintf("%s %d, %d", name, d.Day(), d.Year()))
 		}
 	}
 	for _, f := range forms {

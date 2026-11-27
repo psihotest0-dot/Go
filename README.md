@@ -114,7 +114,7 @@ The backend reads the environment, and a `.env` file in the working directory is
 |---|---|---|
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable` | Main database. |
 | `LISTEN_ADDR` | `127.0.0.1:8080` | Address of the API. The default is loopback on purpose: identity is a bare `X-User-ID` header and `/metrics` is unauthenticated. If the address is not loopback (`0.0.0.0`, `:8080`, an address of the network), the server still starts but warns at start, in the log and on the console. |
-| `MAX_UPLOAD_MB` | `100` | Upload size limit. |
+| `MAX_UPLOAD_MB` | `100` | Upload size limit (at most 1048576, a terabyte; a larger value is ignored with a warning). |
 | `AUTO_MIGRATE` | `true` | Apply pending migrations at start. When `false`, a database that is behind makes the start fail and print the command to run (`go run ./cmd/migrate`), so a backup can come first. |
 | `KEEP_ORIGINALS` | `true` | Keep the uploaded file in `storage/` after a successful ingest. The original is only needed to ingest the file again (`cmd/reingest`); search and chat use the text and vectors in the database. With `false` it is deleted once its ingest has succeeded (a failed ingest keeps it, so it can be tried again), and `cmd/reingest` leaves such files alone. A new value needs a restart of the backend. |
 | `LOG_MAX_MB` | `10` | Size at which `backend.log` is rotated: the old file is compressed and kept as one backup (`backend-<time>.log.gz`), so the logs take about this much and no more. A file that is already larger is rotated at the first write after the start. |

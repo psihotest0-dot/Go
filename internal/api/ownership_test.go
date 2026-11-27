@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"go-monolith/internal/config"
 	"go-monolith/internal/db"
 	"go-monolith/internal/dbtest"
+	"go-monolith/internal/llm"
 )
 
 // serveFiles sends a request through the file routes the way main wires them.
@@ -183,4 +185,24 @@ func TestDeletingAMemory(t *testing.T) {
 	// Deleting what is gone is a 404, not a second 'success'.
 	assert.Equal(t, http.StatusNotFound, memoryRequest(a, owner, http.MethodDelete, "/memories/"+id).Code)
 	assert.Equal(t, http.StatusNotFound, memoryRequest(a, owner, http.MethodDelete, "/memories/"+uuid.NewString()).Code)
+}
+
+// The code review of 2026-11-27: a failure of the database when a file was read by its id was
+// answered "file not found" (404); it is a 500.
+func TestAFailureOfTheDatabaseIsNoMissingFile(t *testing.T) {
+	sqlDB, err := sql.Open("pgx", "postgres://nobody@127.0.0.1:1/none?sslmode=disable&connect_timeout=1")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	broken := api.New(&db.Database{SqlDB: sqlDB, Queries: db.New(sqlDB)}, &llm.MockEmbedder{})
+	id := uuid.NewString()
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodGet, "/files/" + id, ""},
+		{http.MethodPatch, "/files/" + id + "/category", `{"category":"law"}`},
+	} {
+		rec := serveFiles(broken, uuid.New(), c.method, c.path, c.body)
+		assert.Equal(t, http.StatusInternalServerError, rec.Code, c.method+" "+c.path)
+	}
+	// A file that is not there is still a 404.
+	a, _, owner := setupAPI(t)
+	assert.Equal(t, http.StatusNotFound, serveFiles(a, owner, http.MethodGet, "/files/"+id, "").Code)
 }

@@ -515,3 +515,31 @@ func TestLoadTaskPlanSetting(t *testing.T) {
 		}
 	}
 }
+
+// The code review of 2026-11-27: these two switches took only "false" and "0" as off.
+func TestTheSwitchesOfTheSkipAndTheDistillationReadAsTheOthers(t *testing.T) {
+	for _, off := range []string{"false", "FALSE", "False", "0", "f"} {
+		t.Setenv("ENABLE_ADAPTIVE_SKIP", off)
+		t.Setenv("ENABLE_DISTILLATION", off)
+		if c := Load(); c.EnableAdaptiveSkip || c.EnableDistillation {
+			t.Errorf("%q: skip %v, distillation %v; want both off", off, c.EnableAdaptiveSkip, c.EnableDistillation)
+		}
+	}
+	t.Setenv("ENABLE_ADAPTIVE_SKIP", "")
+	t.Setenv("ENABLE_DISTILLATION", "")
+	if c := Load(); !c.EnableAdaptiveSkip || !c.EnableDistillation {
+		t.Errorf("unset: skip %v, distillation %v; want both on", c.EnableAdaptiveSkip, c.EnableDistillation)
+	}
+}
+
+// A MAX_UPLOAD_MB that would overflow the bytes is not taken.
+func TestAnUploadLimitTooBigIsNotTaken(t *testing.T) {
+	t.Setenv("MAX_UPLOAD_MB", "9000000000000")
+	if got := Load().MaxUploadBytes; got != int64(DefaultMaxUploadMB)<<20 {
+		t.Errorf("too big: %d, want the default", got)
+	}
+	t.Setenv("MAX_UPLOAD_MB", "200")
+	if got := Load().MaxUploadBytes; got != 200<<20 {
+		t.Errorf("200: %d", got)
+	}
+}

@@ -203,6 +203,18 @@ func (e *registerError) Unwrap() error { return e.err }
 //
 // riverClient may be nil (tests): the row is made and no job is queued. When the job cannot
 // be queued the row is removed again, so a failure leaves neither a row nor a job.
+// fileLookupFailed answers a file that could not be read by its id: 404 when there is none, 500
+// when the database failed (the code review of 2026-11-27: every failure was a 404).
+func fileLookupFailed(w http.ResponseWriter, r *http.Request, fileID uuid.UUID, err error) {
+	if errors.Is(err, sql.ErrNoRows) {
+		slog.WarnContext(r.Context(), "file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	slog.ErrorContext(r.Context(), "failed to read a file by its id", slog.String("id", fileID.String()), slog.Any("error", err))
+	http.Error(w, "failed to read the file", http.StatusInternalServerError)
+}
+
 func (a *API) registerUpload(ctx context.Context, riverClient *river.Client[pgx.Tx], userID uuid.UUID, upload *spooledUpload) (file db.IngestedFile, existing bool, err error) {
 	existingFile, err := a.db.Queries.GetIngestedFileByHash(ctx, db.GetIngestedFileByHashParams{
 		UserID:   userID,
@@ -329,8 +341,7 @@ func (a *API) FileByIDHandler(w http.ResponseWriter, r *http.Request) {
 
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.WarnContext(r.Context(), "file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
-		http.Error(w, "file not found", http.StatusNotFound)
+		fileLookupFailed(w, r, fileID, err)
 		return
 	}
 
@@ -416,8 +427,7 @@ func (a *API) FileCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	// First verify the file exists and belongs to the user
 	file, err := a.db.Queries.GetIngestedFileByID(r.Context(), fileID)
 	if err != nil {
-		slog.WarnContext(r.Context(), "file not found", slog.String("id", fileID.String()), slog.String("path", r.URL.Path))
-		http.Error(w, "file not found", http.StatusNotFound)
+		fileLookupFailed(w, r, fileID, err)
 		return
 	}
 

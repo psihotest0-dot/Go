@@ -317,6 +317,9 @@ func filesDir() string {
 
 // boolEnv reads a boolean from the environment (true/false/1/0, any case). An
 // unset variable gives def silently; an unparsable one gives def with a warning.
+// maxUploadMBLimit is the largest MAX_UPLOAD_MB taken: a terabyte.
+const maxUploadMBLimit = 1 << 20
+
 func boolEnv(name string, def bool) bool {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
@@ -352,11 +355,9 @@ func Load() *Config {
 		dbURL = "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 	}
 
-	adaptiveSkipStr := os.Getenv("ENABLE_ADAPTIVE_SKIP")
-	adaptiveSkip := adaptiveSkipStr != "false" && adaptiveSkipStr != "0"
-
-	distillationStr := os.Getenv("ENABLE_DISTILLATION")
-	distillation := distillationStr != "false" && distillationStr != "0"
+	// As every other switch (the code review of 2026-11-27: "False" or "FALSE" left them on).
+	adaptiveSkip := boolEnv("ENABLE_ADAPTIVE_SKIP", true)
+	distillation := boolEnv("ENABLE_DISTILLATION", true)
 
 	listenAddr := strings.TrimSpace(os.Getenv("LISTEN_ADDR"))
 	if listenAddr == "" {
@@ -365,7 +366,8 @@ func Load() *Config {
 
 	maxUploadMB := int64(DefaultMaxUploadMB)
 	if raw := strings.TrimSpace(os.Getenv("MAX_UPLOAD_MB")); raw != "" {
-		if mb, err := strconv.ParseInt(raw, 10, 64); err == nil && mb > 0 {
+		// The bound keeps the bytes (mb << 20) from overflowing; a value over it is a mistake.
+		if mb, err := strconv.ParseInt(raw, 10, 64); err == nil && mb > 0 && mb <= maxUploadMBLimit {
 			maxUploadMB = mb
 		} else {
 			slog.Warn("ignoring invalid MAX_UPLOAD_MB", slog.String("value", raw), slog.Int64("using_mb", maxUploadMB))

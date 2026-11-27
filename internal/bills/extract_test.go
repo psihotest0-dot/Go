@@ -106,3 +106,21 @@ func TestTheProposalSaysWhatWasRead(t *testing.T) {
 	assert.Contains(t, text, "Прилича на вече записана сметка")
 	assert.Contains(t, text, "Да я запиша ли? Ще ти напомня в петък, 04.12.2026, в 09:00")
 }
+
+// The code review of 2026-11-27: only German names of the months were read.
+func TestTheDatesOfABillInWordsInThreeLanguages(t *testing.T) {
+	want := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	for _, s := range []string{"15 октомври 2026", "15 октомври 2026 г.", "15. Oktober 2026", "15 October 2026", "October 15, 2026", "15.10.2026"} {
+		got, ok := parseDate(s)
+		assert.True(t, ok, s)
+		assert.Equal(t, want, got, s)
+	}
+	for _, text := range []string{"Падеж: 15 октомври 2026 г.", "Fällig am 15. Oktober 2026", "Due date: October 15, 2026", "Due 15 October 2026"} {
+		assert.True(t, dateInText(want, text), text)
+	}
+	assert.False(t, dateInText(want, "Падеж: 16 октомври 2026 г."))
+	for _, s := range []string{"април", "август"} {
+		_, ok := monthNames[s]
+		assert.True(t, ok, s)
+	}
+}
