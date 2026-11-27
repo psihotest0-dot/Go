@@ -44,7 +44,6 @@ const (
 	// maxToolCalls bounds the number of tool calls per round. The indexes come
 	// from the model, so this also caps the slice built while merging deltas.
 	maxToolCalls = 8
-
 )
 
 // silentStreamTimeout is how long a completion that has started may send nothing
