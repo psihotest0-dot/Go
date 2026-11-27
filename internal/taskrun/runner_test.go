@@ -32,12 +32,17 @@ type scriptedLLM struct {
 	answers  []string
 	requests []openai.ChatCompletionRequest
 	err      error
+	// onCall runs at the start of every call (a test stops the backend in the middle of one).
+	onCall func()
 }
 
 func (s *scriptedLLM) Chat(_ context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.requests = append(s.requests, req)
+	if s.onCall != nil {
+		s.onCall()
+	}
 	if s.err != nil {
 		return openai.ChatCompletionResponse{}, s.err
 	}

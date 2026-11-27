@@ -1,6 +1,7 @@
 package taskrun
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -138,6 +139,45 @@ func TestARestartGoesOnWithTheNextPart(t *testing.T) {
 	text := e.read(t, p.Steps[0].File)
 	assert.Equal(t, 1, strings.Count(text, "## Част 1 от"), "no part twice")
 	assert.Equal(t, p.Steps[0].Parts, strings.Count(text, "## Част "))
+}
+
+// The code review of 2026-11-27: the file was made before the first part was read, so a restart
+// while the model read it left an empty file, and the part read again after it made a second one.
+func TestARestartWhileTheFirstPartIsReadLeavesOneFile(t *testing.T) {
+	e := newEnv(t, partNotesAnswer)
+	doc := e.document(t, "paper.pdf", "completed", threeParts()...)
+	e.start(t, KindFull, "full", doc)
+	ctx, stop := context.WithCancel(e.ctx)
+	e.llm.onCall, e.llm.err = stop, context.Canceled // the backend stops while the model reads
+	e.runner.pass(ctx)
+	e.llm.onCall, e.llm.err = nil, nil
+	list, err := e.files.List(e.user)
+	require.NoError(t, err)
+	assert.Empty(t, list, "no file before the first notes")
+
+	again := New(e.db, e.plans, nil, e.llm, e.files) // the backend started again
+	for i := 0; i < 20 && again.pass(e.ctx); i++ {
+	}
+	p := e.plan(t, "full")
+	assert.Equal(t, taskplan.PlanDone, p.Status)
+	list, err = e.files.List(e.user)
+	require.NoError(t, err)
+	require.Len(t, list, 1, "one file")
+	assert.Equal(t, "paper - подробни бележки.md", p.Steps[0].File)
+	assert.Equal(t, 1, strings.Count(e.read(t, p.Steps[0].File), "## Част 1 от"))
+}
+
+// Every part with nothing to note: the step still names its file.
+func TestADocumentWithNothingToNoteStillHasItsFile(t *testing.T) {
+	e := newEnv(t, noneWord)
+	doc := e.document(t, "paper.pdf", "completed", threeParts()...)
+	e.start(t, KindFull, "full", doc)
+	e.walk(t)
+	p := e.plan(t, "full")
+	assert.Equal(t, taskplan.StepDone, p.Steps[0].Status)
+	require.NotEmpty(t, p.Steps[0].File)
+	assert.Contains(t, e.read(t, p.Steps[0].File), "прочетен целият")
+	assert.Contains(t, p.Steps[0].Evidence, p.Steps[0].File)
 }
 
 func TestADocumentTooLongToReadWholeFailsWithItsReason(t *testing.T) {

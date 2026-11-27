@@ -157,14 +157,6 @@ func (r *Runner) fullPart(ctx context.Context, p taskplan.RunPlan, step *taskpla
 	if k >= len(parts) {
 		k = len(parts) - 1
 	}
-	if step.File == "" {
-		name, err := r.createFull(p.UserID, file.FileName, len(parts))
-		if err != nil {
-			return err
-		}
-		step.File = name
-	}
-
 	notes, why := r.partNotes(ctx, p, file.FileName, parts[k], k+1, len(parts))
 	switch {
 	case why == noneWord:
@@ -173,6 +165,9 @@ func (r *Runner) fullPart(ctx context.Context, p taskplan.RunPlan, step *taskpla
 		step.Note = appendNote(step.Note, fmt.Sprintf("част %d: %s", k+1, why))
 		metrics.TaskRunSteps.WithLabelValues(p.Kind, "part_failed").Inc()
 	default:
+		if err := r.ensureFull(p.UserID, file.FileName, step, len(parts)); err != nil {
+			return err
+		}
 		section := fmt.Sprintf("\n## Част %d от %d\n\n%s\n", k+1, len(parts), notes)
 		if err := r.appendFull(p.UserID, file.FileName, step, section); err != nil {
 			return err
@@ -180,6 +175,27 @@ func (r *Runner) fullPart(ctx context.Context, p taskplan.RunPlan, step *taskpla
 		metrics.TaskRunSteps.WithLabelValues(p.Kind, "part_done").Inc()
 	}
 	step.PartsDone = k + 1
+	// The last part, and no notes in a file yet (every part had nothing, or failed): the file is
+	// made all the same, so that the step names it. Not when the backend stops: the part is read
+	// again after the restart.
+	if step.PartsDone >= len(parts) && ctx.Err() == nil {
+		return r.ensureFull(p.UserID, file.FileName, step, len(parts))
+	}
+	return nil
+}
+
+// ensureFull makes the file of the step when it has none. It is made when the first notes are
+// ready, not before the first part is read (the code review of 2026-11-27): a restart while the
+// first part was read left an empty file, and the part read again after it made a second one.
+func (r *Runner) ensureFull(userID uuid.UUID, docName string, step *taskplan.Step, parts int) error {
+	if step.File != "" {
+		return nil
+	}
+	name, err := r.createFull(userID, docName, parts)
+	if err != nil {
+		return err
+	}
+	step.File = name
 	return nil
 }
 
