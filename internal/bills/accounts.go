@@ -344,6 +344,14 @@ func (s *Service) answer(ctx context.Context, userID uuid.UUID, q Question, toda
 		bills, err = s.allKept(ctx, userID, q.Kind)
 	} else {
 		bills, err = s.between(ctx, userID, q.Period, q.Kind)
+		for _, p := range q.Also {
+			if err != nil {
+				break
+			}
+			var more []Bill
+			more, err = s.between(ctx, userID, p, q.Kind)
+			bills = append(bills, more...)
+		}
 	}
 	if err != nil {
 		return "", err

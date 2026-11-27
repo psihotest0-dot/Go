@@ -2,6 +2,7 @@ package bills
 
 import (
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,9 @@ type Question struct {
 	Period Period
 	// Other is the second period of a comparison.
 	Other *Period
+	// Also are the other months a total or a list names, apart from Period ("за януари и март"); its
+	// Label then names them all. Months that follow one another are one Period.
+	Also []Period
 	// AllTime: a list with no period named ("какви сметки имам записани") is of all the kept bills.
 	// On 2026-11-25 it was of this year, and a bill due in January was not in it.
 	AllTime bool
@@ -72,6 +76,8 @@ var (
 	thisYear  = regexp.MustCompile(`(?i)(?:тази|тая|текущата|this)\s+(?:година|year)|(?:от\s+началото\s+на\s+годината)`)
 	lastYear  = regexp.MustCompile(`(?i)(?:миналата|предишната|last|previous)\s+(?:година|year)|лани`)
 	yearWord  = regexp.MustCompile(`(?:^|[^\d])(20\d{2})(?:[^\d]|$)`)
+	// rangeWord between two months: from the first to the second ("от януари до март").
+	rangeWord = regexp.MustCompile(`(?i)(?:^|[^\p{L}])до(?:[^\p{L}]|$)`)
 	monthWord = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(януари|февруари|март|април|май|юни|юли|август|септември|октомври|ноември|декември)(?:[^\p{L}]|$)`)
 )
 
@@ -108,6 +114,56 @@ func monthPeriod(year int, m time.Month) Period {
 	from := reminders.Day{Year: year, Month: m, Day: 1}
 	to := reminders.Day{Year: year, Month: m, Day: daysInMonth(year, m)}
 	return Period{From: from, To: to, Label: monthNamesBG[m] + " " + strconv.Itoa(year)}
+}
+
+// monthsOf are the months a total or a list names as Period and Also: from the first to the last
+// when span ("от януари до март"), else each one, and those that follow one another as one.
+func monthsOf(months []Period, span bool) (Period, []Period) {
+	sorted := slices.Clone(months)
+	slices.SortStableFunc(sorted, func(a, b Period) int {
+		switch {
+		case a.From.Before(b.From):
+			return -1
+		case b.From.Before(a.From):
+			return 1
+		}
+		return 0
+	})
+	sorted = slices.CompactFunc(sorted, func(a, b Period) bool { return a.From == b.From })
+	var runs []Period
+	for _, p := range sorted {
+		if n := len(runs); n > 0 && (span || runs[n-1].To.AddDays(1) == p.From) {
+			runs[n-1].To = p.To
+			continue
+		}
+		runs = append(runs, p)
+	}
+	labels := make([]string, len(runs))
+	for i, r := range runs {
+		labels[i] = monthsLabel(r)
+	}
+	first := runs[0]
+	first.Label = joinAnd(labels)
+	return first, runs[1:]
+}
+
+// monthsLabel is "март 2026", "януари – март 2026" or "декември 2025 – януари 2026".
+func monthsLabel(p Period) string {
+	if p.From.Year == p.To.Year && p.From.Month == p.To.Month {
+		return monthNamesBG[p.From.Month] + " " + strconv.Itoa(p.From.Year)
+	}
+	if p.From.Year == p.To.Year {
+		return monthNamesBG[p.From.Month] + " – " + monthNamesBG[p.To.Month] + " " + strconv.Itoa(p.To.Year)
+	}
+	return monthNamesBG[p.From.Month] + " " + strconv.Itoa(p.From.Year) + " – " + monthNamesBG[p.To.Month] + " " + strconv.Itoa(p.To.Year)
+}
+
+// joinAnd is "a", "a и b", "a, b и c".
+func joinAnd(parts []string) string {
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " и " + parts[len(parts)-1]
 }
 
 func yearPeriod(year int) Period {
@@ -226,6 +282,10 @@ func ReadQuestion(message string, today reminders.Day) (Question, bool) {
 		}
 	default:
 		switch {
+		case len(periods) > 1 && len(months) == len(periods):
+			// "за януари и февруари" was answered for January alone (the code review of 2026-11-27).
+			span := rangeWord.MatchString(m[months[0][1]:months[len(months)-1][0]])
+			q.Period, q.Also = monthsOf(periods, span)
 		case len(periods) > 0:
 			q.Period = periods[0]
 		case q.Ask == AskList:

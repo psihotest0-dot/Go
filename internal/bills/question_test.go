@@ -44,6 +44,40 @@ func TestTheQuestionsAboutTheBills(t *testing.T) {
 	}
 }
 
+// The code review of 2026-11-27: "за януари и февруари" was answered for January alone.
+func TestATotalOfSeveralMonthsHasThemAll(t *testing.T) {
+	today := reminders.Day{Year: 2026, Month: 11, Day: 24}
+	day := func(m time.Month, d int) reminders.Day { return reminders.Day{Year: 2026, Month: m, Day: d} }
+	cases := []struct {
+		msg, label string
+		from, to   reminders.Day
+		also       []string
+	}{
+		{"колко платих за януари и февруари", "януари – февруари 2026", day(1, 1), day(2, 28), nil},
+		{"колко платих от януари до март", "януари – март 2026", day(1, 1), day(3, 31), nil},
+		{"колко платих за януари и март", "януари 2026 и март 2026", day(1, 1), day(1, 31), []string{"март 2026"}},
+		{"какви сметки имам за март, януари и февруари", "януари – март 2026", day(1, 1), day(3, 31), nil},
+		{"колко платих за май, май и юли", "май 2026 и юли 2026", day(5, 1), day(5, 31), []string{"юли 2026"}},
+	}
+	for _, c := range cases {
+		t.Run(c.msg, func(t *testing.T) {
+			q, ok := ReadQuestion(c.msg, today)
+			require.True(t, ok)
+			assert.Equal(t, c.label, q.Period.Label)
+			assert.Equal(t, c.from, q.Period.From)
+			assert.Equal(t, c.to, q.Period.To)
+			var also []string
+			for _, p := range q.Also {
+				also = append(also, monthsLabel(p))
+			}
+			assert.Equal(t, c.also, also)
+		})
+	}
+	q, _ := ReadQuestion("колко платих за ноември", today)
+	assert.Empty(t, q.Also, "one month is one period, as before")
+	assert.Equal(t, "ноември 2026", q.Period.Label)
+}
+
 func TestTheSumsAndTheComparison(t *testing.T) {
 	d := func(y int, m time.Month, day int) *time.Time {
 		t := time.Date(y, m, day, 0, 0, 0, 0, time.UTC)

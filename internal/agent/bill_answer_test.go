@@ -165,6 +165,21 @@ func (e *billEnv) keepBill(t *testing.T, f bills.Fields, file string) {
 	require.Contains(t, e.say(t, "да"), "Записах сметката")
 }
 
+// The code review of 2026-11-27: the sum of two months that do not follow one another.
+func TestTheSumOfTwoMonthsHasBothAndNotTheOneBetween(t *testing.T) {
+	e := newBillEnv(t)
+	jan := bills.Fields{IsBill: true, Issuer: "Beispiel Mobil", Kind: "phone_internet", Amount: "10,00", InvoiceDate: "05.01.2026", DueDate: "15.01.2026", Payment: bills.DirectDebit, Repeat: "monthly"}
+	feb, mar := jan, jan
+	feb.Amount, feb.InvoiceDate, feb.DueDate = "20,00", "05.02.2026", "15.02.2026"
+	mar.Amount, mar.InvoiceDate, mar.DueDate = "40,00", "05.03.2026", "15.03.2026"
+	e.keepBill(t, jan, "jan.pdf")
+	e.keepBill(t, feb, "feb.pdf")
+	e.keepBill(t, mar, "mar.pdf")
+
+	assert.Contains(t, e.say(t, "колко платих за януари и март"), "Сметките за януари 2026 и март 2026: общо 50,00 € (2 сметки)")
+	assert.Contains(t, e.say(t, "колко платих за януари и февруари"), "Сметките за януари – февруари 2026: общо 30,00 € (2 сметки)")
+}
+
 func TestTheAccountantAnswersFromTheKeptBills(t *testing.T) {
 	e := newBillEnv(t)
 	phoneNov := bills.Fields{IsBill: true, Issuer: "Beispiel Mobil", Kind: "phone_internet", Amount: "47,18", InvoiceDate: "12.11.2026", DueDate: "19.11.2026", Payment: bills.DirectDebit, Repeat: "monthly"}
