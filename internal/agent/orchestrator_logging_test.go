@@ -10,12 +10,14 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go-monolith/internal/api"
 	"go-monolith/internal/db"
+	"go-monolith/internal/llm"
 )
 
 // unreachableDB is a database whose every query fails at once: nothing listens
@@ -100,4 +102,52 @@ func TestStoreAnswerDoesNotReportAnErrorForAnEmptyAnswer(t *testing.T) {
 	for _, l := range lines() {
 		assert.NotEqual(t, "failed to store the assistant answer", l["msg"])
 	}
+}
+
+// noLineHas fails when a log line holds the text anywhere.
+func noLineHas(t *testing.T, lines []map[string]any, text string) {
+	t.Helper()
+	for _, l := range lines {
+		raw, _ := json.Marshal(l)
+		assert.NotContains(t, string(raw), text, "a log line holds the person's text: %s", raw)
+	}
+}
+
+// The code review of 2026-11-27: the adaptive skip logged the person's message.
+func TestTheAdaptiveSkipDoesNotLogTheMessage(t *testing.T) {
+	e := newTaskRunEnv(t)
+	e.o.adaptiveSkip = true
+	lines := jsonLogs(t)
+	e.say(t, "m", "Мерси!")
+	line := findLogLine(t, lines(), "adaptive skip: no search for this message")
+	assert.EqualValues(t, 6, line["runes"])
+	noLineHas(t, lines(), "Мерси")
+}
+
+// Unusable arguments of a tool call are the model's words, which can carry the person's: their
+// length is logged, not they.
+func TestUnusableToolArgumentsAreNotLogged(t *testing.T) {
+	lines := jsonLogs(t)
+	mock := &llm.MockLLM{StreamScript: [][]openai.ChatCompletionStreamResponse{
+		{toolCallChunk(0, "call_1", "echo", `{"content":"диагнозата ми е тайна`)},
+		{textChunk("Готово")},
+	}}
+	o := newGenerateOrchestrator(mock, &fakeToolRegistry{result: "ok"})
+	_, _, err := o.generateResponse(context.Background(), []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: "hi"}}, nil, nil)
+	require.NoError(t, err)
+	line := findLogLine(t, lines(), "tool arguments are unusable")
+	assert.EqualValues(t, 33, line["raw_runes"])
+	noLineHas(t, lines(), "диагнозата")
+}
+
+// A link web_fetch refuses is logged by its host, not whole.
+func TestARefusedLinkIsLoggedByItsHost(t *testing.T) {
+	e := newToolEnv(t)
+	ctx, _ := e.turn("sess", false)
+	lines := jsonLogs(t)
+	_, err := e.reg.ExecuteTool(ctx, "web_fetch", map[string]interface{}{"url": "http://192.168.1.7/notes/diagnosis?name=private"})
+	require.Error(t, err)
+	line := findLogLine(t, lines(), "web_fetch refused a URL")
+	assert.Equal(t, "192.168.1.7", line["host"])
+	noLineHas(t, lines(), "diagnosis")
 }

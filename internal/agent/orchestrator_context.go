@@ -234,7 +234,9 @@ func (o *Orchestrator) loadContextWithLimits(ctx context.Context, userID uuid.UU
 			o.trace(ctx, userID, req.SessionID, "adaptive_skip", map[string]interface{}{
 				"query": req.Content,
 			})
-			slog.Info("Adaptive skip triggered for query", "query", req.Content)
+			// Its length, not the message: the person's words stay out of the log (the code review of
+			// 2026-11-27).
+			slog.InfoContext(ctx, "adaptive skip: no search for this message", "runes", utf8.RuneCountInString(req.Content))
 		}
 	}
 

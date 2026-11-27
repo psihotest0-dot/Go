@@ -247,3 +247,20 @@ func TestGetOrPostServesTheTwoMethodsAndRefusesTheRest(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 	assert.Empty(t, served)
 }
+
+// The code review of 2026-11-27: the address of the database reached the log whole when url.Parse
+// refused it, and a key=value string or a password in the query kept its password.
+func TestTheLogNeverShowsThePasswordOfTheDatabase(t *testing.T) {
+	for raw, shown := range map[string]string{
+		"postgres://app:s3cret@localhost:5432/app?sslmode=disable":           "localhost:5432",
+		"postgres://app@localhost/app?password=s3cret&sslmode=disable":       "sslmode=disable",
+		"postgres://app:s3%ZZcret@localhost/app":                             "not shown",
+		"host=localhost user=app password=s3cret dbname=app sslmode=disable": "not shown",
+		"": "not shown",
+	} {
+		got := databaseURLForLog(raw)
+		assert.NotContains(t, got, "s3cret", raw)
+		assert.NotContains(t, got, "s3%ZZcret", raw)
+		assert.Contains(t, got, shown, raw)
+	}
+}

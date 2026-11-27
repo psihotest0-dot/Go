@@ -281,7 +281,8 @@ func (r *DefaultToolRegistry) executeWebFetch(ctx context.Context, args map[stri
 	pageURL, err := validateFetchURL(rawURL)
 	if err != nil {
 		metrics.WebToolRequests.WithLabelValues("web_fetch", "rejected").Inc()
-		slog.Warn("web_fetch refused a URL", "err", err, "url", truncateRunes(rawURL, maxLoggedToolArgsRunes))
+		// A link is logged by its host (the code review of 2026-11-27: it was logged whole).
+		slog.WarnContext(ctx, "web_fetch refused a URL", "err", err, "host", hostOf(rawURL))
 		return nil, &toolArgumentError{tool: "web_fetch", reason: err.Error()}
 	}
 

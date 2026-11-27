@@ -139,11 +139,7 @@ func run() error {
 
 	fmt.Println("Starting server...")
 
-	dbURLForLog := cfg.DatabaseURL
-	if u, err := url.Parse(cfg.DatabaseURL); err == nil {
-		dbURLForLog = u.Redacted()
-	}
-	logger.Info("loaded config", slog.String("db_url", dbURLForLog))
+	logger.Info("loaded config", slog.String("db_url", databaseURLForLog(cfg.DatabaseURL)))
 
 	prompts.Init(cfg.PromptsDir)
 	if err := prompts.GlobalManager.Preload(prompts.TemplateNames()...); err != nil {
@@ -648,4 +644,20 @@ func main() {
 		slog.Error("fatal error", slog.Any("error", err))
 		os.Exit(1)
 	}
+}
+
+// databaseURLForLog is the address of the database as the log may show it: the password masked, in
+// the user part and in the query. A value that is not a URL with a host is not shown at all (the
+// code review of 2026-11-27): one url.Parse refused was logged whole, and a "host=... password=..."
+// string passes url.Parse as a path, with its password.
+func databaseURLForLog(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return "(not shown: not a URL)"
+	}
+	if q := u.Query(); q.Has("password") {
+		q.Set("password", "xxxxx")
+		u.RawQuery = q.Encode()
+	}
+	return u.Redacted()
 }

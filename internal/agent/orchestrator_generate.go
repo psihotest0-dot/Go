@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	openai "github.com/sashabaranov/go-openai"
 
@@ -44,10 +45,6 @@ const (
 	// from the model, so this also caps the slice built while merging deltas.
 	maxToolCalls = 8
 
-	// maxLoggedToolArgsRunes caps how much of an unusable argument payload is
-	// written to the log. The full value is model output and can be huge, while
-	// a short prefix is enough to see what went wrong.
-	maxLoggedToolArgsRunes = 256
 )
 
 // silentStreamTimeout is how long a completion that has started may send nothing
@@ -365,7 +362,10 @@ func (o *Orchestrator) executeToolCalls(ctx context.Context, calls []openai.Tool
 				slog.WarnContext(ctx, "tool arguments are unusable",
 					"tool", tc.Function.Name,
 					"err", parseErr,
-					"raw", truncateRunes(rawArgs, maxLoggedToolArgsRunes))
+					// The length, not the text: the arguments are the model's words and
+					// can carry the person's (a file to write, a query); the error says
+					// where the JSON broke (the code review of 2026-11-27).
+					"raw_runes", utf8.RuneCountInString(rawArgs))
 				content = fmt.Sprintf("Error: %v. Call %s again with a JSON object that matches its schema.",
 					parseErr, tc.Function.Name)
 				countToolCall(tc.Function.Name, toolResultBadArgs)
