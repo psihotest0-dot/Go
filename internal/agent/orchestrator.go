@@ -491,6 +491,9 @@ func (o *Orchestrator) ProcessChat(ctx context.Context, userID uuid.UUID, req Ch
 func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, req ChatRequest) (ChatTurn, error) {
 	ctx = context.WithValue(ctx, api.ParsedUserIDKey, userID)
 	ctx = WithCurrentQuery(ctx, req.Content)
+	// The choice of the model, as HandleStreamChat records it: without it TELEGRAM_LLM=local did
+	// nothing (the code review of 2026-11-27).
+	ctx = WithLLMChoice(ctx, req.UsePaid)
 
 	if req.SessionID == "" || req.Content == "" {
 		return ChatTurn{}, fmt.Errorf("session_id and content are required")

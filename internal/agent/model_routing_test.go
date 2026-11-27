@@ -223,3 +223,27 @@ func TestTheRequestsCarryTheChoice(t *testing.T) {
 }
 
 func jsonDecode(text string, into any) error { return json.Unmarshal([]byte(text), into) }
+
+// The code review of 2026-11-27: a turn of Telegram (ProcessChatTurn) did not hand the choice of
+// the model to the router, so TELEGRAM_LLM=local sent a question to the library to the cloud.
+func TestATelegramTurnKeepsTheChoiceOfTheModel(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		usePaid *bool
+		cloud   bool
+	}{{"no choice", nil, true}, {"local", no(), false}, {"cloud", yes(), true}} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newAttachmentEnv(t)
+			local := answeringModel()
+			paid := &llm.MockLLM{StreamChunks: []openai.ChatCompletionStreamResponse{textChunk("облак")}}
+			o := orchestratorWith(t, e, local).WithPaidModel(paid, "deepseek-flash", true)
+			t.Cleanup(o.summaryWG.Wait)
+
+			_, err := o.ProcessChatTurn(context.Background(), e.userID, ChatRequest{SessionID: "tg-1", Content: libraryQuestion, UsePaid: c.usePaid})
+
+			require.NoError(t, err)
+			assert.Equal(t, c.cloud, len(paid.Requests) > 0, "the cloud was asked")
+			assert.Equal(t, !c.cloud, len(local.Requests) > 0, "the local model was asked")
+		})
+	}
+}
