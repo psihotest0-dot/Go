@@ -17,7 +17,9 @@ import (
 	"go-monolith/internal/db"
 )
 
-func (o *Orchestrator) saveUserMessage(ctx context.Context, userID uuid.UUID, sessionID, content string) error {
+// saveUserMessage writes the person's message with the button of the turn (mode, "" for none),
+// which "Регенерирай" asks again with (HandleRegenerate).
+func (o *Orchestrator) saveUserMessage(ctx context.Context, userID uuid.UUID, sessionID, content, mode string) error {
 	_, err := o.db.Queries.CreateMessage(ctx, db.CreateMessageParams{
 		UserID:    userID,
 		SessionID: sessionID,
@@ -27,6 +29,7 @@ func (o *Orchestrator) saveUserMessage(ctx context.Context, userID uuid.UUID, se
 			RawMessage: []byte("[]"),
 			Valid:      true,
 		},
+		Mode: sql.NullString{String: mode, Valid: mode != ""},
 	})
 	return err
 }

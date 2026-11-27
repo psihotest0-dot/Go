@@ -40,7 +40,7 @@ func (q *Queries) CountAssistantRepliesBefore(ctx context.Context, arg CountAssi
 }
 
 const createMessage = `-- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log, answer_plan) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log, answer_plan, mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan, mode
 `
 
 type CreateMessageParams struct {
@@ -51,6 +51,7 @@ type CreateMessageParams struct {
 	SourceChunkIds pqtype.NullRawMessage `json:"source_chunk_ids"`
 	ToolLog        sql.NullString        `json:"tool_log"`
 	AnswerPlan     pqtype.NullRawMessage `json:"answer_plan"`
+	Mode           sql.NullString        `json:"mode"`
 }
 
 func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error) {
@@ -62,6 +63,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		arg.SourceChunkIds,
 		arg.ToolLog,
 		arg.AnswerPlan,
+		arg.Mode,
 	)
 	var i Message
 	err := row.Scan(
@@ -76,6 +78,7 @@ func (q *Queries) CreateMessage(ctx context.Context, arg CreateMessageParams) (M
 		&i.AnalysisAttempts,
 		&i.ToolLog,
 		&i.AnswerPlan,
+		&i.Mode,
 	)
 	return i, err
 }
@@ -124,7 +127,7 @@ func (q *Queries) GetMessageCursor(ctx context.Context, arg GetMessageCursorPara
 }
 
 const getMessagesBySession = `-- name: GetMessagesBySession :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan, mode FROM messages WHERE user_id = $1 AND session_id = $2 ORDER BY created_at DESC, id DESC LIMIT $3
 `
 
 type GetMessagesBySessionParams struct {
@@ -154,6 +157,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 			&i.AnalysisAttempts,
 			&i.ToolLog,
 			&i.AnswerPlan,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}
@@ -169,7 +173,7 @@ func (q *Queries) GetMessagesBySession(ctx context.Context, arg GetMessagesBySes
 }
 
 const getMessagesBySessionBefore = `-- name: GetMessagesBySessionBefore :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan, mode FROM messages
 WHERE user_id = $1 AND session_id = $2
   AND created_at <= $3::timestamptz
   AND (created_at, id) < ($3::timestamptz, $4::uuid)
@@ -215,6 +219,7 @@ func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessage
 			&i.AnalysisAttempts,
 			&i.ToolLog,
 			&i.AnswerPlan,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}
@@ -230,7 +235,7 @@ func (q *Queries) GetMessagesBySessionBefore(ctx context.Context, arg GetMessage
 }
 
 const getRecentMessagesByUser = `-- name: GetRecentMessagesByUser :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan, mode FROM messages WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2
 `
 
 type GetRecentMessagesByUserParams struct {
@@ -259,6 +264,7 @@ func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMess
 			&i.AnalysisAttempts,
 			&i.ToolLog,
 			&i.AnswerPlan,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}
@@ -274,7 +280,7 @@ func (q *Queries) GetRecentMessagesByUser(ctx context.Context, arg GetRecentMess
 }
 
 const getUnanalyzedMessages = `-- name: GetUnanalyzedMessages :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan, mode
 FROM messages
 WHERE is_analyzed = FALSE AND user_id = $1
 ORDER BY created_at ASC
@@ -302,6 +308,7 @@ func (q *Queries) GetUnanalyzedMessages(ctx context.Context, userID uuid.UUID) (
 			&i.AnalysisAttempts,
 			&i.ToolLog,
 			&i.AnswerPlan,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}

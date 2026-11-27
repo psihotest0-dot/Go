@@ -13,7 +13,7 @@ import (
 )
 
 const getMessagesToSummarize = `-- name: GetMessagesToSummarize :many
-SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan FROM messages
+SELECT id, user_id, session_id, role, content, created_at, source_chunk_ids, is_analyzed, analysis_attempts, tool_log, answer_plan, mode FROM messages
 WHERE user_id = $1
   AND session_id = $2
   AND created_at > $4::timestamptz
@@ -60,6 +60,7 @@ func (q *Queries) GetMessagesToSummarize(ctx context.Context, arg GetMessagesToS
 			&i.AnalysisAttempts,
 			&i.ToolLog,
 			&i.AnswerPlan,
+			&i.Mode,
 		); err != nil {
 			return nil, err
 		}

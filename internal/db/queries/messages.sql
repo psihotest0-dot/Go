@@ -1,5 +1,5 @@
 -- name: CreateMessage :one
-INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log, answer_plan) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
+INSERT INTO messages (user_id, session_id, role, content, source_chunk_ids, tool_log, answer_plan, mode) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
 
 -- Whether each of the last answers of a conversation before a moment had a plan (П55), the newest
 -- first: a plan comes at most once in answerplan.Every replies.

@@ -136,6 +136,7 @@ type Message struct {
 	AnalysisAttempts int32                 `json:"analysis_attempts"`
 	ToolLog          sql.NullString        `json:"tool_log"`
 	AnswerPlan       pqtype.NullRawMessage `json:"answer_plan"`
+	Mode             sql.NullString        `json:"mode"`
 }
 
 type PendingAction struct {

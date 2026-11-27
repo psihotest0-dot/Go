@@ -241,7 +241,7 @@ func (o *Orchestrator) HandleStreamChat(w http.ResponseWriter, r *http.Request) 
 	// question without an answer; /chat/regenerate is the recovery path, so the
 	// turn is deliberately kept instead of being rolled back on every transient
 	// LLM error.
-	if err := o.saveUserMessage(r.Context(), userID, req.SessionID, req.Content); err != nil {
+	if err := o.saveUserMessage(r.Context(), userID, req.SessionID, req.Content, req.Mode); err != nil {
 		slog.ErrorContext(ctx, "failed to save user message", "err", err)
 		chatFailure(w, streaming, http.StatusInternalServerError, "internal server error")
 		return
@@ -362,11 +362,11 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// not lose its answer at the end. A reminder, a monthly report or the report of a task the
 	// server wrote after the answer is no part of it: it stays (the code review of 2026-11-27 -
 	// it was deleted with the answer).
-	var lastUserContent, codeAnswer string
+	var lastUserContent, lastUserMode, codeAnswer string
 	var replaced []uuid.UUID
 	for _, m := range dbMsgs {
 		if m.Role == "user" {
-			lastUserContent = m.Content
+			lastUserContent, lastUserMode = m.Content, m.Mode.String
 			break
 		}
 		if m.Role == "assistant" && !isServerNotice(m.ToolLog.String) {
@@ -397,10 +397,17 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The button the question was sent with is pressed again (the code review of 2026-11-27: the
+	// regeneration of a turn in a mode ran with none); one no longer known is left out.
+	if !validMode(lastUserMode) {
+		slog.WarnContext(ctx, "the mode of the question is not known any more; it is regenerated without one", "mode", lastUserMode)
+		lastUserMode = ""
+	}
 	req := ChatRequest{
 		SessionID: regenReq.SessionID,
 		Content:   lastUserContent,
 		UsePaid:   regenReq.UsePaid,
+		Mode:      lastUserMode,
 	}
 
 	// See HandleStreamChat: tool calls fall back to the user turn when the
@@ -510,7 +517,7 @@ func (o *Orchestrator) ProcessChatTurn(ctx context.Context, userID uuid.UUID, re
 
 	// See HandleStreamChat: the user turn is persisted up front so that it is
 	// part of the history the prompt is built from.
-	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content); err != nil {
+	if err := o.saveUserMessage(ctx, userID, req.SessionID, req.Content, req.Mode); err != nil {
 		slog.ErrorContext(ctx, "failed to save user message", "err", err)
 		return ChatTurn{}, fmt.Errorf("failed to save user message: %w", err)
 	}

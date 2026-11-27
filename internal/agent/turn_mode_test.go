@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -117,6 +118,40 @@ func TestInAModeTheCodeDoesNotAnswerInsteadOfTheModel(t *testing.T) {
 
 	_, out = e.sayIn(t, "m2", "Какви инструменти имаш?", "")
 	assert.Contains(t, out, "Ето какво мога", "without a mode as before")
+}
+
+// The code review of 2026-11-27: "Регенерирай" after a turn in a mode ran as a turn with none - all
+// the tools, nothing required. The mode is kept with the question and pressed again.
+func TestRegenerateAfterAModeKeepsTheMode(t *testing.T) {
+	e := newTaskRunEnv(t)
+	code, _ := e.sayIn(t, "m", "запомни, че обичам чай", ModeMemory)
+	require.Equal(t, http.StatusOK, code)
+	require.Equal(t, "required", e.model.Requests[0].ToolChoice)
+	n := len(e.model.Requests)
+
+	var stored string
+	require.NoError(t, e.db.SqlDB.QueryRow(`SELECT mode FROM messages WHERE user_id = $1 AND session_id = 'm' AND role = 'user'`, e.userID).Scan(&stored))
+	assert.Equal(t, ModeMemory, stored, "the mode is kept with the question")
+
+	body, _ := json.Marshal(RegenerateRequest{SessionID: "m"})
+	req := httptest.NewRequest(http.MethodPost, "/chat/regenerate", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), api.ParsedUserIDKey, e.userID))
+	rec := httptest.NewRecorder()
+	e.o.HandleRegenerate(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Greater(t, len(e.model.Requests), n)
+	assert.Equal(t, "required", e.model.Requests[n].ToolChoice, "the regeneration is in the mode again")
+	assert.ElementsMatch(t, []string{"create_memory", "search_memories"}, toolNames(e.model.Requests[n].Tools))
+}
+
+// A question without a button is stored without one.
+func TestAQuestionWithoutAModeIsStoredWithNone(t *testing.T) {
+	e := newTaskRunEnv(t)
+	e.say(t, "m", "здравей")
+	var stored sql.NullString
+	require.NoError(t, e.db.SqlDB.QueryRow(`SELECT mode FROM messages WHERE user_id = $1 AND session_id = 'm' AND role = 'user'`, e.userID).Scan(&stored))
+	assert.False(t, stored.Valid)
 }
 
 // The refusal names every mode the server takes (it named six of eight until 2026-11-26).
