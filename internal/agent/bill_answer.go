@@ -55,14 +55,14 @@ func (o *Orchestrator) billAnswer(ctx context.Context, userID uuid.UUID, session
 		case isYes(message):
 			return o.bills.Keep(ctx, userID, session, *proposed)
 		case isNo(message):
-			_ = o.bills.Drop(ctx, userID, session)
+			o.dropBill(ctx, userID, session)
 			metrics.Bills.WithLabelValues("declined").Inc()
 			return "Добре, не записвам сметката."
 		case isNoise(message):
 			return stillWaiting
 		default:
 			// Something else: the bill is not left to be kept by a later "да".
-			_ = o.bills.Drop(ctx, userID, session)
+			o.dropBill(ctx, userID, session)
 			metrics.Bills.WithLabelValues("declined").Inc()
 		}
 	}

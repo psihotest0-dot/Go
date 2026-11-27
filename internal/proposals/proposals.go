@@ -385,7 +385,11 @@ func (s *Service) ProposeWrite(ctx context.Context, userID uuid.UUID, sessionID,
 	payload := WritePayload{Mode: mode, Name: name, Content: content}
 	if mode == WriteReplace {
 		// Read, not trusted to be there: the text it replaces is only for the figures.
-		if old, _, err := s.files.Text(userID, name); err == nil && old != "" {
+		old, _, err := s.files.Text(userID, name)
+		if err != nil && !errors.Is(err, userfiles.ErrNotFound) {
+			slog.WarnContext(ctx, "the file a write replaces could not be read; its figures are left out", "err", err)
+		}
+		if err == nil && old != "" {
 			payload.OldRunes = utf8.RuneCountInString(old)
 			payload.KeptPercent = keptPercent(old, content)
 		}

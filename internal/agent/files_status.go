@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -94,7 +95,11 @@ func (o *Orchestrator) statusClaimUnbacked(ctx context.Context, turn *turnState,
 		return false
 	}
 	changed, err := checker.FilesChangedSince(userID, since)
-	return err == nil && !changed
+	if err != nil {
+		slog.WarnContext(ctx, "could not tell whether the files changed; the answer is not checked", "err", err)
+		return false
+	}
+	return !changed
 }
 
 // claimsOrLeaves tells whether an answer to a question about the work is neither a question

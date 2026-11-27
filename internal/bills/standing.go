@@ -937,6 +937,9 @@ func standingProposalText(st Standing, today reminders.Day, withReminders bool) 
 // StandingLines are the lines of the standing bills for the answers about the bills, "" when none.
 func (s *Service) StandingLines(ctx context.Context, userID uuid.UUID) string {
 	all, err := s.KeptStanding(ctx, userID)
+	if err != nil {
+		slog.WarnContext(ctx, "the standing bills could not be read for an answer about the bills", "err", err)
+	}
 	if err != nil || len(all) == 0 {
 		return ""
 	}

@@ -83,32 +83,51 @@ func (o *Orchestrator) dropOtherProposals(ctx context.Context, userID uuid.UUID,
 		slog.InfoContext(ctx, "a proposal that waited was dropped by a newer question", "proposal", what, "kept", keep)
 		return true
 	}
+	unread := func(what string, err error) bool {
+		if err != nil {
+			slog.WarnContext(ctx, "a proposal that may wait could not be read; it is not dropped", "proposal", what, "err", err)
+		}
+		return err == nil
+	}
 	if keep != proposalTask && o.runPlans != nil {
-		if p, err := o.runPlans.Proposed(ctx, userID, session); err == nil && p != nil {
+		if p, err := o.runPlans.Proposed(ctx, userID, session); unread(proposalTask, err) && p != nil {
 			if dropped(proposalTask, o.runPlans.DropProposed(ctx, userID, session)) {
 				metrics.TaskRuns.WithLabelValues(p.Kind, "superseded").Inc()
 			}
 		}
 	}
 	if keep != proposalBill && o.bills != nil {
-		if b, err := o.bills.Proposed(ctx, userID, session); err == nil && b != nil {
+		if b, err := o.bills.Proposed(ctx, userID, session); unread(proposalBill, err) && b != nil {
 			if dropped(proposalBill, o.bills.Drop(ctx, userID, session)) {
 				metrics.Bills.WithLabelValues("superseded").Inc()
 			}
 		}
-		if st, err := o.bills.ProposedStanding(ctx, userID, session); err == nil && st != nil {
+		if st, err := o.bills.ProposedStanding(ctx, userID, session); unread("standing_bill", err) && st != nil {
 			if dropped("standing_bill", o.bills.DropStanding(ctx, userID, session)) {
 				metrics.Bills.WithLabelValues("standing_superseded").Inc()
 			}
 		}
 	}
 	if keep != proposalReminder && o.reminders != nil {
-		if r, err := o.reminders.store.Proposed(ctx, userID, session); err == nil && r != nil {
+		if r, err := o.reminders.store.Proposed(ctx, userID, session); unread(proposalReminder, err) && r != nil {
 			if dropped(proposalReminder, o.reminders.store.DropProposed(ctx, userID, session)) {
 				metrics.Reminders.WithLabelValues("superseded").Inc()
 			}
 		}
 	}
+}
+
+// logDropped logs a proposal that the person declined and that could not be forgotten: a later
+// "да" could still keep it.
+func logDropped(ctx context.Context, what string, err error) {
+	if err != nil {
+		slog.WarnContext(ctx, "a declined proposal could not be dropped", "proposal", what, "err", err)
+	}
+}
+
+// dropBill forgets the bill the person declined (logDropped).
+func (o *Orchestrator) dropBill(ctx context.Context, userID uuid.UUID, session string) {
+	logDropped(ctx, proposalBill, o.bills.Drop(ctx, userID, session))
 }
 
 // serverNoticeLogs start the records of the messages the server writes into a conversation on its

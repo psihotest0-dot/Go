@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -808,7 +809,10 @@ func (s *Store) Delete(userID uuid.UUID, name string) error {
 		return fmt.Errorf("userfiles: failed to delete %s: %w", name, err)
 	}
 	if prev, err := root.OpenRoot(previousDir); err == nil {
-		_ = prev.Remove(name)
+		// The file is deleted; its previous version left behind only takes room.
+		if err := prev.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			slog.Warn("userfiles: the previous version of a deleted file could not be removed", "err", err)
+		}
 		_ = prev.Close()
 	}
 	return nil

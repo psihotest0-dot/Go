@@ -137,7 +137,7 @@ func (o *Orchestrator) reminderAnswer(ctx context.Context, userID uuid.UUID, ses
 		case isYes(message) && !readSomething:
 			return desk.keep(ctx, userID, session, *proposal, now)
 		case isNo(message) && !readSomething && utf8.RuneCountInString(message) <= 15:
-			_ = desk.store.DropProposed(ctx, userID, session)
+			logDropped(ctx, "reminder", desk.store.DropProposed(ctx, userID, session))
 			metrics.Reminders.WithLabelValues("declined").Inc()
 			return "Добре, няма да го записвам."
 		case utf8.RuneCountInString(message) <= correctionMaxRunes && (readSomething || correctionOpening.MatchString(message) || forced):
@@ -147,7 +147,7 @@ func (o *Orchestrator) reminderAnswer(ctx context.Context, userID uuid.UUID, ses
 			forced = true
 		default:
 			// Something else: the proposal is not left to be kept by a later "да".
-			_ = desk.store.DropProposed(ctx, userID, session)
+			logDropped(ctx, "reminder", desk.store.DropProposed(ctx, userID, session))
 			metrics.Reminders.WithLabelValues("declined").Inc()
 		}
 	}

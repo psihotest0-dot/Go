@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,7 +90,9 @@ var ErrGone = errors.New("the proposal is not there any more")
 func (s *Store) Activate(ctx context.Context, userID uuid.UUID, p Reminder, now time.Time, loc *time.Location) (Reminder, bool, error) {
 	next, early, ok := p.Rule.Next(now, loc)
 	if !ok {
-		_ = s.DropProposed(ctx, userID, p.Session)
+		if err := s.DropProposed(ctx, userID, p.Session); err != nil {
+			slog.WarnContext(ctx, "a reminder whose time has passed could not be dropped", "err", err)
+		}
 		return p, false, nil
 	}
 	row, err := s.q.ActivateReminder(ctx, db.ActivateReminderParams{ID: p.ID, UserID: userID, NextAt: next, NextEarly: early})

@@ -135,7 +135,13 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 	}
 	if running != nil {
 		if isStop(message) {
-			if stopped, err := o.runPlans.StopRun(ctx, userID, session); err != nil || !stopped {
+			stopped, err := o.runPlans.StopRun(ctx, userID, session)
+			if err != nil {
+				// The model would answer "спрях" while the task goes on (the code review of 2026-11-27).
+				slog.WarnContext(ctx, "the running task could not be stopped", "err", err)
+				return "Не успях да спра задачата (грешка в базата) — тя продължава. Кажи „спри“ пак след малко."
+			}
+			if !stopped {
 				return ""
 			}
 			metrics.TaskRuns.WithLabelValues(running.Kind, "stopped").Inc()

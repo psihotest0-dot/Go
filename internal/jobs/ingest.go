@@ -193,7 +193,9 @@ func (w *IngestFileWorker) work(ctx context.Context, job *river.Job[IngestFileAr
 
 	cpDir := ocrCheckpointDir(file.ID)
 	text, err := w.manager.Extract(ingest.WithCheckpointDir(ctx, cpDir), file.FileName, f)
-	f.Close()
+	if cerr := f.Close(); cerr != nil {
+		slog.WarnContext(ctx, "the original of a file could not be closed after its extraction", "file_id", file.ID, "err", cerr)
+	}
 	if err == nil || ingest.IsPermanent(err) || job.Attempt >= job.MaxAttempts {
 		// Nothing will resume from the saved pages any more. After any other
 		// failure they stay, and the next attempt carries on from them.

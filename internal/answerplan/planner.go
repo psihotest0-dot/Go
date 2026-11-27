@@ -21,6 +21,7 @@ package answerplan
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -159,6 +160,7 @@ func (p *Planner) Decide(ctx context.Context, t Turn) (*Plan, string) {
 	}
 	vectors, err := p.embedder.EmbedTexts(ctx, []string{t.Text}, false)
 	if err != nil || len(vectors) != 1 {
+		slog.WarnContext(ctx, "answer plan: the message could not be embedded; a plain reply", "err", err, "vectors", len(vectors))
 		return nil, SkipEmbedderError
 	}
 	score := p.margin(vectors[0])
@@ -167,6 +169,7 @@ func (p *Planner) Decide(ctx context.Context, t Turn) (*Plan, string) {
 	}
 	query, err := p.embedder.EmbedTexts(ctx, []string{t.Text}, true)
 	if err != nil || len(query) != 1 {
+		slog.WarnContext(ctx, "answer plan: the query could not be embedded; a plain reply", "err", err, "vectors", len(query))
 		return nil, SkipEmbedderError
 	}
 	memories := p.pickMemories(query[0], t.Candidates, t.UsedRecently)

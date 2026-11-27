@@ -11,6 +11,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -27,8 +28,10 @@ func run() error {
 	statusOnly := flag.Bool("status", false, "only show the database version and the pending migrations")
 	flag.Parse()
 
-	// The backend reads the same file; a missing one is fine.
-	_ = godotenv.Load()
+	// The backend reads the same file; a missing one is fine, one that cannot be read is said.
+	if err := godotenv.Load(); err != nil && !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "the .env file could not be read; the environment is used as it is:", err)
+	}
 	cfg := config.Load()
 
 	if _, err := os.Stat(db.MigrationsDir); err != nil {

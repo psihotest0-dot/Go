@@ -135,6 +135,9 @@ func (r *DefaultToolRegistry) fileToolError(tool string, err error) error {
 // fileNames lists up to 20 names for a message to the model.
 func (r *DefaultToolRegistry) fileNames(userID uuid.UUID) string {
 	list, err := r.files.List(userID)
+	if err != nil {
+		slog.Warn("the user's files could not be listed for a message to the model", "err", err)
+	}
 	if err != nil || len(list) == 0 {
 		return "none"
 	}

@@ -292,6 +292,9 @@ func (s *Service) whereText(ctx context.Context, userID uuid.UUID, count int64, 
 	} else {
 		fmt.Fprintf(&b, "Сега там има %s", countWord(int(count)))
 		rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: whereLatest})
+		if err != nil {
+			slog.WarnContext(ctx, "the latest bills could not be read for the answer where they are", "err", err)
+		}
 		if err == nil && len(rows) > 0 {
 			if count > whereLatest {
 				fmt.Fprintf(&b, ", последните %d", whereLatest)

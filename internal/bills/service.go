@@ -117,9 +117,13 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 	}
 	sum := sha256.Sum256(data)
 	hash := hex.EncodeToString(sum[:])
-	if kept, err := s.q.KeptBillWithFile(ctx, db.KeptBillWithFileParams{UserID: userID, FileHash: hash}); err == nil {
+	kept, err := s.q.KeptBillWithFile(ctx, db.KeptBillWithFileParams{UserID: userID, FileHash: hash})
+	switch {
+	case err == nil:
 		metrics.Bills.WithLabelValues("same_file").Inc()
 		return "Тази сметка вече е записана (същият файл): " + oneLine(fromRow(kept), s.loc) + "."
+	case !errors.Is(err, sql.ErrNoRows):
+		slog.WarnContext(ctx, "could not look for the same file among the kept bills; it is read as a new one", "err", err)
 	}
 
 	reader := s.readerFor(name, data)
@@ -164,23 +168,29 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 		slog.WarnContext(ctx, "could not look for the same bill", "err", err)
 	}
 
+	// The person is told of a failure of the database; the log says which (the code review of
+	// 2026-11-27: it said nothing).
+	failed := func(what string, err error) string {
+		slog.WarnContext(ctx, "a bill could not be proposed", "step", what, "err", err)
+		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+	}
 	tx, err := s.d.SqlDB.BeginTx(ctx, nil)
 	if err != nil {
-		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+		return failed("begin", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := s.q.WithTx(tx)
 	if _, err := q.DropProposedBill(ctx, db.DropProposedBillParams{UserID: userID, SessionID: session}); err != nil {
-		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+		return failed("drop the proposed bill", err)
 	}
 	// The "да" that follows is for this bill, not for a standing one that waited (standing.go).
 	if _, err := q.DropProposedStanding(ctx, db.DropProposedStandingParams{UserID: userID, SessionID: session}); err != nil {
-		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+		return failed("drop the proposed standing bill", err)
 	}
 	// Nor for a task over many documents that waited for its yes.
 	task, err := dropWaitingTask(ctx, q, userID, session)
 	if err != nil {
-		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+		return failed("drop the waiting task", err)
 	}
 	if _, err := q.ProposeBill(ctx, db.ProposeBillParams{
 		UserID: userID, SessionID: session, Issuer: b.Issuer, Kind: b.Kind, AmountCents: b.Cents, Currency: b.Currency,
@@ -191,13 +201,15 @@ func (s *Service) read(ctx context.Context, userID uuid.UUID, session, name stri
 		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
 	}
 	if err := tx.Commit(); err != nil {
-		return "Не успях да запазя сметката (грешка в базата). Опитай пак след малко."
+		return failed("commit", err)
 	}
 	metrics.Bills.WithLabelValues("proposed").Inc()
 	countDroppedTask(task)
 	// The "да" that follows is for the bill: a reminder that waited in the conversation is dropped.
 	if s.reminders != nil {
-		_ = s.reminders.DropProposed(ctx, userID, session)
+		if err := s.reminders.DropProposed(ctx, userID, session); err != nil {
+			slog.WarnContext(ctx, "the reminder that waited could not be dropped after a bill", "err", err)
+		}
 	}
 	var same []Bill
 	for _, r := range similar {
