@@ -13,6 +13,58 @@ import (
 	"github.com/google/uuid"
 )
 
+const allKeptBills = `-- name: AllKeptBills :many
+SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, invoice_date, due_date, paid_date, payment, repeat, summary, file_name, file_hash, status, reminder_id, created_at, updated_at, standing_id, remind_days_before FROM bills WHERE user_id = $1 AND status = 'kept'
+ORDER BY COALESCE(due_date, invoice_date, paid_date) NULLS FIRST, id
+`
+
+// Every kept bill, the earliest first: the sums and the lists of all time (the code review of
+// 2026-11-27: they were of the newest 200 only, and said nothing of it).
+func (q *Queries) AllKeptBills(ctx context.Context, userID uuid.UUID) ([]Bill, error) {
+	rows, err := q.db.QueryContext(ctx, allKeptBills, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Bill{}
+	for rows.Next() {
+		var i Bill
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.SessionID,
+			&i.Issuer,
+			&i.Kind,
+			&i.AmountCents,
+			&i.Currency,
+			&i.InvoiceDate,
+			&i.DueDate,
+			&i.PaidDate,
+			&i.Payment,
+			&i.Repeat,
+			&i.Summary,
+			&i.FileName,
+			&i.FileHash,
+			&i.Status,
+			&i.ReminderID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StandingID,
+			&i.RemindDaysBefore,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const allKeptStanding = `-- name: AllKeptStanding :many
 SELECT id, user_id, session_id, issuer, kind, amount_cents, currency, day, month, payment, summary, status, created_at, updated_at, remind_days_before, until FROM standing_bills WHERE status = 'kept' ORDER BY id
 `

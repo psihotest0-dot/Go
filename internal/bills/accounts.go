@@ -80,19 +80,17 @@ func (s *Service) between(ctx context.Context, userID uuid.UUID, p Period, kind 
 	return out, nil
 }
 
-// allKeptLimit bounds the list of all the kept bills.
-const allKeptLimit = 200
-
 // allKept are the kept bills of every time, of one kind when kind is not "", the earliest first.
+// All of them: a sum of all time over the newest 200 was wrong once there were more.
 func (s *Service) allKept(ctx context.Context, userID uuid.UUID, kind string) ([]Bill, error) {
-	rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: allKeptLimit})
+	rows, err := s.q.AllKeptBills(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	var out []Bill
-	for i := len(rows) - 1; i >= 0; i-- {
-		if kind == "" || rows[i].Kind == kind {
-			out = append(out, fromRow(rows[i]))
+	for _, r := range rows {
+		if kind == "" || r.Kind == kind {
+			out = append(out, fromRow(r))
 		}
 	}
 	return out, nil
@@ -164,12 +162,16 @@ func newRepeatLine(text string, cents int64, currency string) repeatLine {
 // repeatText is the monthly and the yearly payments and what they make in a year: the standing
 // bills, and of the other kept bills that come monthly, quarterly or yearly the latest of each
 // issuer (a bill of an issuer with a standing bill of the same kind is that standing bill's).
+// repeatLatest is how many of the newest kept bills repeatText looks at for the latest of each
+// issuer: more than a year and a half of bills, so a yearly one is among them.
+const repeatLatest = 200
+
 func (s *Service) repeatText(ctx context.Context, userID uuid.UUID) (string, error) {
 	standing, err := s.KeptStanding(ctx, userID)
 	if err != nil {
 		return "", err
 	}
-	rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: allKeptLimit})
+	rows, err := s.q.ListKeptBills(ctx, db.ListKeptBillsParams{UserID: userID, Limit: repeatLatest})
 	if err != nil {
 		return "", err
 	}

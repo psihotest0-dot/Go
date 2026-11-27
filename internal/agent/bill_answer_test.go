@@ -165,6 +165,24 @@ func (e *billEnv) keepBill(t *testing.T, f bills.Fields, file string) {
 	require.Contains(t, e.say(t, "да"), "Записах сметката")
 }
 
+// The code review of 2026-11-27: the list of all the kept bills of a kind was made from the newest
+// 200 bills of every kind, so with more of them its sum was wrong and said nothing of it.
+func TestTheListOfAllTheBillsHasThemAll(t *testing.T) {
+	e := newBillEnv(t)
+	_, err := e.db.SqlDB.Exec(`INSERT INTO bills (user_id, session_id, issuer, kind, amount_cents, due_date, payment, repeat, file_name, file_hash, status)
+		SELECT $1, 'bills', 'Beispiel Strom', 'electricity', 100, DATE '2020-01-01' + n, 'direct_debit', 'monthly', 'x.pdf', 'power-' || n, 'kept'
+		FROM generate_series(1, 30) AS n`, e.userID)
+	require.NoError(t, err)
+	_, err = e.db.SqlDB.Exec(`INSERT INTO bills (user_id, session_id, issuer, kind, amount_cents, due_date, payment, repeat, file_name, file_hash, status)
+		SELECT $1, 'bills', 'Beispiel Mobil', 'phone_internet', 100, DATE '2024-01-01' + n, 'direct_debit', 'monthly', 'x.pdf', 'phone-' || n, 'kept'
+		FROM generate_series(1, 200) AS n`, e.userID)
+	require.NoError(t, err)
+
+	out := e.say(t, "какви сметки за ток имам записани")
+	assert.Contains(t, out, "Всички записани сметки за ток (30 сметки, общо 30,00 €)", "the old ones, behind 200 newer ones, are there")
+	assert.Contains(t, e.say(t, "какви сметки имам записани"), "Всички записани сметки (230 сметки, общо 230,00 €)")
+}
+
 // The code review of 2026-11-27: the sum of two months that do not follow one another.
 func TestTheSumOfTwoMonthsHasBothAndNotTheOneBetween(t *testing.T) {
 	e := newBillEnv(t)

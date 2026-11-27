@@ -36,6 +36,12 @@ SELECT * FROM bills WHERE user_id = $1 AND status = 'kept'
 ORDER BY COALESCE(due_date, invoice_date, paid_date) DESC NULLS LAST, id DESC
 LIMIT $2;
 
+-- name: AllKeptBills :many
+-- Every kept bill, the earliest first: the sums and the lists of all time (the code review of
+-- 2026-11-27: they were of the newest 200 only, and said nothing of it).
+SELECT * FROM bills WHERE user_id = $1 AND status = 'kept'
+ORDER BY COALESCE(due_date, invoice_date, paid_date) NULLS FIRST, id;
+
 -- name: MarkBillPaid :execrows
 UPDATE bills SET paid_date = $3, updated_at = now()
 WHERE id = $1 AND user_id = $2 AND status = 'kept' AND paid_date IS NULL;
