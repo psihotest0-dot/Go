@@ -348,6 +348,14 @@ var (
 		Help: "Bills read from documents by event (proposed, kept, reminder, declined, superseded, paid, same_file, unread, not_a_bill, amount_missing, dropped_*).",
 	}, []string{"event"})
 
+	// OCRPhotos counts the pictures read as phone photos of a page (PHOTO_OCR_ENABLED,
+	// ingest/photo_ocr.go) by the preparation kept (scaled, straightened), or why the picture was read
+	// as it is: skipped_format (not a JPEG or PNG), skipped_small, skipped_dark, failed.
+	OCRPhotos = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "ocr_photos_total",
+		Help: "Pictures read as phone photos of a page, by the preparation kept (scaled, straightened) or skipped_*/failed.",
+	}, []string{"result"})
+
 	// The embedding cache, by the kind of text: "query" is a search question (embedded with the
 	// "query: " prefix), "passage" is everything else - the pieces of a book, summaries, memories,
 	// category sentences. Split on 2026-11-08 to find out whether the pieces of books are ever

@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -75,6 +76,11 @@ const DefaultOCRLanguages = "bul+eng"
 type ImageOCRExtractor struct {
 	// langs are Tesseract's languages ("" is DefaultOCRLanguages).
 	langs string
+	// photo reads a picture as a phone photo of a page first (WithPhotoCleanup, photo_ocr.go).
+	photo bool
+	// photoRunFn and scriptFn stand in for Tesseract in tests (nil: the real one).
+	photoRunFn photoRun
+	scriptFn   scriptOf
 }
 
 // NewImageOCRExtractor creates a new ImageOCRExtractor.
@@ -129,6 +135,23 @@ func (e *ImageOCRExtractor) Supports(mimeType, ext string) bool {
 
 // Extract extracts text from the image reader using the Tesseract CLI.
 func (e *ImageOCRExtractor) Extract(ctx context.Context, r io.Reader) (string, error) {
+	if e.photo {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return "", err
+		}
+		text, err := e.extractPhoto(ctx, data)
+		if err == nil {
+			return text, nil
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		if !errors.Is(err, errPhotoSkipped) {
+			slog.WarnContext(ctx, "photo OCR failed, reading the picture as it is", slog.Any("error", err))
+		}
+		r = bytes.NewReader(data)
+	}
 	release, err := acquireOCR(ctx)
 	if err != nil {
 		return "", err

@@ -334,8 +334,14 @@ func run() error {
 		if ingest.OCRLanguagesInstalled(ctx, bills.OCRLanguages) {
 			billLangs = bills.OCRLanguages
 		}
+		billImages := ingest.NewImageOCRExtractor().WithLanguages(billLangs)
+		if cfg.PhotoOCREnabled {
+			// A photo from the phone is cleaned before it is read (ingest/photo_prep.go).
+			billImages = billImages.WithPhotoCleanup()
+			logger.Info("pictures of bills are read as phone photos of a page")
+		}
 		billService = bills.NewService(database, ingest.NewPDFExtractor().WithOCRLanguages(billLangs),
-			ingest.NewImageOCRExtractor().WithLanguages(billLangs), bills.NewExtractor(llmClient), reminderStore, reminderWake)
+			billImages, bills.NewExtractor(llmClient), reminderStore, reminderWake)
 		// The text of an upload that is no bill is attached to the conversation ("какво пише?").
 		billService.WithAttachments(func(ctx context.Context, userID uuid.UUID, session, name, text string) error {
 			_, err := attachmentService.Add(ctx, userID, session, name, text)

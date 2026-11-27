@@ -184,6 +184,11 @@ type Config struct {
 	// the 1st (the month before: total, by kind, the change, the unpaid ones) into the conversation and
 	// to Telegram. Needs BILLS_ENABLED. Off by default.
 	BillsReportEnabled bool
+	// PhotoOCREnabled (PHOTO_OCR_ENABLED) reads a picture of a bill (POST /v1/bills, a photo sent to the
+	// Telegram bot) as a phone photo of a page: scaled, the light flattened, the table's rules taken
+	// out, read with --psm 6 in the languages of its script (ingest/photo_ocr.go). Off by default: the
+	// picture is read as before. The library is never read this way.
+	PhotoOCREnabled bool
 	// AnswerPlanEnabled (ANSWER_PLAN_ENABLED) turns on the plan of an answer to a personal
 	// message (П55 phase 1, internal/answerplan): the code picks the person's memories for the
 	// reply and the model writes it from them. Off by default: without it nothing changes.
@@ -414,6 +419,7 @@ func Load() *Config {
 		RemindersEnabled:           boolEnv("REMINDERS_ENABLED", false),
 		BillsEnabled:               boolEnv("BILLS_ENABLED", false),
 		BillsReportEnabled:         boolEnv("BILLS_REPORT_ENABLED", false),
+		PhotoOCREnabled:            boolEnv("PHOTO_OCR_ENABLED", false),
 		AnswerPlanEnabled:          boolEnv("ANSWER_PLAN_ENABLED", false),
 		MemoryThemesEnabled:        boolEnv("MEMORY_THEMES_ENABLED", false),
 		LeanPromptEnabled:          boolEnv("LEAN_PROMPT_ENABLED", false),
