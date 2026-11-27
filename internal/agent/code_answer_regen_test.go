@@ -157,6 +157,30 @@ func TestTheModelDoesNotSeeTheRecordOfAnAnswerOfTheCode(t *testing.T) {
 	}
 }
 
+// The code review of 2026-11-27: "Регенерирай" deleted, with the answer it replaced, a reminder (or
+// a report) the server had written into the conversation after that answer.
+func TestRegenerateKeepsANoticeOfTheServerThatCameAfterTheAnswer(t *testing.T) {
+	for _, log := range []string{reminders.SentLog + " 7", bills.ReportLog + "октомври 2026", taskrun.ReportLog + "2 files written"} {
+		t.Run(log, func(t *testing.T) {
+			e := newBillEnv(t)
+			e.say(t, "здравей")
+			e.writeServerNotice(t, "⏰ Напомняне: да платя наема", log)
+
+			e.regenerate(t)
+
+			assert.Len(t, e.chat.Requests, 2, "the answer of the model is made anew")
+			msgs, err := e.db.Queries.GetMessagesBySession(context.Background(), db.GetMessagesBySessionParams{UserID: e.userID, SessionID: e.session, Limit: 10})
+			require.NoError(t, err)
+			var roles, contents []string
+			for _, m := range msgs {
+				roles, contents = append(roles, m.Role), append(contents, m.Content)
+			}
+			assert.Contains(t, contents, "⏰ Напомняне: да платя наема", "the notice stays")
+			assert.Equal(t, []string{"assistant", "assistant", "user"}, roles, "the new answer, the notice, the question: the old answer is gone")
+		})
+	}
+}
+
 // "Добре" after a reminder with nothing waiting is the model's, as before.
 func TestAYesToAReminderWithNothingWaitingGoesToTheModel(t *testing.T) {
 	e := newBillEnv(t)

@@ -359,7 +359,9 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 	// The newest messages come first. The answers after the last question are the ones
 	// the regeneration replaces (and leaves out of the prompt, see prepareTurn); none when
 	// the turn had failed. They are taken by id now, so that a turn sent meanwhile does
-	// not lose its answer at the end.
+	// not lose its answer at the end. A reminder, a monthly report or the report of a task the
+	// server wrote after the answer is no part of it: it stays (the code review of 2026-11-27 -
+	// it was deleted with the answer).
 	var lastUserContent, codeAnswer string
 	var replaced []uuid.UUID
 	for _, m := range dbMsgs {
@@ -367,7 +369,7 @@ func (o *Orchestrator) HandleRegenerate(w http.ResponseWriter, r *http.Request) 
 			lastUserContent = m.Content
 			break
 		}
-		if m.Role == "assistant" {
+		if m.Role == "assistant" && !isServerNotice(m.ToolLog.String) {
 			replaced = append(replaced, m.ID)
 			if codeAnswer == "" && m.ToolLog.String == codeAnswerLog {
 				codeAnswer = m.Content

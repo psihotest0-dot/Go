@@ -115,6 +115,17 @@ func (o *Orchestrator) dropOtherProposals(ctx context.Context, userID uuid.UUID,
 // own, outside a turn: a reminder that came, the monthly report of the bills, the report of a task.
 var serverNoticeLogs = []string{reminders.SentLog, bills.ReportLog, taskrun.ReportLog}
 
+// isServerNotice tells whether a stored record (messages.tool_log) is the one of a message the
+// server wrote on its own (serverNoticeLogs).
+func isServerNotice(toolLog string) bool {
+	for _, log := range serverNoticeLogs {
+		if strings.HasPrefix(toolLog, log) {
+			return true
+		}
+	}
+	return false
+}
+
 // answersServerNotice tells whether the person's message (the last of the history) follows a
 // message the server wrote on its own (serverNoticeLogs): the history shows its record next to it.
 func answersServerNotice(history []openai.ChatCompletionMessage) bool {
