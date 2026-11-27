@@ -221,6 +221,7 @@ func (r *DefaultToolRegistry) pageText(ctx context.Context, pageURL string) (tit
 		}
 	}
 	result, err := r.callWebTool(ctx, savePageTool, "/fetch", map[string]interface{}{"url": pageURL})
+	paidEmpty := false
 	if err == nil {
 		inner, _ := result["result"].(map[string]interface{})
 		content, _ := inner["content"].(string)
@@ -228,12 +229,17 @@ func (r *DefaultToolRegistry) pageText(ctx context.Context, pageURL string) (tit
 		if utf8.RuneCountInString(strings.TrimSpace(content)) >= webFetchMinRunes {
 			return heading, content, pageURL, "", nil
 		}
-		err = errPageEmpty
-		localReason = "empty"
-	} else if !archiveTried {
+		err, paidEmpty = errPageEmpty, true
+	}
+	// Neither this machine nor the paid API gave the page - an error, or a text too short to be it
+	// (the code review of 2026-11-27: the short one skipped the copy): its copy, unless tried.
+	if !archiveTried {
 		if title, text, final, note, ok := r.archivedPage(ctx, savePageTool, pageURL, localReason); ok {
 			return title, text, final, note, nil
 		}
+	}
+	if paidEmpty {
+		localReason = "empty"
 	}
 	if localReason == "" {
 		return "", "", "", "", err

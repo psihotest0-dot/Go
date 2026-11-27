@@ -155,6 +155,32 @@ func TestSavePageTakesTheCopyOfAGonePage(t *testing.T) {
 	assert.Equal(t, 1, pages.asked)
 }
 
+// The code review of 2026-11-27: a page that refuses a program, and a paid API that answers with
+// a text too short to be the page (its "Access denied"), skipped the copy.
+func TestSavePageTakesTheCopyWhenThePaidAPIGivesTooLittle(t *testing.T) {
+	r, web, pages, ctx, _ := archiveWebEnv(t, &webfetch.Error{Reason: webfetch.ReasonBlocked})
+	web.handler = func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"title":"Denied","content":"Access denied."}`)
+	}
+	title, _, final, note, err := r.pageText(ctx, "https://example.org/blocked")
+	require.NoError(t, err)
+	assert.Equal(t, "Overnight returns (copy)", title)
+	assert.Contains(t, final, "web.archive.org")
+	assert.Contains(t, note, "the site refuses programs (401/403)")
+	assert.Equal(t, int32(1), web.hits.Load(), "the paid API first")
+	assert.Equal(t, 1, pages.asked)
+
+	// No copy either: the page is said to be empty, as before.
+	r, web, pages, ctx, _ = archiveWebEnv(t, &webfetch.Error{Reason: webfetch.ReasonBlocked})
+	pages.copyErr = &webfetch.Error{Reason: webfetch.ReasonNotArchived}
+	web.handler = func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"title":"Denied","content":"Access denied."}`)
+	}
+	_, _, _, _, err = r.pageText(ctx, "https://example.org/blocked")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "save_page: the page was not read: the page has no text")
+}
+
 // archiveFetcherFake is the fetcher of add_to_library with a Wayback Machine.
 type archiveFetcherFake struct {
 	*fakeFetcher
