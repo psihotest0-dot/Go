@@ -29,6 +29,12 @@ import (
 // mode of that place, turn_mode.go); what is kept is the second answer. Where those tools are not
 // on offer, a line under the answer says that nothing was searched (answerChecks).
 //
+// The library, as a place things are put (2026-11-28): "ето източниците: <два линка>" got "Ще ги добавя
+// веднага към библиотеката ти" in the live check of that day, and "Добавих тези източници към
+// библиотеката ти" in 1 of 3 replays after a talk about inflation - with no call of add_to_library.
+// Such an answer is asked again with add_to_library required, where it is on offer (the person
+// wrote a link).
+//
 // Besides, a message that asks to look on the internet ("опитай да намериш в интернет…") has its
 // first round call web_search (forcedFirstTool): the model was asked to look, not to choose.
 
@@ -39,6 +45,7 @@ const (
 	lookupLibrary lookupPlace = "library" // the books: search_documents, list_documents
 	lookupWeb     lookupPlace = "web"     // the internet: web_search, web_fetch
 	lookupFolder  lookupPlace = "folder"  // Lili's folder of files: the group of the files
+	lookupAdd     lookupPlace = "add"     // into the library: add_to_library
 )
 
 const (
@@ -65,7 +72,17 @@ var lookupPlaces = map[lookupPlace]struct {
 	lookupLibrary: {ModeBooks, "the library of the user's books (search_documents)", "\n\n⚠️ Всъщност не бях търсила в библиотеката — търся сега.\n\n"},
 	lookupWeb:     {ModeWeb, "the internet (web_search)", "\n\n⚠️ Всъщност не бях търсила в интернет — търся сега.\n\n"},
 	lookupFolder:  {ModeFiles, "your folder of files (list_files, read_file)", "\n\n⚠️ Всъщност не бях проверила папката с файловете — проверявам сега.\n\n"},
+	lookupAdd:     {ModeLibrary, "", "\n\n⚠️ Всъщност не бях добавила нищо в библиотеката — добавям сега.\n\n"},
 }
+
+// addCorrection goes under an answer that says it put something into the library when nothing was
+// (add_to_library was not on offer: no link the person wrote).
+const addCorrection = "⚠️ Поправка: в този отговор не съм добавила нищо в библиотеката — не е извикан нито един инструмент. За да добавя документ, прати ми линка към него."
+
+// addNote is the note of the retry of an answer that said it put the links into the library.
+const addNote = "[Note for the assistant, not written by the user: your first answer to this message said that you had put the links into the library, " +
+	"or would put them there now, but add_to_library was not called and nothing was added. Call add_to_library now with the links the user wrote, " +
+	"then tell the user plainly what it returned. Do not repeat the first answer.]"
 
 var (
 	// lookupSearched: "търсих", "проверих", "прегледах" - the assistant says it looked. With "не"
@@ -93,6 +110,13 @@ var (
 	// sentenceEnd splits an answer into sentences, roughly.
 	sentenceEnd = regexp.MustCompile(`[.!?\n]+`)
 
+	// addDone and addWill: the assistant says it put something into the library, or will now
+	// ("добавих ги", "ще ги добавя веднага"); with a word for the library in the same sentence.
+	addDone = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:добавих|свалих|качих|прибрах|i\s+(?:have\s+)?(?:added|saved|put))(?:[^\p{L}]|$)`)
+	addWill = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:(?:ще|нека)\s+(?:\p{L}+\s+){0,2}?(?:добавя|сваля|кача|прибера)|i['’]ll\s+add|let\s+me\s+add)(?:[^\p{L}]|$)`)
+	// addNow: a promise said to be kept at once is one even in an answer that ends with a question.
+	addNow = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:веднага|сега|now|right\s+away)(?:[^\p{L}]|$)`)
+
 	// webAskVerb and webAskPlace: a message that asks to look something up on the internet.
 	// The forms of the verbs are listed: a stem would take "виждаш" for "виж" and "проверка" for
 	// "провери".
@@ -115,6 +139,9 @@ func lookupClaim(answer, message string) lookupPlace {
 	}
 	askedToLook := webAskVerb.MatchString(message) || lookupWebWords.MatchString(message)
 	for _, sentence := range sentenceEnd.Split(answer, -1) {
+		if lookupLibraryWords.MatchString(sentence) && claimsAnAdd(sentence, offer) {
+			return lookupAdd
+		}
 		if !claimsALook(sentence, offer) {
 			continue
 		}
@@ -142,6 +169,17 @@ func claimsALook(sentence string, offer bool) bool {
 		return true
 	}
 	return !offer && lookupWill.MatchString(sentence) && !lookupCondition.MatchString(sentence)
+}
+
+// claimsAnAdd tells whether a sentence says the assistant put something into the library, or will now.
+func claimsAnAdd(sentence string, offer bool) bool {
+	if lookupCondition.MatchString(sentence) {
+		return false
+	}
+	if addDone.MatchString(sentence) {
+		return true
+	}
+	return addWill.MatchString(sentence) && (!offer || addNow.MatchString(sentence))
 }
 
 // asksToSearchWeb tells whether a message asks to look something up on the internet: "опитай да
@@ -188,5 +226,9 @@ func (o *Orchestrator) retryUnbackedLookup(
 			return content, executed, err
 		}
 	}
-	return o.runRounds(ctx, withNoteOnLastUser(messages, fmt.Sprintf(lookupNote, how.forModel)), open, onDelta, required)
+	note := fmt.Sprintf(lookupNote, how.forModel)
+	if place == lookupAdd {
+		note = addNote
+	}
+	return o.runRounds(ctx, withNoteOnLastUser(messages, note), open, onDelta, required)
 }

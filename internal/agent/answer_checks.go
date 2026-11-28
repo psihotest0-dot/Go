@@ -98,8 +98,14 @@ var answerChecks = []answerCheck{
 		name: "lookup", op: "lookup", result: "corrected",
 		logMsg: "the answer says it looked somewhere and no tool was called; a correction is added",
 		note: func(_ context.Context, _ *Orchestrator, f answerFacts) string {
-			if len(f.executed) == 0 && lookupClaim(f.content, f.userMessage) != "" {
-				return lookupCorrection
+			if len(f.executed) == 0 {
+				switch lookupClaim(f.content, f.userMessage) {
+				case "":
+				case lookupAdd:
+					return addCorrection
+				default:
+					return lookupCorrection
+				}
 			}
 			return ""
 		},
