@@ -111,6 +111,10 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		if turn.statusAnswerText() == "" {
 			turn.setStatusAnswer(o.taskRunAnswer(ctx, userID, req.SessionID, req.Content, historyStart(chatCtx.History, chatCtx.HistoryAt)))
 		}
+		// "Какво са тези линкове и колко са големи?": the code opens them and answers (link_probe.go).
+		if turn.statusAnswerText() == "" {
+			turn.setStatusAnswer(o.linkProbeAnswer(ctx, userID, req.Content, chatCtx.History))
+		}
 		// "Какво можеш?": the code answers with what is on now, by the same road (help_answer.go).
 		if turn.statusAnswerText() == "" {
 			turn.setStatusAnswer(o.helpAnswerFor(req.Content))

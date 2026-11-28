@@ -207,6 +207,11 @@ func (e *PDFExtractor) pageCount(ctx context.Context, pdfPath string) (int, bool
 	return n, true, nil
 }
 
+// PageCount is how many pages the PDF at pdfPath has, by pdfinfo; false when it cannot say.
+func (e *PDFExtractor) PageCount(ctx context.Context, pdfPath string) (int, bool, error) {
+	return e.pageCount(ctx, pdfPath)
+}
+
 // pdfDeadline is how long extracting a document of the given size may take.
 func pdfDeadline(pages int) time.Duration {
 	return pdfBaseTimeout + time.Duration(pages)*pdfPerPageTimeout
