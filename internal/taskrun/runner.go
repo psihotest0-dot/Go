@@ -77,6 +77,8 @@ type Searcher interface {
 type Files interface {
 	Create(userID uuid.UUID, name, content string) (userfiles.Info, error)
 	Append(userID uuid.UUID, name, text string) (userfiles.Info, error)
+	// Text is the whole text of a file of the folder (a task over the folder, folder.go).
+	Text(userID uuid.UUID, name string) (string, userfiles.Info, error)
 }
 
 // LinkAdder puts the document behind a link the person wrote into the library (the road of
@@ -185,6 +187,10 @@ func (r *Runner) advance(ctx context.Context, p taskplan.RunPlan) bool {
 		if step.Ref == "" && step.Link != "" {
 			// A link not yet in the library: putting it there is the unit of work of this pass.
 			return r.addLink(ctx, p, step)
+		}
+		if step.Folder != "" {
+			// A file of the person's folder: read whole, no document to wait for (folder.go).
+			return r.advanceFolder(ctx, p, step, rec)
 		}
 		file, ready, why := r.document(ctx, p, step)
 		if why != "" {
@@ -358,45 +364,11 @@ func (r *Runner) work(ctx context.Context, p taskplan.RunPlan, rec recipe, file 
 		texts = append(texts, c.Text)
 	}
 	texts = append(texts, file.FileName)
-	known := numbersIn(texts...)
-
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: rec.instructions},
-		{Role: openai.ChatMessageRoleUser, Content: passagesText(file.FileName, passages)},
-	}
-	answer, err := r.ask(ctx, messages)
-	if err != nil {
-		return "", err
-	}
-	// One more try when numbers came from elsewhere: the model is told which.
-	if bad := unsupportedNumbers(answer, known); len(bad) > 0 {
-		metrics.TaskRunRetries.WithLabelValues(p.Kind).Inc()
-		messages = append(messages,
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: answer},
-			openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: "Тези числа ги няма в откъсите: " + strings.Join(bad, ", ") +
-				". Напиши всичко наново по същите правила, само с числа, които са в откъсите."})
-		if again, err := r.ask(ctx, messages); err == nil {
-			answer = again
-		}
-	}
-	c := checkAnswer(answer, known)
-	if c.dropped > 0 {
-		metrics.TaskRunDroppedLines.WithLabelValues(p.Kind).Add(float64(c.dropped))
-	}
-	if c.facts < minFacts {
-		return "", fmt.Errorf("от откъсите не излязоха достатъчно проверени факти (%d)", c.facts)
-	}
-
-	name, info, err := r.write(p.UserID, file.FileName, rec, c, r.now())
-	if err != nil {
-		return "", err
-	}
-	evidence := fmt.Sprintf("%s (%d факта, %d байта)", name, c.facts, info.Size)
-	if c.dropped > 0 {
-		evidence += fmt.Sprintf("; махнати %d реда с числа извън документа", c.dropped)
-	}
-	return evidence, nil
+	return r.writeFrom(ctx, p, rec, file.FileName, libraryFrom, passages, numbersIn(texts...), minFacts)
 }
+
+// libraryFrom is how a document of the library is named as the source of what was written from it.
+const libraryFrom = "от библиотеката"
 
 // ask is one request to the model, without tools and without thinking.
 func (r *Runner) ask(ctx context.Context, messages []openai.ChatCompletionMessage) (string, error) {
@@ -431,9 +403,9 @@ func (r *Runner) askWith(ctx context.Context, messages []openai.ChatCompletionMe
 }
 
 // write writes the file of a document as a new file: a name that is taken gets a number.
-func (r *Runner) write(userID uuid.UUID, docName string, rec recipe, c checked, at time.Time) (string, userfiles.Info, error) {
-	content := fmt.Sprintf("# %s: %s\n\nИзточник: %s (от библиотеката)\nНаписано на %s от откъсите на документа; числата са проверени срещу тях.\n\n%s\n",
-		rec.title, docStem(docName), docName, at.Local().Format("02.01.2006 15:04"), c.text)
+func (r *Runner) write(userID uuid.UUID, docName, from string, rec recipe, c checked, at time.Time) (string, userfiles.Info, error) {
+	content := fmt.Sprintf("# %s: %s\n\nИзточник: %s (%s)\nНаписано на %s от текста на източника; числата са проверени срещу него.\n\n%s\n",
+		rec.title, docStem(docName), docName, from, at.Local().Format("02.01.2006 15:04"), c.text)
 	base := FileName(docName, rec.fileSuffix, 0)
 	for n := 0; n < 10; n++ {
 		name := FileName(docName, rec.fileSuffix, n)

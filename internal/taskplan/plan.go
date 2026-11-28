@@ -103,6 +103,8 @@ type Step struct {
 	// added (the wait for its processing counts from then).
 	Link  string     `json:"link,omitempty"`
 	Added *time.Time `json:"added,omitempty"`
+	// Folder is the file of the person's own folder a step of a task over the folder works on.
+	Folder string `json:"folder,omitempty"`
 }
 
 // Evidence is an entry of the ledger: a successful call of a tool made after the plan.

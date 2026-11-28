@@ -231,14 +231,16 @@ func TestWithoutAddedDocumentsTheCodeSaysSo(t *testing.T) {
 	assert.Nil(t, proposed)
 }
 
-func TestATaskOverTheFilesOfTheFolderIsLeftToTheModel(t *testing.T) {
+// A task over the files of the folder is not one over the library ("no documents added"): since
+// 2026-11-28 it has its own road (folder_task.go), here with an empty folder.
+func TestATaskOverTheFilesOfTheFolderIsNotOneOverTheLibrary(t *testing.T) {
 	e := newTaskRunEnv(t)
 	storeTurnMessages(t, e.attachmentEnv, "tr", [2]string{"user", "здрасти"}, [2]string{"assistant", "Здравей!"})
 
 	out := e.say(t, "tr", "за всеки от файловете в папката направи отделен файл с резюме")
 
 	assert.NotContains(t, out, "не е добавен нито един документ")
-	assert.NotEmpty(t, e.model.Requests, "not the library: the model answers")
+	assert.Contains(t, streamedText(t, out), "Папката ти е празна", "the folder, not the library")
 }
 
 func TestTheTaskOfAnotherConversationIsNotThisOne(t *testing.T) {

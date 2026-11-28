@@ -188,6 +188,10 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 	if text := o.linkTaskAnswer(ctx, userID, session, message, history); text != "" {
 		return text
 	}
+	// A task over the files of the person's folder: the code lists them and proposes (folder_task.go).
+	if text := o.folderTaskAnswer(ctx, userID, session, message); text != "" {
+		return text
+	}
 
 	kind := taskRunKind(message)
 	one := false
