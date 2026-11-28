@@ -290,6 +290,10 @@ func run() error {
 			runPlans := taskplan.NewStore(database)
 			// The report of a task walked in a conversation shared with Telegram goes to the chat too.
 			runner := taskrun.New(database, runPlans, retrievalService, llmClient, fileStore).WithNotifier(orchestrator.NotifyOutside)
+			if cfg.LibraryAddEnabled {
+				// A task over the links of a conversation puts each link into the library first.
+				runner.WithLinks(toolRegistry)
+			}
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {

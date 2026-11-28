@@ -104,8 +104,9 @@ type linkProbe struct {
 	// Archived is the day of the Wayback copy that was read, Because why the site was not.
 	Archived time.Time
 	Because  string
-	// InLibrary is the library file with the same content.
-	InLibrary string
+	// InLibrary is the library file with the same content, InLibraryID its id.
+	InLibrary   string
+	InLibraryID uuid.UUID
 	// Reason is why the link gives nothing ("" when it gives a document).
 	Reason string
 }
@@ -178,7 +179,7 @@ func (r *DefaultToolRegistry) probeOne(ctx context.Context, userID uuid.UUID, p 
 	if r.db != nil {
 		file, err := r.db.Queries.GetIngestedFileByHash(ctx, db.GetIngestedFileByHashParams{UserID: userID, FileHash: hex.EncodeToString(hasher.Sum(nil))})
 		if err == nil {
-			p.InLibrary = file.FileName
+			p.InLibrary, p.InLibraryID = file.FileName, file.ID
 		}
 	}
 	slog.InfoContext(ctx, "link check: done", "host", hostOf(p.Link), "kind", p.Kind, "bytes", p.Bytes, "pages", p.Pages)

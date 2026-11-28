@@ -79,6 +79,12 @@ type Files interface {
 	Append(userID uuid.UUID, name, text string) (userfiles.Info, error)
 }
 
+// LinkAdder puts the document behind a link the person wrote into the library (the road of
+// add_to_library: agent.DefaultToolRegistry). The error's text is the reason in the person's words.
+type LinkAdder interface {
+	AddLink(ctx context.Context, userID uuid.UUID, link string) (id uuid.UUID, name string, err error)
+}
+
 // Notifier tells the person something outside the conversation's own history (Telegram); nil: nothing.
 type Notifier func(ctx context.Context, userID uuid.UUID, session, text string)
 
@@ -89,6 +95,7 @@ type Runner struct {
 	search Searcher
 	llm    llm.LLMClient
 	files  Files
+	links  LinkAdder
 	notify Notifier
 	wake   chan struct{}
 	now    func() time.Time
@@ -98,6 +105,12 @@ type Runner struct {
 func New(database *db.Database, plans *taskplan.Store, search Searcher, client llm.LLMClient, files Files) *Runner {
 	return &Runner{db: database, plans: plans, search: search, llm: client, files: files,
 		wake: make(chan struct{}, 1), now: time.Now}
+}
+
+// WithLinks lets the runner walk tasks over links: each is put into the library first.
+func (r *Runner) WithLinks(a LinkAdder) *Runner {
+	r.links = a
+	return r
 }
 
 // WithNotifier sends the report of a finished walk to n as well.
@@ -168,6 +181,10 @@ func (r *Runner) advance(ctx context.Context, p taskplan.RunPlan) bool {
 		step := &p.Steps[i]
 		if step.Status != taskplan.StepPending && step.Status != taskplan.StepDoing {
 			continue
+		}
+		if step.Ref == "" && step.Link != "" {
+			// A link not yet in the library: putting it there is the unit of work of this pass.
+			return r.addLink(ctx, p, step)
 		}
 		file, ready, why := r.document(ctx, p, step)
 		if why != "" {
@@ -279,10 +296,41 @@ func (r *Runner) document(ctx context.Context, p taskplan.RunPlan, step *taskpla
 	case "failed":
 		return file, false, "документът не можа да се обработи (не се чете текстът му)"
 	}
-	if r.now().Sub(p.CreatedAt) > waitForIngest {
+	since := p.CreatedAt
+	if step.Added != nil {
+		since = *step.Added // a link put into the library by the walk itself
+	}
+	if r.now().Sub(since) > waitForIngest {
 		return file, false, "документът не се обработи навреме"
 	}
 	return file, false, ""
+}
+
+// addLink puts the link of a step into the library, and the step then waits for its processing
+// like any document; a link that gives nothing fails the step with its reason.
+func (r *Runner) addLink(ctx context.Context, p taskplan.RunPlan, step *taskplan.Step) bool {
+	if r.links == nil {
+		step.Status, step.Note = taskplan.StepFailed, "свалянето на линкове е изключено"
+		metrics.TaskRunSteps.WithLabelValues(p.Kind, resultFailed).Inc()
+		return r.save(ctx, p)
+	}
+	id, name, err := r.links.AddLink(ctx, p.UserID, step.Link)
+	if ctx.Err() != nil {
+		return false // the backend stops; the link is fetched again after the restart
+	}
+	if err != nil {
+		step.Status, step.Note = taskplan.StepFailed, err.Error()
+		metrics.TaskRunSteps.WithLabelValues(p.Kind, resultFailed).Inc()
+		slog.Info("a link of a task gave nothing", "plan_id", p.ID, "step", step.ID)
+		return r.save(ctx, p)
+	}
+	at := r.now()
+	step.Ref, step.Added = id.String(), &at
+	if name != "" {
+		step.Text = name
+	}
+	slog.Info("a link of a task is in the library", "plan_id", p.ID, "step", step.ID)
+	return r.save(ctx, p)
 }
 
 // work makes the file of one document and returns the line that is its evidence.

@@ -109,7 +109,7 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 		}
 		// A task over many documents, its yes and its stop: the code answers (task_run.go).
 		if turn.statusAnswerText() == "" {
-			turn.setStatusAnswer(o.taskRunAnswer(ctx, userID, req.SessionID, req.Content, historyStart(chatCtx.History, chatCtx.HistoryAt)))
+			turn.setStatusAnswer(o.taskRunAnswer(ctx, userID, req.SessionID, req.Content, historyStart(chatCtx.History, chatCtx.HistoryAt), chatCtx.History))
 		}
 		// "Какво са тези линкове и колко са големи?": the code opens them and answers (link_probe.go).
 		if turn.statusAnswerText() == "" {

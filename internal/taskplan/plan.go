@@ -98,6 +98,11 @@ type Step struct {
 	Parts     int    `json:"parts,omitempty"`
 	PartsDone int    `json:"parts_done,omitempty"`
 	File      string `json:"file,omitempty"`
+	// Link is the address a step of a task over links works on (package taskrun): until the server
+	// has put it into the library Ref is empty; then Ref is the document and Added the time it was
+	// added (the wait for its processing counts from then).
+	Link  string     `json:"link,omitempty"`
+	Added *time.Time `json:"added,omitempty"`
 }
 
 // Evidence is an entry of the ledger: a successful call of a tool made after the plan.

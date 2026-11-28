@@ -123,8 +123,9 @@ func isStop(message string) bool {
 
 // taskRunAnswer is the answer of the code to the person's message about a task the server walks,
 // "" when the model is to answer it. since is the time of the first message of the history the
-// turn reads: the documents added from then on are "the added ones".
-func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, session, message string, since time.Time) string {
+// turn reads: the documents added from then on are "the added ones"; history is that history (a
+// task over its links: link_task.go).
+func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, session, message string, since time.Time, history []openai.ChatCompletionMessage) string {
 	if o.runPlans == nil {
 		return ""
 	}
@@ -161,19 +162,17 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 	}
 	if proposed != nil {
 		switch {
-		case isYes(message):
-			started, err := o.runPlans.Start(ctx, userID, proposed.ID)
+		case isWholeReply(message) && proposed.Kind != taskrun.KindFull:
+			// "Цялата": the same documents, read whole (the proposal of key facts says so).
+			whole, err := o.runPlans.Propose(ctx, userID, session, taskrun.KindFull, wholeGoal(proposed), proposed.Steps)
 			if err != nil {
-				slog.WarnContext(ctx, "the task was not started", "err", err)
-				return "Не започнах: в този разговор вече върви такава задача. Кажи „спри“, ако искаш да я спреш."
+				slog.WarnContext(ctx, "could not turn the proposal into notes over the whole text", "err", err)
+				return ""
 			}
-			metrics.TaskRuns.WithLabelValues(started.Kind, "started").Inc()
-			if o.runner != nil {
-				o.runner.Wake()
-			}
-			slog.InfoContext(ctx, "a task of the server was started", "plan_id", started.ID, "kind", started.Kind, "steps", len(started.Steps))
-			return fmt.Sprintf("Започнах. Работя на заден план, по един документ (≈ %s). Когато свърша, ще пиша тук какво е записано и какво не е станало. "+
-				"Междувременно можеш да ме питаш „докъде стигна?“ или да кажеш „спри“.", estimate(len(started.Steps)))
+			metrics.TaskRuns.WithLabelValues(proposed.Kind, "declined").Inc()
+			return o.startProposed(ctx, userID, whole)
+		case isYes(message):
+			return o.startProposed(ctx, userID, proposed)
 		case isNo(message):
 			_ = o.runPlans.DropProposed(ctx, userID, session)
 			metrics.TaskRuns.WithLabelValues(proposed.Kind, "declined").Inc()
@@ -183,6 +182,11 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 			_ = o.runPlans.DropProposed(ctx, userID, session)
 			metrics.TaskRuns.WithLabelValues(proposed.Kind, "declined").Inc()
 		}
+	}
+
+	// A task over the links the person wrote: the code checks them and proposes (link_task.go).
+	if text := o.linkTaskAnswer(ctx, userID, session, message, history); text != "" {
+		return text
 	}
 
 	kind := taskRunKind(message)
@@ -226,6 +230,36 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 	// The "да" that follows is for the task, not for a bill or a reminder that waited.
 	o.dropOtherProposals(ctx, userID, session, proposalTask)
 	return proposalText(kind, names, len(steps))
+}
+
+// startProposed starts a proposal after the person's yes, and says so.
+func (o *Orchestrator) startProposed(ctx context.Context, userID uuid.UUID, proposed *taskplan.Plan) string {
+	started, err := o.runPlans.Start(ctx, userID, proposed.ID)
+	if err != nil {
+		slog.WarnContext(ctx, "the task was not started", "err", err)
+		return "Не започнах: в този разговор вече върви такава задача. Кажи „спри“, ако искаш да я спреш."
+	}
+	metrics.TaskRuns.WithLabelValues(started.Kind, "started").Inc()
+	if o.runner != nil {
+		o.runner.Wake()
+	}
+	slog.InfoContext(ctx, "a task of the server was started", "plan_id", started.ID, "kind", started.Kind, "steps", len(started.Steps))
+	what := "по един документ"
+	if started.Kind == taskrun.KindFull {
+		what = "по един документ, целия текст на части"
+	}
+	return fmt.Sprintf("Започнах. Работя на заден план, %s (≈ %s). Когато свърша, ще пиша тук какво е записано и какво не е станало. "+
+		"Междувременно можеш да ме питаш „докъде стигна?“ или да кажеш „спри“.", what, estimate(len(started.Steps)))
+}
+
+// wholeGoal is the goal of a proposal turned into notes over the whole text.
+func wholeGoal(p *taskplan.Plan) string {
+	for _, s := range p.Steps {
+		if s.Link != "" {
+			return linkTaskGoal(taskrun.KindFull, len(p.Steps))
+		}
+	}
+	return taskRunGoal(taskrun.KindFull, len(p.Steps))
 }
 
 // addedDocuments are the steps of a task over the documents added to the library since the time

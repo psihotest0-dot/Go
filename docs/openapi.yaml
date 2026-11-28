@@ -2145,6 +2145,13 @@ components:
         file:
           type: string
           description: 'A plan of the kind `full` - the file the notes of the next part go to.'
+        link:
+          type: string
+          description: 'A plan over the links of a conversation - the address of the step; `ref` is empty until the server has put it into the library.'
+        added:
+          type: string
+          format: date-time
+          description: 'A plan over links - when the server put the link of the step into the library.'
     TelegramSessionList:
       type: object
       required:
