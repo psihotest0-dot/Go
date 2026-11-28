@@ -76,6 +76,7 @@ func (o *Orchestrator) helpText() string {
 
 	b.WriteString("\n🌐 Интернет\n")
 	b.WriteString("• „Потърси в интернет …“\n")
+	b.WriteString("• „Според книгите и новините за …“ — търся и в книгите, и в интернет, и казвам кое откъде е\n")
 	b.WriteString("• „Прочети тази страница: <линк>“ (и PDF)\n")
 
 	if o.addToLibrary {

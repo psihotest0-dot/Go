@@ -497,6 +497,11 @@ func (o *Orchestrator) runRounds(
 	// The analysis has its document and its books in the note of the message (analyze.go): nothing is forced.
 	if len(require) == 0 && turnFrom(ctx).modeName() != ModeAnalyze {
 		forced = forcedFirstTool(tools, lastUserContent(messages))
+		// The books and then the internet, for a message that asks for both (books_web.go).
+		if forced == searchDocumentsTool && booksAndWebTurn(tools, lastUserContent(messages)) {
+			thenForced = "web_search"
+			turnFrom(ctx).markBooksAndWeb()
+		}
 		// "Какво мислиш за този код" with a file too big for the prompt: read first
 		// (attachment_force.go). It wins over a look at the books, not over a plan or the internet.
 		// "Според книгите как да го преструктурирам" asks for both: the file first, the books in

@@ -128,6 +128,9 @@ func forcedFirstTool(tools []openai.Tool, message string) string {
 	switch {
 	case asksForManySteps(message) && onlyTool(tools, planStubTool) != nil:
 		return planStubTool
+	// "Според документите и новините…": the books first, the internet in the round after (books_web.go).
+	case booksAndWebTurn(tools, message):
+		return searchDocumentsTool
 	// "Опитай да намериш в интернет…": asked to look, not to choose (lookup_guard.go).
 	case asksToSearchWeb(message) && onlyTool(tools, "web_search") != nil:
 		return "web_search"
@@ -167,6 +170,9 @@ const toolNoteSeparator = "\n\n"
 func toolResultNote(ctx context.Context, tool string) string {
 	if tool == searchDocumentsTool && asksForPassage(currentQuery(ctx)) {
 		return passageQuoteNote
+	}
+	if tool == "web_search" && turnFrom(ctx).isBooksAndWeb() {
+		return booksAndWebNote
 	}
 	return ""
 }

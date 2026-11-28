@@ -93,6 +93,9 @@ type turnState struct {
 	// codeLanguage is the language of the code attached to the conversation: a search about
 	// programming that names no language gets it (code_language.go).
 	codeLanguage string
+	// booksAndWeb: the turn searches the books and then the internet, and answers from both
+	// (books_web.go).
+	booksAndWeb bool
 	// since is the time from which a change of a file counts as work done for a question about
 	// how far the work is (requestSince); the zero time: not known.
 	since time.Time

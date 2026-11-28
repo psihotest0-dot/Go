@@ -88,6 +88,11 @@ func (o *Orchestrator) routeToPaid(ctx context.Context, messages []openai.ChatCo
 		}
 		return false, "explain_local"
 	}
+	// The books and the internet together stay at home unless the button sent the turn to the cloud
+	// (books_web.go; the owner, 2026-11-28).
+	if booksAndWebTurn(tools, lastUserContent(messages)) {
+		return false, "books_web_local"
+	}
 	// A look on the internet the person asked for is forced too (lookup_guard.go), but it is not a
 	// question to the library: it stays where the turn is.
 	if forced := forcedFirstTool(tools, lastUserContent(messages)); o.libraryPaid && forced != "" && forced != "web_search" {
