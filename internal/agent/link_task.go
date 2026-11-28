@@ -143,8 +143,19 @@ func linkProposalText(kind string, named bool, probes []linkProbe, more bool, st
 	case taskrun.KindFull:
 		noun = "файл с подробни бележки по целия текст (чета го от началото до края, на части)"
 	}
+	fetched := 0
+	for _, p := range probes {
+		if p.Reason == "" && p.InLibraryID == uuid.Nil {
+			fetched++
+		}
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Мога да сваля линковете в библиотеката един по един и за всеки да направя %s. Проверих ги (%d):\n", noun, len(probes))
+	if fetched == 0 {
+		// Every link that works is in the library already: nothing is downloaded.
+		fmt.Fprintf(&b, "Мога да направя %s за всеки — документите им вече са в библиотеката. Проверих ги (%d):\n", noun, len(probes))
+	} else {
+		fmt.Fprintf(&b, "Мога да сваля линковете в библиотеката един по един и за всеки да направя %s. Проверих ги (%d):\n", noun, len(probes))
+	}
 	var failed []linkProbe
 	for _, p := range probes {
 		if p.Reason != "" {
@@ -166,12 +177,19 @@ func linkProposalText(kind string, named bool, probes []linkProbe, more bool, st
 	if more {
 		fmt.Fprintf(&b, "\n(Взимам първите %d линка; за останалите — после, в отделно съобщение.)\n", maxProbeLinks)
 	}
+	fetch := "всеки линк се сваля и обработва в библиотеката, и "
+	if fetched == 0 {
+		fetch = ""
+	}
 	if kind == taskrun.KindFull {
-		fmt.Fprintf(&b, "\nВърви на заден план: всеки линк се сваля и обработва (≈ минута), после чета текста му на части (около %d s на част; статия от 20 страници ≈ 2 минути). "+
-			"Бележките растат във файла след всяка част; всяко число се проверява срещу текста.", taskrun.SecondsPerPart)
+		if fetched > 0 {
+			fetch = "всеки линк се сваля и обработва (≈ минута), после "
+		}
+		fmt.Fprintf(&b, "\nВърви на заден план: %sчета текста на части (около %d s на част; статия от 20 страници ≈ 2 минути). "+
+			"Бележките растат във файла след всяка част; всяко число се проверява срещу текста.", fetch, taskrun.SecondsPerPart)
 	} else {
-		fmt.Fprintf(&b, "\nЩе отнеме около %s и върви на заден план: всеки линк се сваля, обработва в библиотеката, и файлът му се пише само от неговите откъси; "+
-			"числата се проверяват срещу тях.", estimateSeconds(steps*(taskrun.SecondsPerItem+ingestSecondsPerLink)))
+		fmt.Fprintf(&b, "\nЩе отнеме около %s и върви на заден план: %sфайлът на всеки се пише само от неговите откъси; "+
+			"числата се проверяват срещу тях.", estimateSeconds(steps*taskrun.SecondsPerItem+fetched*ingestSecondsPerLink), fetch)
 	}
 	b.WriteString(" Всеки файл е нов (нищо в папката не се заменя).\n\nДа започна ли?")
 	if !named {

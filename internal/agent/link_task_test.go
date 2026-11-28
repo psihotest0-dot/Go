@@ -169,6 +169,10 @@ func TestALinkAlreadyInTheLibraryIsAStepOnItsDocument(t *testing.T) {
 	probes := []linkProbe{{Link: "https://a.example/p.pdf", Title: "Paper", Kind: webfetch.KindPDF, Bytes: 2048, InLibrary: "Paper.pdf", InLibraryID: uuid.New()}}
 	text := linkProposalText(taskrun.KindKeyFacts, true, probes, false, 1)
 	assert.Contains(t, text, "вече е в библиотеката като „Paper.pdf“ — не го свалям пак")
+	assert.Contains(t, text, "Мога да направя файл с ключовите факти за всеки — документите им вече са в библиотеката", "nothing is downloaded")
+	assert.NotContains(t, text, "Мога да сваля")
+	assert.Contains(t, text, "около минута", "no time for a download and its processing")
+	assert.NotContains(t, text, "се сваля")
 	assert.NotContains(t, text, "кажи „цялата“", "the recipe was named")
 	_ = taskplan.StepPending
 }

@@ -286,7 +286,7 @@ func (o *Orchestrator) linkProbeAnswer(ctx context.Context, userID uuid.UUID, me
 // linkProbeText is the answer: a line for every link, then what can be added.
 func linkProbeText(probes []linkProbe, more bool, maxBytes int64) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Проверих линковете (%d) — само ги отворих, нищо не е записано:\n", len(probes))
+	fmt.Fprintf(&b, "Проверих линковете (%d) — нищо не е записано:\n", len(probes))
 	usable, inLibrary := 0, 0
 	var total int64
 	for i, p := range probes {
