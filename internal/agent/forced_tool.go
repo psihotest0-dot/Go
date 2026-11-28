@@ -131,6 +131,9 @@ func forcedFirstTool(tools []openai.Tool, message string) string {
 	// "Според документите и новините…": the books first, the internet in the round after (books_web.go).
 	case booksAndWebTurn(tools, message):
 		return searchDocumentsTool
+	// "Ето статия: <линк>": the page is read before it is talked about (page_read.go).
+	case asksAboutPage(message) && onlyTool(tools, "web_fetch") != nil:
+		return "web_fetch"
 	// "Опитай да намериш в интернет…": asked to look, not to choose (lookup_guard.go).
 	case asksToSearchWeb(message) && onlyTool(tools, "web_search") != nil:
 		return "web_search"

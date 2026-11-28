@@ -93,9 +93,10 @@ func (o *Orchestrator) routeToPaid(ctx context.Context, messages []openai.ChatCo
 	if booksAndWebTurn(tools, lastUserContent(messages)) {
 		return false, "books_web_local"
 	}
-	// A look on the internet the person asked for is forced too (lookup_guard.go), but it is not a
-	// question to the library: it stays where the turn is.
-	if forced := forcedFirstTool(tools, lastUserContent(messages)); o.libraryPaid && forced != "" && forced != "web_search" {
+	// A look on the internet the person asked for is forced too (lookup_guard.go), and so is the
+	// reading of a page shown with a word (page_read.go), but neither is a question to the library:
+	// they stay where the turn is.
+	if forced := forcedFirstTool(tools, lastUserContent(messages)); o.libraryPaid && forced != "" && forced != "web_search" && forced != "web_fetch" {
 		return true, "library"
 	}
 	return false, "default"
