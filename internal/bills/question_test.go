@@ -119,3 +119,22 @@ func TestAWordWithTheStemOfOwingInsideItIsNoQuestionAboutTheBills(t *testing.T) 
 		assert.Equal(t, AskUnpaid, q.Ask, m)
 	}
 }
+
+// "Запиши във файл бюджет.md: наем 550 евро на 1-во число…" is a note for a file, not a standing bill:
+// the live check of 2026-11-28 got "Виждам 3 сметки в едно съобщение" for it.
+func TestARequestForAFileIsNoStandingBill(t *testing.T) {
+	for _, m := range []string{
+		"запиши във файл бюджет.md: Наем 550 евро на 1-во число. Телефон 59,34 евро на 10-то. Цел: да спестя 300 евро до края на месеца.",
+		"запиши в нов файл: всеки месец на 1-во плащам 550 € наем",
+	} {
+		_, ok := ReadStandingRequest(m)
+		assert.False(t, ok, m)
+	}
+	for _, m := range []string{
+		"запиши че всеки месец на 1-во число плащам по 550 евро за квартира",
+		"запиши в базата, не във файл: всеки месец на 1-во плащам 550 € наем",
+	} {
+		_, ok := ReadStandingRequest(m)
+		assert.True(t, ok, m)
+	}
+}

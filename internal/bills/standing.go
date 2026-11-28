@@ -204,7 +204,7 @@ type StandingRequest struct {
 // year, and what of it the code reads from the words. ok is false when it is no such request.
 func ReadStandingRequest(message string) (r StandingRequest, ok bool) {
 	m := strings.TrimSpace(message)
-	if m == "" || utf8.RuneCountInString(m) > standingMaxRunes || strings.HasSuffix(m, "?") || standingQuestion.MatchString(m) {
+	if m == "" || utf8.RuneCountInString(m) > standingMaxRunes || strings.HasSuffix(m, "?") || standingQuestion.MatchString(m) || asksForAFile(m) {
 		return r, false
 	}
 	monthly, yearly := standingRepeatMonthly.MatchString(m), standingRepeatYearly.MatchString(m)
@@ -1021,4 +1021,22 @@ func remindWhen(days int, of string) string {
 		return "напомням в 09:00 ден преди " + of
 	}
 	return fmt.Sprintf("напомням в 09:00 %d дни преди %s", days, of)
+}
+
+var (
+	// fileName: a name of a file of the person's folder ("бюджет.md"); inFile: "във файл", "в нов
+	// файл", "във файла …"; notInFile: "не във файл" asks for the database, not for a file.
+	fileName  = regexp.MustCompile(`(?i)[\p{L}\p{N}_-]\.(?:md|txt|csv|json|ya?ml|log)(?:[^\p{L}]|$)`)
+	inFile    = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:във|в|into|in)\s+(?:\p{L}+\s+){0,2}?(?:файл\p{L}*|file)(?:[^\p{L}]|$)`)
+	notInFile = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:не|not)\s+(?:във|в|into|in)\s+(?:\p{L}+\s+){0,2}?(?:файл\p{L}*|file)(?:[^\p{L}]|$)`)
+)
+
+// asksForAFile tells whether a message asks to write into a file of the folder: "запиши във файл
+// бюджет.md: наем 550 евро на 1-во число" is a note, not a standing bill (the live check of
+// 2026-11-28 got "Виждам 3 сметки в едно съобщение" for it).
+func asksForAFile(message string) bool {
+	if fileName.MatchString(message) {
+		return true
+	}
+	return inFile.MatchString(message) && !notInFile.MatchString(message)
 }
