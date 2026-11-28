@@ -110,6 +110,8 @@ func TestWriteFileOverAnExistingFileIsAProposal(t *testing.T) {
 	assert.Equal(t, proposals.WriteReplace, pending[0].FileMode)
 	assert.Equal(t, "s", pending[0].SessionID)
 	assert.Len(t, turn.proposals, 1, "the client is told about the proposal")
+	assert.True(t, turn.writeBacked("Можеш да го потвърдиш, за да го запиша."), "an answer that says the write waits for the user is no false claim")
+	assert.False(t, turn.writeBacked("Записах го."), "one that says it is written is")
 }
 
 // A page, a book or an attached file can carry words meant for the model. What the turn

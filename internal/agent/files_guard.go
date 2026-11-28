@@ -342,7 +342,7 @@ func (o *Orchestrator) generateChecked(
 
 	var retry *fileRetry
 	switch {
-	case unbackedFileClaim(content, turn.filesWritten() > 0, userNamedFile && len(executed) == 0) == writeCorrection && !usedFileTools(executed):
+	case unbackedFileClaim(content, turn.writeBacked(content), userNamedFile && len(executed) == 0) == writeCorrection && !usedFileTools(executed):
 		retry = &writeRetry
 	case ignored, stalled && !asksForStatus(userMessage) &&
 		(userNamedFile || fileMention.MatchString(content) || asksToSave(userMessage)):
@@ -442,3 +442,6 @@ func (o *Orchestrator) retryUnbacked(
 	}
 	return o.runRounds(ctx, withNoteOnLastUser(messages, why.note), open, onDelta, required)
 }
+
+// asksToConfirm: the answer asks the person to confirm a write, or says it waits for them.
+var asksToConfirm = regexp.MustCompile(`(?i)(?:потвърд\p{L}*|одобр\p{L}*|чака\p{L}*\s+(?:\p{L}+\s+){0,2}?(?:потвърждение|одобрение|теб)|бутон\p{L}*|confirm\p{L}*|approv\p{L}*)`)

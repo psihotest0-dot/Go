@@ -70,6 +70,9 @@ type turnState struct {
 	// fileWrites counts the times a file tool wrote or added text in this turn (a write
 	// that waits for the user is not one).
 	fileWrites int
+	// writesProposed counts the writes of a file the turn left for the person to confirm: the file is
+	// not written, but an answer that says so and asks to confirm says no false thing (files_tool.go).
+	writesProposed int
 	// by is the model that gave the answer, when the paid model is configured (see model_routing.go).
 	by answeredBy
 	// plan is the plan of the answer to a personal message, nil for most turns (answer_plan.go).
@@ -355,6 +358,29 @@ func (t *turnState) noteFileWrite() {
 }
 
 // filesWritten is how many times a file tool wrote or added text in this turn.
+// markWriteProposed records a write of a file left for the person to confirm.
+func (t *turnState) markWriteProposed() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.writesProposed++
+}
+
+// writeBacked tells whether the turn backs what answer says of a write: it wrote a file, or it left a
+// write for the person to confirm and the answer says so (asks for the confirmation). "Записах го"
+// over a write that waits is still false: nothing is written yet.
+func (t *turnState) writeBacked(answer string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	wrote, proposed := t.fileWrites > 0, t.writesProposed > 0
+	t.mu.Unlock()
+	return wrote || (proposed && asksToConfirm.MatchString(answer))
+}
+
 func (t *turnState) filesWritten() int {
 	if t == nil {
 		return 0

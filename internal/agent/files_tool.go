@@ -335,6 +335,7 @@ func (r *DefaultToolRegistry) proposeWrite(ctx context.Context, userID uuid.UUID
 		return nil, proposalError(tool, err)
 	}
 	turn.addProposal(p)
+	turn.markWriteProposed()
 	fileOp("propose", "created")
 	result := pendingApprovalResult(p)
 	switch mode {

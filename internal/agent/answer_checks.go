@@ -50,11 +50,13 @@ type answerCheck struct {
 // answerChecks are the checks, in the order they are asked.
 var answerChecks = []answerCheck{
 	{
-		// "Записах го" / "изтрих го" and no file tool wrote (see files_guard.go).
+		// "Записах го" / "изтрих го" and no file tool wrote (see files_guard.go). A write left for the
+		// person to confirm is no false claim: "Подготвих резюме в резюмета.md - потвърди" got the
+		// correction "не е извикан инструмент" four times in the live check of 2026-11-28.
 		name: "claim", fileTools: true, op: "claim", result: "corrected",
 		logMsg: "the answer claims a change of the files that did not happen; a correction is added",
 		note: func(_ context.Context, _ *Orchestrator, f answerFacts) string {
-			return unbackedFileClaim(f.content, f.turn.filesWritten() > 0, f.userNamedFile && len(f.executed) == 0)
+			return unbackedFileClaim(f.content, f.turn.writeBacked(f.content), f.userNamedFile && len(f.executed) == 0)
 		},
 	},
 	{
