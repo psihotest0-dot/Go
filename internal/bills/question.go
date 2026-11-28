@@ -57,11 +57,13 @@ type Question struct {
 const questionMaxRunes = 160
 
 var (
-	// billContext: the message is about the person's bills or what they pay.
-	billContext = regexp.MustCompile(`(?i)(?:сметк|фактур|платих|плащам|плащан|платил|плащал|харч|разход|дълж|неплатен|изтегл|струваха|струва\s+ми|bills?\b|invoices?\b|spent|expenses)`)
+	// billContext: the message is about the person's bills or what they pay. The stems start a word:
+	// "дълж" inside "продължи" made every "продължи" a question about the unpaid bills, answered by
+	// the code (the live check of 2026-11-28); "задълж" (obligations) is a word of its own.
+	billContext = regexp.MustCompile(`(?i)(?:сметк|фактур|платих|плащам|плащан|платил|плащал|харч|разход|(?:^|[^\p{L}])(?:за)?дълж|неплатен|изтегл|струваха|струва\s+ми|bills?\b|invoices?\b|spent|expenses)`)
 	totalWords  = regexp.MustCompile(`(?i)(?:колко|сбор|общо|сума|сумата|how\s+much|total)`)
 	listWords   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:кои|какви|покажи|изреди|списък|list|which)(?:[^\p{L}]|$)`)
-	unpaidWords = regexp.MustCompile(`(?i)(?:неплатен|не\s+съм\s+(?:ги\s+|я\s+)?платил|не\s+са\s+платени|дълж|чакат\s+плащане|unpaid|not\s+paid)`)
+	unpaidWords = regexp.MustCompile(`(?i)(?:неплатен|не\s+съм\s+(?:ги\s+|я\s+)?платил|не\s+са\s+платени|(?:^|[^\p{L}])(?:за)?дълж|чакат\s+плащане|unpaid|not\s+paid)`)
 	compareWord = regexp.MustCompile(`(?i)(?:сравн|спрямо|в\s+сравнение|повече\s+ли|по-малко\s+ли|compare|versus|\bvs\b)`)
 	// whereKept: where they are kept - "къде записа сметките", "имат ли копие в базата данни",
 	// "пазиш ли ги", "в базата ли са". whereAsk: and it is a question.

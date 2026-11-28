@@ -104,3 +104,18 @@ func TestTheSumsAndTheComparison(t *testing.T) {
 	assert.Contains(t, report, "📊 Сметките за октомври 2026: общо 52,40 € (1 сметка)")
 	assert.Contains(t, report, "Неплатени сега: 1 сметка, 80,00 €")
 }
+
+// "Продължи" has "дълж" inside it: every "продължи" was taken for a question about the unpaid
+// bills and answered by the code (the live check of 2026-11-28).
+func TestAWordWithTheStemOfOwingInsideItIsNoQuestionAboutTheBills(t *testing.T) {
+	today := reminders.Day{Year: 2026, Month: 11, Day: 28}
+	for _, m := range []string{"продължи", "продължавай", "продължи автоматично за цялата информация", "издължено ли е въжето?"} {
+		_, ok := ReadQuestion(m, today)
+		assert.False(t, ok, m)
+	}
+	for _, m := range []string{"какво дължа?", "колко дължа за ток", "какви задължения имам?"} {
+		q, ok := ReadQuestion(m, today)
+		assert.True(t, ok, m)
+		assert.Equal(t, AskUnpaid, q.Ask, m)
+	}
+}
