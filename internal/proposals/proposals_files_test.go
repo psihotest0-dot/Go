@@ -275,3 +275,33 @@ func TestApplyErrorIsNotAServerFailure(t *testing.T) {
 	assert.True(t, errors.As(err, &applyErr))
 	assert.Equal(t, "причина", applyErr.Error())
 }
+
+// Each "продължи" of a plan proposed the same file again (the live check of 2026-11-28): four waited,
+// and an older one approved after the newest would have put the older text back.
+func TestANewWriteOfAFileLeavesTheOlderOnesOfTheConversationBehind(t *testing.T) {
+	e, store, _ := newFilesEnv(t)
+
+	first, err := e.svc.ProposeWrite(e.ctx, e.userID, "s", WriteCreate, "резюмета.md", "първо", nil)
+	require.NoError(t, err)
+	other, err := e.svc.ProposeWrite(e.ctx, e.userID, "s", WriteCreate, "друг.md", "друг файл", nil)
+	require.NoError(t, err)
+	elsewhere, err := e.svc.ProposeWrite(e.ctx, e.userID, "other-chat", WriteCreate, "резюмета.md", "друг разговор", nil)
+	require.NoError(t, err)
+	latest, err := e.svc.ProposeWrite(e.ctx, e.userID, "s", WriteCreate, "резюмета.md", "последно", nil)
+	require.NoError(t, err)
+
+	pending, err := e.svc.Pending(e.ctx, e.userID)
+	require.NoError(t, err)
+	var ids []int64
+	for _, p := range pending {
+		ids = append(ids, p.ID)
+	}
+	assert.ElementsMatch(t, []int64{other.ID, elsewhere.ID, latest.ID}, ids,
+		"only the older write of the same file in the same conversation is gone")
+
+	_, err = e.svc.Approve(e.ctx, e.userID, first.ID)
+	require.Error(t, err, "the older one cannot be approved any more")
+	_, err = e.svc.Approve(e.ctx, e.userID, latest.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "последно", e.fileText(t, store, "резюмета.md"))
+}

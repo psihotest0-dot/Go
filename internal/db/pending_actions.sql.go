@@ -271,6 +271,35 @@ func (q *Queries) ListPendingActions(ctx context.Context, userID uuid.UUID) ([]P
 	return items, nil
 }
 
+const rejectOlderFileWrites = `-- name: RejectOlderFileWrites :execrows
+UPDATE pending_actions
+SET status = 'rejected', decided_at = now()
+WHERE user_id = $1 AND session_id = $2 AND kind = 'write_file' AND status = 'pending'
+  AND payload->>'name' = $3::text AND id <> $4::bigint
+`
+
+type RejectOlderFileWritesParams struct {
+	UserID    uuid.UUID `json:"user_id"`
+	SessionID string    `json:"session_id"`
+	Name      string    `json:"name"`
+	KeepID    int64     `json:"keep_id"`
+}
+
+// A new write of a file leaves its older open writes of the same file in the
+// conversation behind: approved later, an older one would replace the newer text.
+func (q *Queries) RejectOlderFileWrites(ctx context.Context, arg RejectOlderFileWritesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, rejectOlderFileWrites,
+		arg.UserID,
+		arg.SessionID,
+		arg.Name,
+		arg.KeepID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const reopenPendingAction = `-- name: ReopenPendingAction :exec
 UPDATE pending_actions
 SET status = 'pending', decided_at = NULL

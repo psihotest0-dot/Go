@@ -394,7 +394,23 @@ func (s *Service) ProposeWrite(ctx context.Context, userID uuid.UUID, sessionID,
 			payload.KeptPercent = keptPercent(old, content)
 		}
 	}
-	return s.propose(ctx, userID, sessionID, KindWriteFile, payload, external)
+	p, err := s.propose(ctx, userID, sessionID, KindWriteFile, payload, external)
+	if err != nil {
+		return p, err
+	}
+	// The older open writes of this file in the conversation are left behind (2026-11-28: each
+	// "продължи" of a plan proposed the same file again, four waited, and an older one approved
+	// after the newer would have put the older text back).
+	dropped, err := s.db.Queries.RejectOlderFileWrites(ctx, db.RejectOlderFileWritesParams{
+		UserID: userID, SessionID: sessionID, Name: name, KeepID: p.ID,
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "the older writes of a file could not be dropped; they still wait", "err", err)
+	} else if dropped > 0 {
+		metrics.Proposals.WithLabelValues(KindWriteFile, "superseded").Add(float64(dropped))
+		slog.InfoContext(ctx, "older writes of the same file were dropped", "proposal_id", p.ID, "dropped", dropped)
+	}
+	return p, nil
 }
 
 // pagePreviewRunes is how much of a saved page the client is shown before the approval.

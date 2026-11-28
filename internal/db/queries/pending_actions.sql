@@ -6,6 +6,14 @@ ON CONFLICT (user_id, payload_hash) WHERE status = 'pending'
 DO UPDATE SET session_id = pending_actions.session_id
 RETURNING *;
 
+-- name: RejectOlderFileWrites :execrows
+-- A new write of a file leaves its older open writes of the same file in the
+-- conversation behind: approved later, an older one would replace the newer text.
+UPDATE pending_actions
+SET status = 'rejected', decided_at = now()
+WHERE user_id = $1 AND session_id = $2 AND kind = 'write_file' AND status = 'pending'
+  AND payload->>'name' = sqlc.arg(name)::text AND id <> sqlc.arg(keep_id)::bigint;
+
 -- name: ListPendingActions :many
 SELECT * FROM pending_actions
 WHERE user_id = $1 AND status = 'pending'
