@@ -15,7 +15,7 @@ var (
 	// jsonReadTimeout bounds how long a JSON request body may take to arrive.
 	jsonReadTimeout = 30 * time.Second
 
-	// uploadReadTimeout bounds a whole file upload (100 MB at 1 Mbit/s is ~14 min).
+	// uploadReadTimeout bounds a whole file upload (150 MB at 1 Mbit/s is ~21 min).
 	uploadReadTimeout = 30 * time.Minute
 )
 

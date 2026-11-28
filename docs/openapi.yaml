@@ -362,7 +362,7 @@ paths:
       summary: Upload a file
       description: >-
         The file is stored and an ingest job is queued; the answer does not wait
-        for it. The size limit is 100 MB (`MAX_UPLOAD_MB`). Any file is
+        for it. The size limit is 150 MB (`MAX_UPLOAD_MB`). Any file is
         accepted here: the format is judged by the ingest job (MIME type sniffed
         from the first bytes, or the file extension), and a file it cannot read
         ends in status `failed`.

@@ -55,7 +55,7 @@ const (
 	// maxUploadBytes is the default cap on a single upload request (MAX_UPLOAD_MB
 	// overrides it through API.WithUploadLimit). The body is streamed to disk, so
 	// the cap protects storage and job cost rather than memory.
-	maxUploadBytes = 100 << 20
+	maxUploadBytes = 150 << 20
 
 	// uploadDetectionBytes is how much of the file is kept for MIME sniffing.
 	// mimetype.Detect needs at most the first 3072 bytes.

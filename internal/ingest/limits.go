@@ -11,7 +11,7 @@ const (
 	// DefaultMaxInputBytes is the largest file the manager reads. It matches the
 	// default upload limit (config.DefaultMaxUploadMB); the worker passes the
 	// configured MAX_UPLOAD_MB instead.
-	DefaultMaxInputBytes int64 = 100 << 20
+	DefaultMaxInputBytes int64 = 150 << 20
 
 	// DefaultMaxTextRunes is the ceiling on the text extracted from one file. A
 	// thousand page book is ~3 million characters, so this only trips on runaway

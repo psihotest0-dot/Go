@@ -47,7 +47,7 @@ func IsFileCategory(name string) bool {
 const DefaultListenAddr = "127.0.0.1:8080"
 
 // DefaultMaxUploadMB is the upload size limit when MAX_UPLOAD_MB is not set.
-const DefaultMaxUploadMB = 100
+const DefaultMaxUploadMB = 150
 
 // DefaultLogMaxMB is the size at which backend.log is rotated (LOG_MAX_MB).
 const DefaultLogMaxMB = 10

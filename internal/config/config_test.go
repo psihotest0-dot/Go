@@ -55,12 +55,12 @@ func TestLoadMaxUploadBytes(t *testing.T) {
 		env  string
 		want int64
 	}{
-		{name: "default is 100 MB", env: "", want: 100 << 20},
+		{name: "default is 150 MB", env: "", want: 150 << 20},
 		{name: "explicit value", env: "250", want: 250 << 20},
 		{name: "surrounding space is trimmed", env: " 50 ", want: 50 << 20},
-		{name: "not a number falls back", env: "lots", want: 100 << 20},
-		{name: "zero falls back", env: "0", want: 100 << 20},
-		{name: "negative falls back", env: "-5", want: 100 << 20},
+		{name: "not a number falls back", env: "lots", want: 150 << 20},
+		{name: "zero falls back", env: "0", want: 150 << 20},
+		{name: "negative falls back", env: "-5", want: 150 << 20},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
