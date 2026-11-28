@@ -247,3 +247,20 @@ func TestATelegramTurnKeepsTheChoiceOfTheModel(t *testing.T) {
 		})
 	}
 }
+
+// Work on many items is no question to the library: it stays on the local model (the owner, 2026-11-21),
+// though its first round is forced too (the stub of the plan). On 2026-11-28 it went to the cloud.
+func TestTheStubOfAPlanIsNoQuestionToTheLibrary(t *testing.T) {
+	local, paid := say("локално"), say("облак")
+	o := routed(local, paid, true)
+	tools := append(toolDefinitions(), planStubDefinition())
+	const task = "за всеки от файловете в папката си направи кратко резюме в нов отделен файл"
+	require.Equal(t, planStubTool, forcedFirstTool(tools, task))
+
+	use, reason := o.routeToPaid(context.Background(), []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: task}}, tools)
+	assert.False(t, use)
+	assert.Equal(t, "default", reason)
+
+	use, _ = o.routeToPaid(context.Background(), []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleUser, Content: libraryQuestion}}, tools)
+	assert.True(t, use, "a question to the books still goes to the cloud where LIBRARY_LLM lets it")
+}

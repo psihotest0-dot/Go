@@ -95,8 +95,10 @@ func (o *Orchestrator) routeToPaid(ctx context.Context, messages []openai.ChatCo
 	}
 	// A look on the internet the person asked for is forced too (lookup_guard.go), and so is the
 	// reading of a page shown with a word (page_read.go), but neither is a question to the library:
-	// they stay where the turn is.
-	if forced := forcedFirstTool(tools, lastUserContent(messages)); o.libraryPaid && forced != "" && forced != "web_search" && forced != "web_fetch" {
+	// they stay where the turn is. Nor is the stub of a plan (work on many items): the work stays on
+	// the local model, the owner's decision of 2026-11-21; on 2026-11-28 a forced stub sent such turns
+	// to the cloud. Only a look at the books or at the list of them is a question to the library.
+	if forced := forcedFirstTool(tools, lastUserContent(messages)); o.libraryPaid && (forced == searchDocumentsTool || forced == listDocumentsTool) {
 		return true, "library"
 	}
 	return false, "default"

@@ -24,7 +24,10 @@ var (
 	// eachItem: "за всеки", "всички", "всяка една", "each", "every": work on every item of a
 	// set. "за всеки случай" is "just in case" and is taken out first.
 	eachItem   = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:всеки|всяка|всяко|всички|всичките|поотделно|един\s+по\s+един|each|every|one\s+by\s+one|separately)(?:[^\p{L}]|$)`)
-	justInCase = regexp.MustCompile(`(?i)за\s+всеки\s+случай|в\s+всеки\s+случай|във\s+всеки\s+случай|при\s+всички\s+случаи|на\s+всяка\s+цена|in\s+any\s+case|just\s+in\s+case`)
+	// So is a time that repeats ("всеки ден", "всяка сутрин"): "запиши във файл навици.md: … всеки
+	// ден …" was taken for work on every item and made a plan (the live check of 2026-11-28).
+	justInCase = regexp.MustCompile(`(?i)за\s+всеки\s+случай|в\s+всеки\s+случай|във\s+всеки\s+случай|при\s+всички\s+случаи|на\s+всяка\s+цена|in\s+any\s+case|just\s+in\s+case|` +
+		`(?:^|[^\p{L}])(?:всеки|всяка|всяко|всички|every|each)\s+(?:ден|дни|дена|път|пъти|месец|месеца|седмица|седмици|година|години|час|часа|минута|минути|сутрин|вечер|нощ|утро|понеделник|вторник|сряда|четвъртък|петък|събота|неделя|day|days|week|weeks|month|months|year|years|hour|hours|morning|evening|night|time|times)(?:[^\p{L}]|$)`)
 	// itemNoun: what there are many of: the sources, files, papers, books, links, pages.
 	itemNoun = regexp.MustCompile(`(?i)(?:^|[^\p{L}])(?:` +
 		`източни[кц]\p{L}*|файл\p{L}*|документ\p{L}*|книг\p{L}*|книж\p{L}*|статии|статия|статиите|линк\p{L}*|раздел\p{L}*|глав[аи]\p{L}*|страниц\p{L}*|изследван\p{L}*|доклад\p{L}*|` +
