@@ -215,8 +215,9 @@ func isWholeReply(message string) bool {
 
 // AddLink puts the document behind a link into the library for a task the server walks
 // (taskrun.LinkAdder): the road of add_to_library (the same fetcher, the Wayback copy as the last
-// one). The link is one the person wrote (the steps are made from their message). The error's text
-// is the reason in the person's words.
+// one). The link is one the person wrote (the steps are made from their message), or one the search
+// found for a reference of theirs and they said yes to in the proposal that showed it
+// (source_search.go). The error's text is the reason in the person's words.
 func (r *DefaultToolRegistry) AddLink(ctx context.Context, userID uuid.UUID, link string) (uuid.UUID, string, error) {
 	if r.fetcher == nil || r.adder == nil {
 		return uuid.Nil, "", errors.New("свалянето на линкове е изключено")

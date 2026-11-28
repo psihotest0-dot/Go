@@ -105,6 +105,14 @@ type Step struct {
 	Added *time.Time `json:"added,omitempty"`
 	// Folder is the file of the person's own folder a step of a task over the folder works on.
 	Folder string `json:"folder,omitempty"`
+	// About and Query are the subject of a research on the internet (package taskrun, the kind
+	// "research") and the search that found the page of the step (Link): the notes of the page are
+	// on that subject, and its passages nearest to both words are read.
+	About string `json:"about,omitempty"`
+	Query string `json:"query,omitempty"`
+	// Expect is the title the document of a step must begin with: a link the search found for a
+	// reference (agent/source_search.go) may be another work that cites it, and such a step fails.
+	Expect string `json:"expect,omitempty"`
 }
 
 // Evidence is an entry of the ledger: a successful call of a tool made after the plan.

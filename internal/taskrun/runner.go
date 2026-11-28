@@ -98,6 +98,7 @@ type Runner struct {
 	llm    llm.LLMClient
 	files  Files
 	links  LinkAdder
+	pages  PageReader
 	notify Notifier
 	wake   chan struct{}
 	now    func() time.Time
@@ -184,6 +185,10 @@ func (r *Runner) advance(ctx context.Context, p taskplan.RunPlan) bool {
 		if step.Status != taskplan.StepPending && step.Status != taskplan.StepDoing {
 			continue
 		}
+		if p.Kind == KindResearch {
+			// A page found on the internet: read from the web, never put into the library (research.go).
+			return r.advanceResearch(ctx, p, step)
+		}
 		if step.Ref == "" && step.Link != "" {
 			// A link not yet in the library: putting it there is the unit of work of this pass.
 			return r.addLink(ctx, p, step)
@@ -200,6 +205,11 @@ func (r *Runner) advance(ctx context.Context, p taskplan.RunPlan) bool {
 		}
 		if !ready {
 			continue // its document is still being processed; the others go first
+		}
+		if !r.checkExpected(ctx, p, step, file) {
+			metrics.TaskRunSteps.WithLabelValues(p.Kind, resultFailed).Inc()
+			slog.Info("the document of a step is another work", "plan_id", p.ID, "step", step.ID)
+			return r.save(ctx, p)
 		}
 		step.Status = taskplan.StepDoing
 		if !r.save(ctx, p) {
@@ -504,6 +514,9 @@ func (r *Runner) report(ctx context.Context, p taskplan.RunPlan) {
 
 // ReportText is the report of a walk that ended, in the person's words.
 func ReportText(p *taskplan.Plan) string {
+	if p.Kind == KindResearch {
+		return researchReport(p)
+	}
 	var done, failed []taskplan.Step
 	for _, s := range p.Steps {
 		switch s.Status {
@@ -538,6 +551,9 @@ func reportLog(p *taskplan.Plan) string {
 		if s.Status == taskplan.StepDone {
 			done++
 		}
+	}
+	if p.Kind == KindResearch {
+		return fmt.Sprintf("%d of %d pages written by the server into one file", done, len(p.Steps))
 	}
 	return fmt.Sprintf("%d of %d files written by the server", done, len(p.Steps))
 }

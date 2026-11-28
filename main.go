@@ -294,6 +294,10 @@ func run() error {
 				// A task over the links of a conversation puts each link into the library first.
 				runner.WithLinks(toolRegistry)
 			}
+			if cfg.WebFetchLocalEnabled {
+				// A research on the internet reads the pages the search found, from this machine.
+				runner.WithPages(toolRegistry)
+			}
 			go func() {
 				defer func() {
 					if r := recover(); r != nil {

@@ -131,3 +131,24 @@ func TestTheWaitForALinksDocumentCountsFromWhenItWasAdded(t *testing.T) {
 	assert.Equal(t, taskplan.StepFailed, p.Steps[0].Status)
 	assert.Equal(t, "документът не се обработи навреме", p.Steps[0].Note)
 }
+
+func TestALinkTheSearchFoundIsUsedOnlyWhenItsDocumentIsTheExpectedWork(t *testing.T) {
+	e := newEnv(t, factsAnswer)
+	other := e.document(t, "thesis.pdf", "completed", "A thesis on momentum. George and Hwang (2004) also suggest 1.41 and 1.52, 1.63, 1.74.")
+	right := e.document(t, "vol.pdf", "completed", "ON THE PERFORMANCE OF VOLATILITY-\nMANAGED PORTFOLIOS\nScott Cederburg. Returns 1.41, 1.52, 1.63 and 1.74.")
+	proposed, err := e.plans.Propose(e.ctx, e.user, "s", KindKeyFacts, "ключовите факти на всеки линк", []taskplan.Step{
+		{ID: 1, Text: "Maxing out", Ref: other.ID.String(), Expect: "Maxing out", Status: taskplan.StepPending},
+		{ID: 2, Text: "Volatility", Ref: right.ID.String(), Expect: "On the Performance of Volatility-Managed Portfolios", Status: taskplan.StepPending},
+	})
+	require.NoError(t, err)
+	_, err = e.plans.Start(e.ctx, e.user, proposed.ID)
+	require.NoError(t, err)
+
+	e.walk(t)
+
+	p := e.plan(t, "s")
+	assert.Equal(t, taskplan.StepFailed, p.Steps[0].Status)
+	assert.Contains(t, p.Steps[0].Note, "не е тази статия")
+	assert.Equal(t, taskplan.StepDone, p.Steps[1].Status, p.Steps[1].Note)
+	assert.Len(t, e.llm.requests, 1, "no notes are asked for of another work")
+}

@@ -2086,11 +2086,13 @@ components:
           description: '`done`: no step is left to do. `cancelled`: another plan took its place, or the person stopped it.'
         kind:
           type: string
-          enum: [key_facts, summary, full]
+          enum: [key_facts, summary, full, research]
           description: >-
             Missing for a plan of the assistant. Set for a plan the server walks itself: what it
             makes of each document (a file with its key facts, with a summary, or - `full` - with
             detailed notes of the whole text, read part by part and added to the file after each).
+            `research`: pages found by a search on the internet, one step a page (`link`), whose
+            notes on one subject (`about`) are sections of ONE file (`file`), which grows after each.
         steps:
           type: array
           items:
@@ -2144,7 +2146,7 @@ components:
           description: 'A plan of the kind `full` - how many parts are read and written.'
         file:
           type: string
-          description: 'A plan of the kind `full` - the file the notes of the next part go to.'
+          description: 'A plan of the kind `full` - the file the notes of the next part go to; of the kind `research` - the file the section of the page went to.'
         link:
           type: string
           description: 'A plan over the links of a conversation - the address of the step; `ref` is empty until the server has put it into the library.'
@@ -2155,6 +2157,12 @@ components:
         folder:
           type: string
           description: 'A plan over the files of the folder - the file of the folder the step works on.'
+        about:
+          type: string
+          description: 'A plan of the kind `research` - the subject the notes of the page are on.'
+        query:
+          type: string
+          description: 'A plan of the kind `research` - the search that found the page of the step.'
     TelegramSessionList:
       type: object
       required:

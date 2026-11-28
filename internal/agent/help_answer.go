@@ -78,6 +78,10 @@ func (o *Orchestrator) helpText() string {
 	b.WriteString("• „Потърси в интернет …“\n")
 	b.WriteString("• „Според книгите и новините за …“ — търся и в книгите, и в интернет, и казвам кое откъде е\n")
 	b.WriteString("• „Прочети тази страница: <линк>“ (и PDF)\n")
+	if searcher, ok := o.tools.(webSearcher); ok && searcher.canResearch() && o.runPlans != nil && files {
+		b.WriteString("• „Намери в интернет статии за … и направи справочник във файл“ — търся, показвам страниците, " +
+			"след „да“ ги чета една по една и пиша един файл с раздел и линк за всяка\n")
+	}
 
 	if o.addToLibrary {
 		b.WriteString("\n🗂 Библиотеката\n")

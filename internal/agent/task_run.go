@@ -162,7 +162,8 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 	}
 	if proposed != nil {
 		switch {
-		case isWholeReply(message) && proposed.Kind != taskrun.KindFull:
+		case isWholeReply(message) && proposed.Kind != taskrun.KindFull && proposed.Kind != taskrun.KindResearch:
+			// (A research reads pages of the internet into one file: there is no "whole" of it.)
 			// "Цялата": the same documents, read whole (the proposal of key facts says so).
 			whole, err := o.runPlans.Propose(ctx, userID, session, taskrun.KindFull, wholeGoal(proposed), proposed.Steps)
 			if err != nil {
@@ -186,6 +187,15 @@ func (o *Orchestrator) taskRunAnswer(ctx context.Context, userID uuid.UUID, sess
 
 	// A task over the links the person wrote: the code checks them and proposes (link_task.go).
 	if text := o.linkTaskAnswer(ctx, userID, session, message, history); text != "" {
+		return text
+	}
+	// The sources of a list of references, looked for on the internet: the code finds and proposes
+	// (source_search.go). Before the research: "намери източниците" over a list is this one.
+	if text := o.sourceSearchAnswer(ctx, userID, session, message, history); text != "" {
+		return text
+	}
+	// A research on the internet into one file: the code searches and proposes (web_research.go).
+	if text := o.researchAnswer(ctx, userID, session, message, history); text != "" {
 		return text
 	}
 	// A task over the files of the person's folder: the code lists them and proposes (folder_task.go).
@@ -248,12 +258,16 @@ func (o *Orchestrator) startProposed(ctx context.Context, userID uuid.UUID, prop
 		o.runner.Wake()
 	}
 	slog.InfoContext(ctx, "a task of the server was started", "plan_id", started.ID, "kind", started.Kind, "steps", len(started.Steps))
-	what := "по един документ"
-	if started.Kind == taskrun.KindFull {
+	what, took := "по един документ", estimate(len(started.Steps))
+	switch started.Kind {
+	case taskrun.KindFull:
 		what = "по един документ, целия текст на части"
+	case taskrun.KindResearch:
+		what = "страница по страница, всичко в един файл, който расте след всяка"
+		took = estimateSeconds(len(started.Steps) * taskrun.SecondsPerPage)
 	}
 	return fmt.Sprintf("Започнах. Работя на заден план, %s (≈ %s). Когато свърша, ще пиша тук какво е записано и какво не е станало. "+
-		"Междувременно можеш да ме питаш „докъде стигна?“ или да кажеш „спри“.", what, estimate(len(started.Steps)))
+		"Междувременно можеш да ме питаш „докъде стигна?“ или да кажеш „спри“.", what, took)
 }
 
 // wholeGoal is the goal of a proposal turned into notes over the whole text.
