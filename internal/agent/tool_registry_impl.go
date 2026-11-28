@@ -586,6 +586,12 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	if err != nil {
 		return nil, err
 	}
+	queryEN, _ := stringArg(args, queryENArg)
+	// A search about programming in a conversation with attached code gets the language of the
+	// code (code_language.go): the library has books on many languages.
+	if language := turnFrom(ctx).attachedLanguage(); language != "" {
+		query, queryEN = withCodeLanguage(query, language), withCodeLanguage(queryEN, language)
+	}
 
 	// A question that names one file of the library ("какво пише във файла CLBSV2") is
 	// about that file: the search stays inside it. The search of the whole library
@@ -598,7 +604,6 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	// a question that names a file stays inside the file, as any search does.
 	if subject := turnFrom(ctx).takeExplain(); subject != "" {
 		if !scoped {
-			queryEN, _ := stringArg(args, queryENArg)
 			return r.explainDossier(ctx, userID, query, queryEN, subject)
 		}
 		metrics.ExplainDossiers.WithLabelValues(explainScoped).Inc()
@@ -631,7 +636,7 @@ func (r *DefaultToolRegistry) executeSearchDocuments(ctx context.Context, userID
 	// The same question in English, when the model supplied it: many books are in
 	// English and a Bulgarian query often misses them (task 32, 2026-11-08). The
 	// first search stands on its own, so a failure of the second one costs nothing.
-	if queryEN, ok := stringArg(args, queryENArg); ok && !strings.EqualFold(queryEN, query) {
+	if queryEN != "" && !strings.EqualFold(queryEN, query) {
 		second, err := search(truncateRunes(queryEN, maxQueryENRunes))
 		if err != nil {
 			slog.WarnContext(ctx, "the English search of search_documents failed, using the first one", "error", err)

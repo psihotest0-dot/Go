@@ -74,13 +74,15 @@ func (o *Orchestrator) prepareTurn(ctx context.Context, userID uuid.UUID, req Ch
 	// which proposals it made (see turnState).
 	ctx, turn := withTurn(ctx, req.SessionID, len(chatCtx.Chunks) > 0)
 	turn.setEarlierAnswer(chatCtx.EarlierAnswer)
-	var hidden []string
+	var hidden, attached []string
 	for _, f := range plan.files {
+		attached = append(attached, f.Name)
 		if f.Inline == "" {
 			hidden = append(hidden, f.Name)
 		}
 	}
 	turn.setHiddenAttachments(hidden)
+	turn.setCodeLanguage(attachedCodeLanguage(attached))
 	turn.setAnswerPlan(answerPlan)
 	turn.setPlanEvents(req.PlanEvents)
 	// An explanation from the library (step 2.8): its search is forced, gathered by the code, and

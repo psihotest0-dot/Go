@@ -90,6 +90,9 @@ type turnState struct {
 	// hiddenAttachments are the attached files the prompt of the turn does not show in full: a
 	// message about them reads them first (attachment_force.go).
 	hiddenAttachments []string
+	// codeLanguage is the language of the code attached to the conversation: a search about
+	// programming that names no language gets it (code_language.go).
+	codeLanguage string
 	// since is the time from which a change of a file counts as work done for a question about
 	// how far the work is (requestSince); the zero time: not known.
 	since time.Time
