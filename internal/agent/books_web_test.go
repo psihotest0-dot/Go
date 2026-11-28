@@ -26,9 +26,9 @@ func TestAsksBooksAndWeb(t *testing.T) {
 	}
 	for _, m := range []string{
 		"Имах предвид базата с документи по икономика ,как биха оценили ситуацията", // the books only
-		"Какви са днешните водещи световни новини",                                   // the news only
+		"Какви са днешните водещи световни новини",                                  // the news only
 		"потърси в интернет книги за стоицизма",                                     // books as what to find, not a source
-		"добави в библиотеката тази статия от интернет: https://a.example/x",       // a library add
+		"добави в библиотеката тази статия от интернет: https://a.example/x",        // a library add
 		"кажи ми според книгите как да го преструктурирам",                          // the books only
 	} {
 		assert.False(t, asksBooksAndWeb(m), m)

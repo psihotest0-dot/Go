@@ -25,9 +25,9 @@ func TestAsksAboutPage(t *testing.T) {
 	}
 	for _, m := range []string{
 		"добави в библиотеката: https://arxiv.org/pdf/2603.11838",                  // add_to_library
-		"запиши цялата статия във файл: https://go.dev/blog/go1.22",               // save_page
-		"ето източниците: https://a.example/x.pdf https://b.example/y",            // two links
-		"запомни този линк https://go.dev/blog/go1.22",                            // no word for a look
+		"запиши цялата статия във файл: https://go.dev/blog/go1.22",                // save_page
+		"ето източниците: https://a.example/x.pdf https://b.example/y",             // two links
+		"запомни този линк https://go.dev/blog/go1.22",                             // no word for a look
 		"за всеки линк ми кажи какво е и колко е голям https://go.dev/blog/go1.22", // the link check
 		"виж това",        // no link
 		"здравей, как си", // nothing of the kind
