@@ -275,7 +275,7 @@ func (f *Fetcher) fetch(ctx context.Context, rawURL string, pdfAt func(page *url
 		}
 	}
 
-	text, err := ingest.NewHTMLExtractor().Extract(ctx, bytes.NewReader(page))
+	text, err := ingest.PageText(ctx, bytes.NewReader(page))
 	if err != nil {
 		return nil, &Error{Reason: ReasonUnsupported, Detail: "the page could not be read as HTML"}
 	}

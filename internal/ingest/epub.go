@@ -59,7 +59,7 @@ func (e *EPUBExtractor) Extract(ctx context.Context, r io.Reader) (string, error
 			slog.Warn("skipping unreadable epub chapter", slog.String("name", ch.Name), slog.Any("error", err))
 			continue
 		}
-		err = writeHTMLText(ctx, rc, tb)
+		err = writeHTMLText(ctx, rc, tb, nil)
 		rc.Close()
 		if err != nil {
 			if IsPermanent(err) || ctx.Err() != nil {
