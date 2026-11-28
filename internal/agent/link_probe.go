@@ -149,6 +149,12 @@ func (r *DefaultToolRegistry) probeLinks(ctx context.Context, userID uuid.UUID, 
 func (r *DefaultToolRegistry) probeOne(ctx context.Context, userID uuid.UUID, p *linkProbe) {
 	ctx, cancel := context.WithTimeout(ctx, probeOneDeadline)
 	defer cancel()
+	// A link already in the library is told from the library, without a download.
+	if known, ok := r.librarySource(ctx, userID, p.Link); ok {
+		p.Title, p.Kind, p.Bytes = known.FileName, kindOfFile(known.FileName), known.FileSize
+		p.InLibrary, p.InLibraryID = known.FileName, known.ID
+		return
+	}
 	doc, err := r.fetcher.Fetch(ctx, p.Link)
 	if err != nil {
 		copied, because := r.archivedDocument(ctx, p.Link, err)

@@ -265,6 +265,14 @@ func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link
 	ctx, cancel := context.WithTimeout(ctx, addOneDeadline)
 	defer cancel()
 
+	// A link already in the library is not fetched again (library_source.go).
+	if known, ok := r.librarySource(ctx, userID, link); ok {
+		row.Status, row.Reason, row.File = addDuplicate, "the library has the document of this link already", known.FileName
+		metrics.LibraryAdd.WithLabelValues("duplicate").Inc()
+		slog.InfoContext(ctx, "library add: the link is in the library", "host", hostOf(link))
+		return
+	}
+
 	doc, err := r.fetcher.Fetch(ctx, link)
 	if err != nil {
 		// The last road: the copy in the Wayback Machine (wayback.go).
@@ -285,6 +293,7 @@ func (r *DefaultToolRegistry) addOne(ctx context.Context, userID uuid.UUID, link
 		return
 	}
 	row.File = added.Name
+	r.rememberSource(ctx, userID, added.ID, link)
 	if added.Duplicate {
 		row.Status, row.Reason = addDuplicate, "the library has a file with the same content"
 		metrics.LibraryAdd.WithLabelValues("duplicate").Inc()

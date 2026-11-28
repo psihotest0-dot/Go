@@ -93,19 +93,20 @@ type GlobalRule struct {
 }
 
 type IngestedFile struct {
-	ID             uuid.UUID    `json:"id"`
-	UserID         uuid.UUID    `json:"user_id"`
-	FileName       string       `json:"file_name"`
-	FileHash       string       `json:"file_hash"`
-	MimeType       string       `json:"mime_type"`
-	FileSize       int64        `json:"file_size"`
-	Status         string       `json:"status"`
-	LocalPath      string       `json:"local_path"`
-	CreatedAt      sql.NullTime `json:"created_at"`
-	UpdatedAt      sql.NullTime `json:"updated_at"`
-	Category       string       `json:"category"`
-	ManualOverride bool         `json:"manual_override"`
-	DeletedAt      sql.NullTime `json:"deleted_at"`
+	ID             uuid.UUID      `json:"id"`
+	UserID         uuid.UUID      `json:"user_id"`
+	FileName       string         `json:"file_name"`
+	FileHash       string         `json:"file_hash"`
+	MimeType       string         `json:"mime_type"`
+	FileSize       int64          `json:"file_size"`
+	Status         string         `json:"status"`
+	LocalPath      string         `json:"local_path"`
+	CreatedAt      sql.NullTime   `json:"created_at"`
+	UpdatedAt      sql.NullTime   `json:"updated_at"`
+	Category       string         `json:"category"`
+	ManualOverride bool           `json:"manual_override"`
+	DeletedAt      sql.NullTime   `json:"deleted_at"`
+	SourceKey      sql.NullString `json:"source_key"`
 }
 
 type Memory struct {

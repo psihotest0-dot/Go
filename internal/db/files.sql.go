@@ -65,7 +65,7 @@ func (q *Queries) CreateDocumentChunksBatch(ctx context.Context, arg CreateDocum
 const createIngestedFile = `-- name: CreateIngestedFile :one
 INSERT INTO ingested_files (user_id, file_name, file_hash, mime_type, file_size, status, local_path)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at
+RETURNING id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at, source_key
 `
 
 type CreateIngestedFileParams struct {
@@ -103,6 +103,7 @@ func (q *Queries) CreateIngestedFile(ctx context.Context, arg CreateIngestedFile
 		&i.Category,
 		&i.ManualOverride,
 		&i.DeletedAt,
+		&i.SourceKey,
 	)
 	return i, err
 }
@@ -357,7 +358,7 @@ func (q *Queries) GetDocumentChunksWithFile(ctx context.Context, arg GetDocument
 }
 
 const getIngestedFileByHash = `-- name: GetIngestedFileByHash :one
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE user_id = $1 AND file_hash = $2 AND deleted_at IS NULL
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at, source_key FROM ingested_files WHERE user_id = $1 AND file_hash = $2 AND deleted_at IS NULL
 `
 
 type GetIngestedFileByHashParams struct {
@@ -382,12 +383,13 @@ func (q *Queries) GetIngestedFileByHash(ctx context.Context, arg GetIngestedFile
 		&i.Category,
 		&i.ManualOverride,
 		&i.DeletedAt,
+		&i.SourceKey,
 	)
 	return i, err
 }
 
 const getIngestedFileByID = `-- name: GetIngestedFileByID :one
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE id = $1
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at, source_key FROM ingested_files WHERE id = $1
 `
 
 // GetIngestedFileByID is deliberately unfiltered: the ingest worker and the
@@ -410,6 +412,42 @@ func (q *Queries) GetIngestedFileByID(ctx context.Context, id uuid.UUID) (Ingest
 		&i.Category,
 		&i.ManualOverride,
 		&i.DeletedAt,
+		&i.SourceKey,
+	)
+	return i, err
+}
+
+const getIngestedFileBySourceKey = `-- name: GetIngestedFileBySourceKey :one
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at, source_key FROM ingested_files
+WHERE user_id = $1 AND source_key = $2 AND deleted_at IS NULL AND status <> 'failed'
+ORDER BY created_at DESC LIMIT 1
+`
+
+type GetIngestedFileBySourceKeyParams struct {
+	UserID    uuid.UUID      `json:"user_id"`
+	SourceKey sql.NullString `json:"source_key"`
+}
+
+// GetIngestedFileBySourceKey is the document a link was taken from (agent.urlKey of the link), the
+// newest one; a document whose processing failed does not count (the link may be tried again).
+func (q *Queries) GetIngestedFileBySourceKey(ctx context.Context, arg GetIngestedFileBySourceKeyParams) (IngestedFile, error) {
+	row := q.db.QueryRowContext(ctx, getIngestedFileBySourceKey, arg.UserID, arg.SourceKey)
+	var i IngestedFile
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FileName,
+		&i.FileHash,
+		&i.MimeType,
+		&i.FileSize,
+		&i.Status,
+		&i.LocalPath,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Category,
+		&i.ManualOverride,
+		&i.DeletedAt,
+		&i.SourceKey,
 	)
 	return i, err
 }
@@ -433,7 +471,7 @@ func (q *Queries) GetIngestedFileChunkCount(ctx context.Context, arg GetIngested
 }
 
 const getIngestedFiles = `-- name: GetIngestedFiles :many
-SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at FROM ingested_files WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC
+SELECT id, user_id, file_name, file_hash, mime_type, file_size, status, local_path, created_at, updated_at, category, manual_override, deleted_at, source_key FROM ingested_files WHERE user_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC
 `
 
 func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]IngestedFile, error) {
@@ -459,6 +497,7 @@ func (q *Queries) GetIngestedFiles(ctx context.Context, userID uuid.UUID) ([]Ing
 			&i.Category,
 			&i.ManualOverride,
 			&i.DeletedAt,
+			&i.SourceKey,
 		); err != nil {
 			return nil, err
 		}
@@ -927,6 +966,22 @@ func (q *Queries) SearchTextChunks(ctx context.Context, arg SearchTextChunksPara
 		return nil, err
 	}
 	return items, nil
+}
+
+const setIngestedFileSourceKey = `-- name: SetIngestedFileSourceKey :exec
+UPDATE ingested_files SET source_key = $3 WHERE id = $1 AND user_id = $2 AND source_key IS NULL
+`
+
+type SetIngestedFileSourceKeyParams struct {
+	ID        uuid.UUID      `json:"id"`
+	UserID    uuid.UUID      `json:"user_id"`
+	SourceKey sql.NullString `json:"source_key"`
+}
+
+// SetIngestedFileSourceKey keeps the link a document was taken from; the first link stays.
+func (q *Queries) SetIngestedFileSourceKey(ctx context.Context, arg SetIngestedFileSourceKeyParams) error {
+	_, err := q.db.ExecContext(ctx, setIngestedFileSourceKey, arg.ID, arg.UserID, arg.SourceKey)
+	return err
 }
 
 const softDeleteIngestedFile = `-- name: SoftDeleteIngestedFile :exec

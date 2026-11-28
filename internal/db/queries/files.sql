@@ -6,6 +6,17 @@ RETURNING *;
 -- name: GetIngestedFileByHash :one
 SELECT * FROM ingested_files WHERE user_id = $1 AND file_hash = $2 AND deleted_at IS NULL;
 
+-- GetIngestedFileBySourceKey is the document a link was taken from (agent.urlKey of the link), the
+-- newest one; a document whose processing failed does not count (the link may be tried again).
+-- name: GetIngestedFileBySourceKey :one
+SELECT * FROM ingested_files
+WHERE user_id = $1 AND source_key = $2 AND deleted_at IS NULL AND status <> 'failed'
+ORDER BY created_at DESC LIMIT 1;
+
+-- SetIngestedFileSourceKey keeps the link a document was taken from; the first link stays.
+-- name: SetIngestedFileSourceKey :exec
+UPDATE ingested_files SET source_key = $3 WHERE id = $1 AND user_id = $2 AND source_key IS NULL;
+
 -- GetIngestedFileByID is deliberately unfiltered: the ingest worker and the
 -- restore path must be able to see a soft deleted row. Callers that serve
 -- clients filter on deleted_at.

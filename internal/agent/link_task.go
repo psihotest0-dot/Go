@@ -205,6 +205,9 @@ func (r *DefaultToolRegistry) AddLink(ctx context.Context, userID uuid.UUID, lin
 	}
 	ctx, cancel := context.WithTimeout(ctx, addOneDeadline)
 	defer cancel()
+	if known, ok := r.librarySource(ctx, userID, link); ok {
+		return known.ID, known.FileName, nil // in the library already (library_source.go)
+	}
 	doc, err := r.fetcher.Fetch(ctx, link)
 	if err != nil {
 		copied, _ := r.archivedDocument(ctx, link, err)
@@ -233,6 +236,7 @@ func (r *DefaultToolRegistry) AddLink(ctx context.Context, userID uuid.UUID, lin
 		metrics.LibraryAdd.WithLabelValues("error").Inc()
 		return uuid.Nil, "", errors.New("сървърът не можа да запише документа")
 	}
+	r.rememberSource(ctx, userID, added.ID, link)
 	if added.Duplicate {
 		metrics.LibraryAdd.WithLabelValues("duplicate").Inc()
 	} else {
