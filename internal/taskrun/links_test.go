@@ -152,3 +152,59 @@ func TestALinkTheSearchFoundIsUsedOnlyWhenItsDocumentIsTheExpectedWork(t *testin
 	assert.Equal(t, taskplan.StepDone, p.Steps[1].Status, p.Steps[1].Note)
 	assert.Len(t, e.llm.requests, 1, "no notes are asked for of another work")
 }
+
+// namedLinks is fakeLinks that takes the name of the document as well.
+type namedLinks struct {
+	fakeLinks
+	titles []string
+}
+
+func (f *namedLinks) AddLinkNamed(ctx context.Context, userID uuid.UUID, link, title string) (uuid.UUID, string, error) {
+	f.titles = append(f.titles, title)
+	return f.AddLink(ctx, userID, link)
+}
+
+func TestTheDocumentOfALinkIsNamedByTheTitleOfItsStep(t *testing.T) {
+	e := newEnv(t, factsAnswer)
+	doc := e.document(t, "The 52-Week High and Momentum Investing.pdf", "pending")
+	links := &namedLinks{fakeLinks: fakeLinks{docs: map[string]db.IngestedFile{"https://a.example/x.pdf": doc, "https://b.example/y.pdf": doc}}}
+	e.runner.WithLinks(links)
+	proposed, err := e.plans.Propose(e.ctx, e.user, "s", KindKeyFacts, "ключовите факти на всеки линк", []taskplan.Step{
+		{ID: 1, Text: "George, Hwang (2004)", Link: "https://a.example/x.pdf", Title: "The 52-Week High and Momentum Investing", Status: taskplan.StepPending},
+		{ID: 2, Text: "y", Link: "https://b.example/y.pdf", Status: taskplan.StepPending},
+	})
+	require.NoError(t, err)
+	_, err = e.plans.Start(e.ctx, e.user, proposed.ID)
+	require.NoError(t, err)
+
+	e.walk(t)
+
+	assert.Equal(t, []string{"The 52-Week High and Momentum Investing"}, links.titles, "named when the step has a title")
+	assert.Equal(t, []string{"https://a.example/x.pdf", "https://b.example/y.pdf"}, links.asked, "the other the usual way")
+}
+
+func TestTheNextCopyOfAWorkIsTriedWhenALinkGivesNothing(t *testing.T) {
+	e := newEnv(t, factsAnswer)
+	doc := e.document(t, "dp303.pdf", "pending")
+	links := &fakeLinks{
+		docs: map[string]db.IngestedFile{"https://c.example/dp303.pdf": doc},
+		errs: map[string]error{"https://a.example/dead.pdf": errors.New("сайтът не отговаря"), "https://b.example/dead.pdf": errors.New("сайтът не отговаря")},
+	}
+	e.runner.WithLinks(links)
+	proposed, err := e.plans.Propose(e.ctx, e.user, "s", KindKeyFacts, "ключовите факти на всеки линк", []taskplan.Step{
+		{ID: 1, Text: "Data-Snooping", Link: "https://a.example/dead.pdf", Also: []string{"https://b.example/dead.pdf", "https://c.example/dp303.pdf"}, Status: taskplan.StepPending},
+		{ID: 2, Text: "Gone", Link: "https://a.example/dead.pdf", Status: taskplan.StepPending},
+	})
+	require.NoError(t, err)
+	_, err = e.plans.Start(e.ctx, e.user, proposed.ID)
+	require.NoError(t, err)
+
+	e.walk(t)
+
+	p := e.plan(t, "s")
+	assert.Equal(t, "https://c.example/dp303.pdf", p.Steps[0].Link, "the third copy is the one that gave the document")
+	assert.Equal(t, doc.ID.String(), p.Steps[0].Ref)
+	assert.Empty(t, p.Steps[0].Also)
+	assert.Equal(t, taskplan.StepFailed, p.Steps[1].Status, "no copy left: the step fails with the reason")
+	assert.Equal(t, "сайтът не отговаря", p.Steps[1].Note)
+}

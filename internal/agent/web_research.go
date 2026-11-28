@@ -235,10 +235,14 @@ func researchPages(hits []webHit) []webHit {
 		}
 		u.Fragment, u.RawFragment = "", ""
 		h.Link = u.String()
+		h.Title = siteNoise.ReplaceAllString(h.Title, "")
 		out = append(out, h)
 	}
 	return out
 }
+
+// siteNoise is what a site puts at the end of the title the search gives: "… · GitHub - Skip to content".
+var siteNoise = regexp.MustCompile(`(?i)\s*[-–|·]\s*skip\s+to\s+(?:main\s+)?content\s*$`)
 
 // foreignScript tells whether a title is mostly in a script other than Latin, Cyrillic or Greek:
 // Chinese, Japanese, Korean, Arabic, Hebrew, Thai, Devanagari. Its page is no source the person reads.

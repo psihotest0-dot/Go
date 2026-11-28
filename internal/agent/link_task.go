@@ -219,6 +219,14 @@ func isWholeReply(message string) bool {
 // found for a reference of theirs and they said yes to in the proposal that showed it
 // (source_search.go). The error's text is the reason in the person's words.
 func (r *DefaultToolRegistry) AddLink(ctx context.Context, userID uuid.UUID, link string) (uuid.UUID, string, error) {
+	return r.AddLinkNamed(ctx, userID, link, "")
+}
+
+// AddLinkNamed is AddLink with the name the document gets in the library (taskrun.NamedLinkAdder):
+// the title of the work a reference names, not the name of the file on the site
+// ("gov.uscourts.nysd.590344.161.2.pdf" for a paper, the live check of 2026-11-28). "" keeps the
+// file's own name.
+func (r *DefaultToolRegistry) AddLinkNamed(ctx context.Context, userID uuid.UUID, link, title string) (uuid.UUID, string, error) {
 	if r.fetcher == nil || r.adder == nil {
 		return uuid.Nil, "", errors.New("свалянето на линкове е изключено")
 	}
@@ -238,7 +246,7 @@ func (r *DefaultToolRegistry) AddLink(ctx context.Context, userID uuid.UUID, lin
 		doc = copied
 	}
 	defer doc.Close()
-	added, err := r.adder.Add(ctx, userID, libraryFileName("", doc.Name), doc.Body)
+	added, err := r.adder.Add(ctx, userID, libraryFileName(title, doc.Name), doc.Body)
 	switch {
 	case errors.Is(err, webfetch.ErrTooLarge), errors.Is(err, api.ErrAddTooLarge):
 		metrics.LibraryAdd.WithLabelValues(string(webfetch.ReasonTooLarge)).Inc()

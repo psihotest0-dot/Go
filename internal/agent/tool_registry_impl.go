@@ -37,6 +37,8 @@ type DefaultToolRegistry struct {
 	httpClient *http.Client
 	// webBaseURL replaces the paid web API in tests; empty means the real one.
 	webBaseURL string
+	// openAlexURL replaces the catalogue of scholarly works in tests; empty means the real one (openalex.go).
+	openAlexURL string
 	// attachments holds the files attached to a conversation; nil means none can be.
 	attachments *attachments.Service
 	// files is the folder of the user's own files; nil means the file tools are off.

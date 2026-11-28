@@ -113,6 +113,12 @@ type Step struct {
 	// Expect is the title the document of a step must begin with: a link the search found for a
 	// reference (agent/source_search.go) may be another work that cites it, and such a step fails.
 	Expect string `json:"expect,omitempty"`
+	// Title is the name the document of a step over a link gets in the library: the title of the
+	// work of a reference; "" keeps the name of the file on the site.
+	Title string `json:"title,omitempty"`
+	// Also are other addresses of the same work (the copies the catalogue knows), tried in their order
+	// when Link gives nothing.
+	Also []string `json:"also,omitempty"`
 }
 
 // Evidence is an entry of the ledger: a successful call of a tool made after the plan.

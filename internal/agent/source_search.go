@@ -353,10 +353,40 @@ type sourceFind struct {
 	Ref reference
 	// Probe is the check of the person's own link; nil when the reference has none.
 	Probe *linkProbe
-	// Found is the full text the search found when the person's link gives no text of its own.
-	Found string
-	// Searched: the search was made (and gave nothing when Found is "").
+	// Found is the full text found when the person's link gives no text of its own; Via is where:
+	// viaCatalogue or viaSearch; Also the other copies of the catalogue, tried when Found gives nothing.
+	Found, Via string
+	Also       []string
+	// Closed: the catalogue knows the work and no free version of it; Known: it knows the work.
+	Closed, Known bool
+	// Work is the title the catalogue gives the work (a reference with names only has none of its own).
+	Work string
+	// Searched: the catalogue or the search was asked (and gave nothing when Found is "").
 	Searched bool
+}
+
+// Where a full text was found.
+const (
+	viaCatalogue = "каталога OpenAlex"
+	viaSearch    = "търсенето"
+)
+
+// title is the title of the work of a find: its own, else the one of the catalogue.
+func (f sourceFind) title() string {
+	if f.Ref.Title != "" {
+		return f.Ref.Title
+	}
+	return f.Work
+}
+
+// name is how a find is named in the proposal: a reference with names only gets the title the
+// catalogue gives it, so that the person sees which work was taken.
+func (f sourceFind) name() string {
+	name := referenceName(f.Ref)
+	if f.Ref.Title == "" && f.Work != "" {
+		name += " — „" + truncateRunes(f.Work, 100) + "“"
+	}
+	return name
 }
 
 // referencesFor are the references the message is about: of the section it names of a file attached
@@ -456,7 +486,7 @@ func nextNumber(n string) string {
 }
 
 // findSources checks the person's links of the references and searches for the rest.
-func (o *Orchestrator) findSources(ctx context.Context, userID uuid.UUID, refs []reference, prober linkProber, searcher webSearcher) []sourceFind {
+func (o *Orchestrator) findSources(ctx context.Context, userID uuid.UUID, refs []reference, prober linkProber, searcher webSearcher, scholar scholarSearcher) []sourceFind {
 	finds := make([]sourceFind, len(refs))
 	var links []string
 	for i, r := range refs {
@@ -485,9 +515,6 @@ func (o *Orchestrator) findSources(ctx context.Context, userID uuid.UUID, refs [
 		if f.Probe != nil && f.Probe.Reason == "" {
 			continue // the person's own link gives the document
 		}
-		if f.Ref.Title == "" {
-			continue // nothing to tell the work from the theses that cite it (matchesReference)
-		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -497,17 +524,57 @@ func (o *Orchestrator) findSources(ctx context.Context, userID uuid.UUID, refs [
 				return
 			}
 			defer func() { <-slots }()
-			hits, err := searcher.searchWeb(ctx, referenceQuery(f.Ref))
-			if err != nil {
-				slog.InfoContext(ctx, "the search for a source failed", "err", err)
-				return
-			}
-			f.Searched = true
-			f.Found = pickFullText(hits, f.Ref)
+			o.findOne(ctx, f, searcher, scholar)
 		}()
 	}
 	wg.Wait()
 	return finds
+}
+
+// findOne looks for the full text of one reference: first in the catalogue (openalex.go), which knows
+// the work, its authors and its free copies; then, for a reference with a title (its own or the
+// catalogue's), in the general search with the strict rule of the title (pickFullText). A reference
+// with neither a title nor two names is not looked for: nothing would tell the work from the works
+// that cite it.
+func (o *Orchestrator) findOne(ctx context.Context, f *sourceFind, searcher webSearcher, scholar scholarSearcher) {
+	if scholar != nil {
+		works, err := scholar.scholarWorks(ctx, f.Ref)
+		if err != nil {
+			slog.InfoContext(ctx, "the catalogue lookup of a source failed", "err", err)
+		} else if works != nil {
+			f.Searched = true
+			known := scholarPDFs(works, f.Ref)
+			f.Known = known.Title != ""
+			if known.Title != "" && f.Ref.Title == "" {
+				f.Work = known.Title
+			}
+			if len(known.PDFs) > 0 {
+				f.Found, f.Via, f.Also = known.PDFs[0], viaCatalogue, known.PDFs[1:]
+				return
+			}
+			if known.Title != "" && !known.Open {
+				// The work is closed: a PDF with its title elsewhere is slides about it or a copy
+				// that should not be there (the real list of 2026-11-28: a presentation in Chinese
+				// passed every check of the title).
+				f.Closed = true
+				return
+			}
+		}
+	}
+	ref := f.Ref
+	ref.Title = f.title()
+	if ref.Title == "" {
+		return
+	}
+	hits, err := searcher.searchWeb(ctx, referenceQuery(ref))
+	if err != nil {
+		slog.InfoContext(ctx, "the search for a source failed", "err", err)
+		return
+	}
+	f.Searched = true
+	if found := pickFullText(hits, ref); found != "" {
+		f.Found, f.Via = found, viaSearch
+	}
 }
 
 // sourceSearchAnswer is the answer of the code to a request to look for the sources of a list: the
@@ -540,17 +607,19 @@ func (o *Orchestrator) sourceSearchAnswer(ctx context.Context, userID uuid.UUID,
 			kind, named = taskrun.KindFull, true
 		}
 	}
-	finds := o.findSources(ctx, userID, refs, prober, searcher)
+	scholar, _ := o.tools.(scholarSearcher)
+	finds := o.findSources(ctx, userID, refs, prober, searcher, scholar)
 	var steps []taskplan.Step
 	for _, f := range finds {
 		switch {
 		case f.Probe != nil && f.Probe.Reason == "" && f.Probe.InLibraryID != uuid.Nil:
 			steps = append(steps, taskplan.Step{ID: len(steps) + 1, Text: f.Probe.InLibrary, Ref: f.Probe.InLibraryID.String(), Status: taskplan.StepPending})
 		case f.Probe != nil && f.Probe.Reason == "":
-			steps = append(steps, taskplan.Step{ID: len(steps) + 1, Text: referenceName(f.Ref), Link: f.Ref.Link, Status: taskplan.StepPending})
+			steps = append(steps, taskplan.Step{ID: len(steps) + 1, Text: referenceName(f.Ref), Link: f.Ref.Link, Title: f.Ref.Title, Status: taskplan.StepPending})
 		case f.Found != "":
-			// The runner checks that the document it took is this work (its title at its start).
-			steps = append(steps, taskplan.Step{ID: len(steps) + 1, Text: referenceName(f.Ref), Link: f.Found, Expect: f.Ref.Title, Status: taskplan.StepPending})
+			// The runner checks that the document it took is this work (its title at its start), and
+			// the document is named by it in the library, not by the name of the file on the site.
+			steps = append(steps, taskplan.Step{ID: len(steps) + 1, Text: f.name(), Link: f.Found, Also: f.Also, Expect: f.title(), Title: f.title(), Status: taskplan.StepPending})
 		}
 	}
 	metrics.TaskRuns.WithLabelValues(kind, "sources_searched").Inc()
@@ -572,7 +641,7 @@ func (o *Orchestrator) sourceSearchAnswer(ctx context.Context, userID uuid.UUID,
 func sourcesProposalText(kind string, named bool, where string, finds []sourceFind, more int, ask bool) string {
 	var own, found, none []string
 	for _, f := range finds {
-		name := referenceName(f.Ref)
+		name := f.name()
 		switch {
 		case f.Probe != nil && f.Probe.Reason == "":
 			line := probeLine(*f.Probe, webfetch.DefaultMaxBytes)
@@ -585,17 +654,21 @@ func sourcesProposalText(kind string, named bool, where string, finds []sourceFi
 			if f.Probe != nil {
 				why = "линкът ти: " + probeLine(*f.Probe, webfetch.DefaultMaxBytes)
 			}
-			found = append(found, "• "+name+" ("+why+")\n  → "+shortURL(f.Found))
+			found = append(found, "• "+name+" ("+why+")\n  → "+shortURL(f.Found)+" (от "+f.Via+")")
 		default:
 			why := "няма линк"
 			if f.Probe != nil {
 				why = "линкът ти: " + probeLine(*f.Probe, webfetch.DefaultMaxBytes)
 			}
 			switch {
+			case f.Closed:
+				why += "; в каталога е, но е затворена (няма свободна версия) — копия другаде не търся"
+			case f.Searched && f.Known:
+				why += "; в каталога е, но свободните ѝ версии са само там, откъдето не мога да сваля (напр. SSRN), а в търсенето няма друга"
 			case f.Searched:
-				why += "; в търсенето няма свободен пълен текст със същото заглавие"
-			case f.Ref.Title == "":
-				why += "; без заглавие не търся — не бих могла да проверя, че намереното е същата статия"
+				why += "; нито в каталога, нито в търсенето има свободен пълен текст със същото заглавие"
+			case f.Ref.Title == "" && len(surnames(f.Ref)) < 2:
+				why += "; без заглавие и с едно име не мога да я позная сигурно"
 			default:
 				why += "; търсенето не стигна до нея"
 			}
@@ -603,12 +676,12 @@ func sourcesProposalText(kind string, named bool, where string, finds []sourceFi
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Справките %s са %d. Проверих линковете ти и за останалите потърсих в интернет свободен пълен текст (PDF):\n", where, len(finds))
+	fmt.Fprintf(&b, "Справките %s са %d. Проверих линковете ти, а за останалите потърсих свободен пълен текст (PDF) в научния каталог OpenAlex и в интернет:\n", where, len(finds))
 	if len(own) > 0 {
 		fmt.Fprintf(&b, "\nС твоя линк, който става (%d):\n%s\n", len(own), strings.Join(own, "\n"))
 	}
 	if len(found) > 0 {
-		fmt.Fprintf(&b, "\nНамерих пълния текст другаде (%d) — тези адреси са от търсенето и ги отварям чак след твоето „да“:\n%s\n", len(found), strings.Join(found, "\n"))
+		fmt.Fprintf(&b, "\nНамерих пълния текст другаде (%d) — тези адреси не са от теб и ги отварям чак след твоето „да“; ако сваленото не започва със заглавието, го пропускам:\n%s\n", len(found), strings.Join(found, "\n"))
 	}
 	if len(none) > 0 {
 		fmt.Fprintf(&b, "\nНе намерих (%d):\n%s\n", len(none), strings.Join(none, "\n"))

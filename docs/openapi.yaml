@@ -2163,6 +2163,17 @@ components:
         query:
           type: string
           description: 'A plan of the kind `research` - the search that found the page of the step.'
+        expect:
+          type: string
+          description: 'A step over a link the search or the catalogue found for a reference - the title its document must begin with; another work fails the step.'
+        title:
+          type: string
+          description: 'A step over a link - the name its document gets in the library (the title of the work of a reference).'
+        also:
+          type: array
+          items:
+            type: string
+          description: 'A step over a link - other copies of the same work, tried in their order when `link` gives nothing.'
     TelegramSessionList:
       type: object
       required:

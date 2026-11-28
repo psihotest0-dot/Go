@@ -87,6 +87,11 @@ type LinkAdder interface {
 	AddLink(ctx context.Context, userID uuid.UUID, link string) (id uuid.UUID, name string, err error)
 }
 
+// NamedLinkAdder is a LinkAdder that can give the document its name in the library (a step's Title).
+type NamedLinkAdder interface {
+	AddLinkNamed(ctx context.Context, userID uuid.UUID, link, title string) (id uuid.UUID, name string, err error)
+}
+
 // Notifier tells the person something outside the conversation's own history (Telegram); nil: nothing.
 type Notifier func(ctx context.Context, userID uuid.UUID, session, text string)
 
@@ -330,9 +335,21 @@ func (r *Runner) addLink(ctx context.Context, p taskplan.RunPlan, step *taskplan
 		metrics.TaskRunSteps.WithLabelValues(p.Kind, resultFailed).Inc()
 		return r.save(ctx, p)
 	}
-	id, name, err := r.links.AddLink(ctx, p.UserID, step.Link)
+	add := r.links.AddLink
+	if named, ok := r.links.(NamedLinkAdder); ok && step.Title != "" {
+		add = func(ctx context.Context, userID uuid.UUID, link string) (uuid.UUID, string, error) {
+			return named.AddLinkNamed(ctx, userID, link, step.Title)
+		}
+	}
+	id, name, err := add(ctx, p.UserID, step.Link)
 	if ctx.Err() != nil {
 		return false // the backend stops; the link is fetched again after the restart
+	}
+	if err != nil && len(step.Also) > 0 {
+		// Another copy of the same work: it is tried in the next pass.
+		slog.Info("a link of a task gave nothing; its next copy is tried", "plan_id", p.ID, "step", step.ID)
+		step.Link, step.Also = step.Also[0], step.Also[1:]
+		return r.save(ctx, p)
 	}
 	if err != nil {
 		step.Status, step.Note = taskplan.StepFailed, err.Error()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -122,17 +123,38 @@ func TestSectionOf(t *testing.T) {
 
 // sourcesEnv is the env of the tasks over links with a search of its own: query -> results.
 func sourcesEnv(t *testing.T, results map[string]string) (*taskRunEnv, *fakeFetcher, *[]string) {
+	return sourcesEnvWith(t, results, nil)
+}
+
+// sourcesEnvWith is sourcesEnv with a catalogue of its own: a part of the address of a lookup -> its
+// answer (none: an empty list). What was asked is in the list returned: the queries of the search,
+// "openalex: <lookup>" for the catalogue.
+func sourcesEnvWith(t *testing.T, results, catalogue map[string]string) (*taskRunEnv, *fakeFetcher, *[]string) {
 	t.Helper()
 	e, f, _ := linkTaskEnv(t)
 	var asked []string
 	var mu sync.Mutex
 	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/works") {
+			lookup, _ := url.QueryUnescape(r.URL.RawQuery)
+			mu.Lock()
+			asked = append(asked, "openalex: "+lookup)
+			mu.Unlock()
+			for k, v := range catalogue {
+				if strings.Contains(lookup, k) {
+					_, _ = w.Write([]byte(v))
+					return
+				}
+			}
+			_, _ = w.Write([]byte(`{"results":[]}`))
+			return
+		}
 		var body struct{ Query string }
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		mu.Lock()
 		asked = append(asked, body.Query)
 		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
 		for k, v := range results {
 			if strings.Contains(body.Query, k) {
 				_, _ = w.Write([]byte(v))
@@ -143,44 +165,123 @@ func sourcesEnv(t *testing.T, results map[string]string) (*taskRunEnv, *fakeFetc
 	}))
 	t.Cleanup(web.Close)
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-	e.reg.webBaseURL, e.reg.httpClient = web.URL, web.Client()
+	e.reg.webBaseURL, e.reg.httpClient, e.reg.openAlexURL = web.URL, web.Client(), web.URL+"/works"
 	return e, f, &asked
 }
 
+// stwWork is the work of "Sullivan, Timmermann, White (1999)" as the catalogue gave it on 2026-11-28.
+const stwWork = `{"results":[{"title":"Data‐Snooping, Technical Trading Rule Performance, and the Bootstrap","publication_year":1999,
+	"authorships":[{"author":{"display_name":"Ryan Sullivan"}},{"author":{"display_name":"Allan Timmermann"}},{"author":{"display_name":"Halbert White"}}],
+	"best_oa_location":{"pdf_url":"https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/0022-1082.00163"},
+	"locations":[{"pdf_url":"https://onlinelibrary.wiley.com/doi/pdfdirect/10.1111/0022-1082.00163"},{"pdf_url":"http://eprints.example/119144/1/dp303.pdf"},{"pdf_url":"https://researchonline.example/id/eprint/119144/1/dp303.pdf"}]}]}`
+
 func TestTheSourcesOfAListAreFoundAndProposed(t *testing.T) {
-	e, f, asked := sourcesEnv(t, map[string]string{
+	// The catalogue knows nothing of "Maxing out" here: the search is asked for it.
+	e, f, asked := sourcesEnvWith(t, map[string]string{
 		"Maxing out Ang": `{"results":[{"title":"Maxing out: Stocks as lotteries and the cross-section of expected returns","url":"https://e.example/maxing.pdf#1#30#1"}]}`,
-	})
+	}, map[string]string{"raw_author_name.search:Sullivan": stwWork})
 	e.say(t, "s", "ето раздел 11:\n- Lou, Polk, [A Tug of War](https://a.example/paper.pdf) (JFE 2019).\n"+
-		"- Ang, Hodrick, [Maxing out](https://c.example/abstract) (JFE 2011).\n- Sullivan, Timmermann, White (1999).")
+		"- Ang, Hodrick, [Maxing out](https://c.example/abstract) (JFE 2011).\n- Sullivan, Timmermann, White (1999).\n- Smith (2004).")
 	asksBefore := len(e.model.Requests)
 
 	out := streamedText(t, e.say(t, "s", "опитай от раздел 11 да потърсиш в интернет дали някой от източниците може да се извлече"))
 
 	assert.Equal(t, asksBefore, len(e.model.Requests), "the code answers")
-	assert.Contains(t, out, "Справките в по-ранното ти съобщение са 3")
+	assert.Contains(t, out, "Справките в по-ранното ти съобщение са 4")
 	assert.Contains(t, out, "С твоя линк, който става (1):\n• A Tug of War (Lou, 2019) — PDF")
-	assert.Contains(t, out, "Намерих пълния текст другаде (1)")
+	assert.Contains(t, out, "Намерих пълния текст другаде (2)")
 	assert.Contains(t, out, "• Maxing out (Ang, 2011) (линкът ти: страницата има само резюме")
-	assert.Contains(t, out, "\n  → https://e.example/maxing.pdf\n")
-	assert.Contains(t, out, "Не намерих (1):\n• Sullivan, Timmermann, White (1999) — няма линк; без заглавие не търся")
+	assert.Contains(t, out, "\n  → https://e.example/maxing.pdf (от търсенето)\n")
+	assert.Contains(t, out, "• Sullivan, Timmermann, White (1999) — „Data‐Snooping, Technical Trading Rule Performance, and the Bootstrap“ (няма линк)\n"+
+		"  → http://eprints.example/119144/1/dp303.pdf (от каталога OpenAlex)", "a reference with names only is found by its authors and year; Wiley refuses programs")
+	assert.Contains(t, out, "Не намерих (1):\n• Smith (2004) — няма линк; без заглавие и с едно име не мога да я позная сигурно")
 	assert.Contains(t, out, "чак след твоето „да“")
 	assert.Contains(t, out, "Да започна ли?")
-	assert.Equal(t, []string{"Maxing out Ang pdf"}, *asked, "searched only for the one with a title and no working link")
+	assert.ElementsMatch(t, []string{
+		"openalex: per-page=8&search=Maxing out",
+		"Maxing out Ang pdf",
+		"openalex: filter=raw_author_name.search:Sullivan,raw_author_name.search:Timmermann,raw_author_name.search:White,publication_year:1999&per-page=8&sort=cited_by_count:desc",
+	}, *asked, "the catalogue first, the search when it has no free copy; nothing for a name alone")
 
 	p, err := e.plans.Proposed(context.Background(), e.userID, "s")
 	require.NoError(t, err)
 	require.NotNil(t, p)
 	assert.Equal(t, taskrun.KindKeyFacts, p.Kind)
-	require.Len(t, p.Steps, 2)
+	require.Len(t, p.Steps, 3)
 	assert.Equal(t, "https://a.example/paper.pdf", p.Steps[0].Link)
+	assert.Empty(t, p.Steps[0].Expect, "the person's own link is theirs")
+	assert.Equal(t, "A Tug of War", p.Steps[0].Title, "named by its title in the library")
 	assert.Equal(t, "https://e.example/maxing.pdf", p.Steps[1].Link)
 	assert.Equal(t, "Maxing out", p.Steps[1].Expect, "the runner checks that the document is this work")
-	assert.Empty(t, p.Steps[0].Expect, "the person's own link is theirs")
-	assert.NotContains(t, f.asked, "https://e.example/maxing.pdf", "a link of the search is not opened before the yes")
+	assert.Equal(t, "http://eprints.example/119144/1/dp303.pdf", p.Steps[2].Link)
+	assert.Equal(t, "Data‐Snooping, Technical Trading Rule Performance, and the Bootstrap", p.Steps[2].Expect)
+	assert.Equal(t, "Data‐Snooping, Technical Trading Rule Performance, and the Bootstrap", p.Steps[2].Title)
+	assert.Equal(t, []string{"https://researchonline.example/id/eprint/119144/1/dp303.pdf"}, p.Steps[2].Also, "the other copy, tried when the first gives nothing")
+	assert.NotContains(t, f.asked, "https://e.example/maxing.pdf", "a link that is not the person's is not opened before the yes")
+	assert.NotContains(t, f.asked, "http://eprints.example/119144/1/dp303.pdf")
 
 	start := streamedText(t, e.say(t, "s", "да"))
 	assert.Contains(t, start, "Започнах")
+}
+
+func TestTheCatalogueTakesTheWorkOfTheReferenceAndItsFreeCopies(t *testing.T) {
+	works := []scholarWork{
+		{Title: "Maxed Out?", Year: 2014, Surnames: []string{"Crandall"}, PDFs: []string{"https://x.example/maxed.pdf"}},
+		{Title: "Day Trading for a Living?", Year: 2019, Surnames: []string{"Chague", "De-Losso", "Giovannetti"}, Open: true},
+		{Title: "Day trading for a living? Fernando", Year: 2019, Surnames: []string{"Chague", "De-Losso"},
+			PDFs: []string{"https://doi.org/10.1/x", "https://repec.example/47WP.pdf#2", "https://onlinelibrary.wiley.com/doi/pdfdirect/1", "https://b.example/47WP.pdf"}},
+	}
+	day := reference{Title: "Day Trading for a Living?", Text: "Chague, De-Losso, Giovannetti, Day Trading for a Living?"}
+	f := scholarPDFs(works, day)
+	assert.Equal(t, "Day Trading for a Living?", f.Title)
+	assert.Equal(t, []string{"https://repec.example/47WP.pdf", "https://b.example/47WP.pdf"}, f.PDFs,
+		"the copies of another record of the same work; no DOI, no Wiley, no fragment")
+	assert.True(t, f.Open)
+
+	other := reference{Title: "Day Trading for a Living?", Text: "Aziz, Day Trading for a Living?"}
+	assert.Equal(t, scholarFind{}, scholarPDFs(works, other), "the same title by another author is another work")
+
+	cederburg := reference{Title: "On the Performance of Volatility-Managed Portfolios", Text: "Cederburg, O'Doherty, Wang, Yan"}
+	f = scholarPDFs([]scholarWork{{Title: "On the performance of volatility-managed portfolios", Year: 2020,
+		Surnames: []string{"Cederburg", "O’Doherty", "Wang"}}}, cederburg)
+	assert.Equal(t, "On the performance of volatility-managed portfolios", f.Title, "the work is known")
+	assert.Empty(t, f.PDFs, "but it has no free copy")
+	assert.False(t, f.Open, "and none anywhere")
+
+	george := reference{Text: "George, Hwang (2004) за 52-седмичния връх", Year: "2004"}
+	f = scholarPDFs([]scholarWork{
+		{Title: "Inverse modeling using multi-block PLS", Year: 2004, Surnames: []string{"Hwang", "Stephanopoulos"}},
+		{Title: "The 52‐Week High and Momentum Investing", Year: 2004, Surnames: []string{"GEORGE", "Hwang"}},
+	}, george)
+	assert.Equal(t, "The 52‐Week High and Momentum Investing", f.Title, "names only: all of them, and the year")
+	f = scholarPDFs([]scholarWork{{Title: "The 52‐Week High and Momentum Investing", Year: 2009, Surnames: []string{"George", "Hwang"}}}, george)
+	assert.Empty(t, f.Title, "another year is another work")
+}
+
+func TestAClosedWorkIsNotLookedForElsewhere(t *testing.T) {
+	closed := `{"results":[{"title":"On the performance of volatility-managed portfolios","publication_year":2020,"open_access":{"is_oa":false},
+		"authorships":[{"author":{"display_name":"Scott Cederburg"}}]}]}`
+	e, _, asked := sourcesEnvWith(t, map[string]string{
+		"Volatility-Managed": `{"results":[{"title":"On the performance of volatility-managed portfolios","url":"https://slides.example/b37.pdf"}]}`,
+	}, map[string]string{"search=On the Performance": closed})
+	e.say(t, "s", "ето ги:\n- Cederburg, O'Doherty, [On the Performance of Volatility-Managed Portfolios](https://c.example/abstract) (JFE 2020).\n"+
+		"- Lou, Polk, [A Tug of War](https://a.example/paper.pdf) (JFE 2019).")
+
+	out := streamedText(t, e.say(t, "s", "потърси в интернет дали някой от източниците може да се извлече"))
+
+	assert.Contains(t, out, "в каталога е, но е затворена (няма свободна версия) — копия другаде не търся")
+	assert.NotContains(t, out, "slides.example")
+	for _, q := range *asked {
+		assert.True(t, strings.HasPrefix(q, "openalex: "), "no search after the catalogue said it is closed: %s", q)
+	}
+}
+
+func TestTheLookupOfTheCatalogue(t *testing.T) {
+	r := &DefaultToolRegistry{openAlexURL: "https://c.example/works"}
+	assert.Equal(t, "https://c.example/works?per-page=8&search=Maxing+out", r.openAlexQuery(reference{Title: "Maxing out"}))
+	assert.Equal(t, "https://c.example/works?filter=raw_author_name.search%3AGeorge%2Craw_author_name.search%3AHwang%2Cpublication_year%3A2004&per-page=8&sort=cited_by_count%3Adesc",
+		r.openAlexQuery(reference{Text: "George, Hwang (2004) за 52-седмичния връх", Year: "2004"}))
+	assert.Empty(t, r.openAlexQuery(reference{Text: "Smith (2004)", Year: "2004"}), "one name is not enough")
 }
 
 func TestTheSourcesOfASectionOfTheAttachedFile(t *testing.T) {
